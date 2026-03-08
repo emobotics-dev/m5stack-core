@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
+//! PCNT (Pulse Counter) driver for RPM sensing.
+//!
+//! Uses hardware unit 1 in edge-counting mode: both rising and falling edges
+//! increment the counter. The caller reads and resets the count periodically
+//! to derive RPM from pulse frequency.
+//!
+//! ESP32 PCNT reference: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/pcnt.html>
 use esp_hal::{
     gpio::Input,
     pcnt::{Pcnt, channel, unit},

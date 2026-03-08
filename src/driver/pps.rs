@@ -1,4 +1,29 @@
 // SPDX-License-Identifier: BSD-3-Clause
+//! Programmable Power Supply (PPS) module driver (I2C 0x35).
+//!
+//! Custom I2C command/response protocol with single-byte command register
+//! followed by 1–4 byte payload. Voltage/current values are IEEE 754 f32 LE.
+//!
+//! Read register map:
+//!   0x00  ModuleId         2 bytes, u16 LE
+//!   0x05  RunningMode      1 byte: 0=Off, 1=Voltage, 2=Current, 3=Unknown
+//!   0x07  DataFlag         1 byte
+//!   0x08  ReadbackVoltage  4 bytes, f32 LE (volts)
+//!   0x0C  ReadbackCurrent  4 bytes, f32 LE (amps)
+//!   0x10  Temperature      4 bytes, f32 LE (°C)
+//!   0x14  InputVoltage     4 bytes, f32 LE (volts)
+//!   0x50  Address          1 byte
+//!   0x52  UID word 0       4 bytes
+//!   0x56  UID word 1       4 bytes
+//!   0x5A  UID word 2       4 bytes
+//!
+//! Write register map:
+//!   0x04  Enable           1 byte: 0=disable, 1=enable
+//!   0x18  SetVoltage       4 bytes, f32 LE (volts)
+//!   0x1C  SetCurrent       4 bytes, f32 LE (amps)
+//!
+//! Hardware: M5Stack PPS module (SKU: U136)
+//! Ref: <https://docs.m5stack.com/en/unit/PPS>
 use esp_hal::{Async, i2c::master::I2c};
 use thiserror_no_std::Error;
 
