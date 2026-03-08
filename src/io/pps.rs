@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 use embassy_time::{Duration, Instant, Ticker, with_timeout};
 
-pub use crate::driver::pps::{PpsError, PpsRunningMode};
 use crate::driver::pps::PpsDriver;
+pub use crate::driver::pps::{PpsError, PpsRunningMode};
 use crate::io::shared_i2c::SharedI2cBus;
 
 pub struct PpsReadings {
@@ -31,7 +31,13 @@ async fn read_pps(pps: &mut PpsDriver) -> Result<PpsReadings, PpsError> {
     let temperature = pps.get_temperature().await?;
     let input_voltage = pps.get_input_voltage().await?;
     let running_mode = pps.get_running_mode().await?;
-    Ok(PpsReadings { voltage, current, temperature, input_voltage, running_mode })
+    Ok(PpsReadings {
+        voltage,
+        current,
+        temperature,
+        input_voltage,
+        running_mode,
+    })
 }
 
 async fn write_pps(pps: &mut PpsDriver, setpoint: &PpsSetpoint) -> Result<(), PpsError> {
@@ -79,9 +85,11 @@ pub async fn pps_loop(
     let mut error_count = 0;
     loop {
         let loop_start = Instant::now();
-        let timeout_result =
-            with_timeout(Duration::from_millis(PPS_LOOP_TIME_MS * 3), poll_pps(&mut pps, on_read, get_setpoint))
-                .await;
+        let timeout_result = with_timeout(
+            Duration::from_millis(PPS_LOOP_TIME_MS * 3),
+            poll_pps(&mut pps, on_read, get_setpoint),
+        )
+        .await;
         match timeout_result {
             Ok(poll_result) => match poll_result {
                 Ok(_) => {
