@@ -1,0 +1,56 @@
+[package]
+name = "fire27"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+publish = false
+
+[[bin]]
+name = "fire27"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+m5stack-core         = { path = "../../", features = ["fire27"] }
+
+# esp-hal family
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32"] }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "log-04", "colors", "timestamp", "uart"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "embassy", "esp-radio"] }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32"] }
+
+# Embassy
+embassy-embedded-hal = { version = "0.5.0", features = ["time"] }
+embassy-executor     = { version = "0.9.1", features = ["nightly"] }
+embassy-sync         = "0.7.2"
+embassy-time         = "0.5.0"
+
+# Display
+lcd-async            = "0.1.1"
+
+# misc
+embedded-hal         = "1.0.0"
+log                  = "0.4"
+static_cell          = { version = "2.1.1", features = ["nightly"] }
+
+[workspace]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = true
+
+[patch.crates-io]
+esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
