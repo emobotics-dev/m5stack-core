@@ -7,7 +7,6 @@
 //!   0x99 - DLDO1 voltage:  bits[4:0] = (mV − 500) / 100, range 500–3400 mV
 //!   0x34 - VBAT ADC high:  bits[5:0] = high 6 bits of 14-bit reading (1 mV/LSB)
 //!   0x35 - VBAT ADC low:   bits[7:0] = low 8 bits
-use log::debug;
 use thiserror_no_std::Error;
 
 use crate::io::shared_i2c::SharedI2cBus;
