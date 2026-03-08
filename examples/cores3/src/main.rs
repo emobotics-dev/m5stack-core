@@ -7,6 +7,7 @@
 
 extern crate alloc;
 
+use panic_halt as _;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
