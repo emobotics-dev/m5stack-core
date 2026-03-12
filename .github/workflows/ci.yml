@@ -1,4 +1,7 @@
-# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3
+# SPDX-License-Identifier: BSD-3-Clause
+# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
+# Runs inside ghcr.io/emobotics-dev/altreg-ci:latest on the self-hosted
+# runner group, which provides the Xtensa toolchain and private-repo access.
 
 name: CI
 
@@ -11,32 +14,46 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTUP_HOME: /opt/rustup
+  CARGO_HOME: /opt/cargo
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  GIT_TERMINAL_PROMPT: "0"
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
-    runs-on: ubuntu-latest
+    runs-on:
+      group: rust
+      labels: [rust, esp32]
+    container:
+      image: ghcr.io/emobotics-dev/altreg-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Fix submodule URLs (relative → sibling-org HTTPS for CI)
+        run: |
+          git config --global credential.helper ""
+          git config --global \
+            url."https://github.com/emobotics-dev/".insteadOf \
+            "https://github.com/emobotics-dev/m5stack-core/"
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ESP Rust toolchain
-        uses: esp-rs/xtensa-toolchain@v1.5
-        with:
-          default: true
-          buildtargets: esp32,esp32s3
-          ldproxy: false
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+      - name: Set ESP libclang + sysroot + PATH for firmware bindgen
+        run: |
+          ESP_LIBCLANG=$(cat /opt/esp_libclang_path)
+          [ -n "$ESP_LIBCLANG" ] && echo "LIBCLANG_PATH=$ESP_LIBCLANG" >> "$GITHUB_ENV"
+          ESP_SYSROOT=$(cat /opt/esp_sysroot_path)
+          [ -n "$ESP_SYSROOT" ] && echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$ESP_SYSROOT" >> "$GITHUB_ENV"
+          ESP_ELF_BIN=$(cat /opt/esp_elf_bin_path)
+          [ -n "$ESP_ELF_BIN" ] && echo "$ESP_ELF_BIN" >> "$GITHUB_PATH"
 
       - name: Build lib (fire27 / ESP32)
         run: cargo build --release --features fire27
