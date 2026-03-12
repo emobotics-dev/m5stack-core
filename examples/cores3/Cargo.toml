@@ -1,0 +1,57 @@
+[package]
+name = "cores3"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+publish = false
+
+[[bin]]
+name = "cores3"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+m5stack-core          = { path = "../../", features = ["cores3"] }
+
+# esp-hal family
+esp-alloc             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32s3"] }
+esp-hal               = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32s3", "unstable"] }
+esp-rtos              = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32s3", "embassy", "esp-radio", "log-04"] }
+esp-sync              = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32s3", "log-04"] }
+
+# RTT (no esp-println/esp-backtrace on cores3 — conflicts with USB-JTAG)
+panic-halt            = "1.0.0"
+rtt-target            = "0.6.2"
+
+# Embassy
+embassy-embedded-hal  = { version = "0.5.0", features = ["time"] }
+embassy-executor      = { version = "0.9.1", features = ["nightly", "log"] }
+embassy-sync          = "0.7.2"
+embassy-time          = { version = "0.5.0", features = ["log"] }
+
+# Display
+lcd-async             = "0.1.1"
+
+# misc
+embedded-hal          = "1.0.0"
+static_cell           = { version = "2.1.1", features = ["nightly"] }
+
+[workspace]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = true
+
+[patch.crates-io]
+esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }

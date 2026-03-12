@@ -1,0 +1,56 @@
+[package]
+name = "m5stack-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "BSD-3-Clause"
+description = "Board support crate for M5Stack Fire27 and CoreS3 (ESP32/ESP32-S3)"
+
+[lib]
+test = false
+bench = false
+
+[features]
+fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-hal-rmt-onewire/esp32"]
+cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-hal-rmt-onewire/esp32s3"]
+
+[dependencies]
+# esp-hal family
+esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
+esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["ble", "esp-alloc", "unstable"] }
+esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-hal-rmt-onewire = { git = "https://github.com/emobotics-dev/esp-hal-rmt-onewire.git", branch = "git-deps", default-features = false }
+
+# embedded-hal family
+embedded-hal        = "1.0.0"
+
+# Embassy
+embassy-executor    = { version = "0.9.1", features = ["nightly"] }
+embassy-sync        = "0.7.2"
+embassy-time        = "0.5.0"
+
+# misc
+fixed               = "1.29.0"
+heapless            = { version = "0.9.1", features = ["nightly"] }
+log                 = "0.4"
+static_cell         = { version = "2.1.1", features = ["nightly"] }
+thiserror-no-std    = "2.0.2"
+trouble-host        = { git = "https://github.com/emobotics-dev/trouble.git", branch = "local-0.5.0", features = ["scan", "derive"] }
+
+[patch.crates-io]
+esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+
+[workspace]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = true
