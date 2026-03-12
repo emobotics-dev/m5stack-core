@@ -35,14 +35,14 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure git credentials for emobotics-dev private repos
+      - name: Fix submodule URLs (relative → sibling-org HTTPS for CI)
         run: |
           git config --global \
-            url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/emobotics-dev/".insteadOf \
-            "https://github.com/emobotics-dev/"
+            url."https://github.com/emobotics-dev/".insteadOf \
+            "https://github.com/emobotics-dev/m5stack-core/"
+
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set ESP libclang + sysroot + PATH for firmware bindgen
         run: |
