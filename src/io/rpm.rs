@@ -17,7 +17,10 @@ pub struct RpmResources<'a> {
 
 impl RpmResources<'static> {
     pub fn into_driver(self) -> PcntDriver {
-        let input = Input::new(self.pin, InputConfig::default().with_pull(esp_hal::gpio::Pull::Down));
+        let input = Input::new(
+            self.pin,
+            InputConfig::default().with_pull(esp_hal::gpio::Pull::Down),
+        );
         PcntDriver::new(self.pcnt, input)
     }
 }

@@ -42,14 +42,22 @@ impl Axp2101Driver {
 
     async fn read_reg(&mut self, reg: u8) -> Result<u8, Axp2101Error> {
         let mut buf = [0u8; 1];
-        self.i2c.lock().await.write_read_async(self.address, &[reg], &mut buf).await?;
+        self.i2c
+            .lock()
+            .await
+            .write_read_async(self.address, &[reg], &mut buf)
+            .await?;
         debug!("AXP2101 rd 0x{:02x} = 0x{:02x}", reg, buf[0]);
         Ok(buf[0])
     }
 
     async fn write_reg(&mut self, reg: u8, value: u8) -> Result<(), Axp2101Error> {
         debug!("AXP2101 wr 0x{:02x} = 0x{:02x}", reg, value);
-        self.i2c.lock().await.write_async(self.address, &[reg, value]).await?;
+        self.i2c
+            .lock()
+            .await
+            .write_async(self.address, &[reg, value])
+            .await?;
         Ok(())
     }
 
@@ -59,11 +67,18 @@ impl Axp2101Driver {
             return Err(Axp2101Error::VoltageOutOfRange);
         }
         let vol_val = ((mv - DLDO1_VOL_MIN_MV) / DLDO1_VOL_STEP_MV) as u8;
-        debug!("AXP2101 DLDO1 enabled={} {}mV (reg_val={})", enabled, mv, vol_val);
+        debug!(
+            "AXP2101 DLDO1 enabled={} {}mV (reg_val={})",
+            enabled, mv, vol_val
+        );
         self.write_reg(REG_DLDO1_VOL, vol_val).await?;
 
         let en_reg = self.read_reg(REG_LDO_EN).await?;
-        let en_val = if enabled { en_reg | DLDO1_EN_BIT } else { en_reg & !DLDO1_EN_BIT };
+        let en_val = if enabled {
+            en_reg | DLDO1_EN_BIT
+        } else {
+            en_reg & !DLDO1_EN_BIT
+        };
         self.write_reg(REG_LDO_EN, en_val).await?;
         Ok(())
     }
@@ -72,7 +87,11 @@ impl Axp2101Driver {
     pub async fn battery_voltage_mv(&mut self) -> Result<u16, Axp2101Error> {
         let hi = self.read_reg(REG_VBAT_H).await?;
         let mut lo_buf = [0u8; 1];
-        self.i2c.lock().await.write_read_async(self.address, &[REG_VBAT_H + 1], &mut lo_buf).await?;
+        self.i2c
+            .lock()
+            .await
+            .write_read_async(self.address, &[REG_VBAT_H + 1], &mut lo_buf)
+            .await?;
         debug!("AXP2101 rd 0x{:02x} = 0x{:02x}", REG_VBAT_H + 1, lo_buf[0]);
         let raw = ((hi as u16 & 0x3F) << 8) | lo_buf[0] as u16;
         Ok(raw)

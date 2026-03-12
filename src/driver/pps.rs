@@ -86,22 +86,35 @@ impl ReadCommand {
 
     fn evaluate_result(&self, buffer: &[u8; 4]) -> Result<ReadResult, PpsError> {
         match self {
-            ReadCommand::ModuleId => Ok(ReadResult::ModuleId((buffer[1] as u16) << 8 | buffer[0] as u16)),
-            ReadCommand::GetRunningMode => {
-                Ok(ReadResult::RunningMode(PpsRunningMode::from_u8(buffer[0]).ok_or(PpsError::Unknown)?))
+            ReadCommand::ModuleId => Ok(ReadResult::ModuleId(
+                (buffer[1] as u16) << 8 | buffer[0] as u16,
+            )),
+            ReadCommand::GetRunningMode => Ok(ReadResult::RunningMode(
+                PpsRunningMode::from_u8(buffer[0]).ok_or(PpsError::Unknown)?,
+            )),
+            ReadCommand::ReadbackVoltage => {
+                Ok(ReadResult::ReadbackVoltage(f32::from_le_bytes(*buffer)))
             }
-            ReadCommand::ReadbackVoltage => Ok(ReadResult::ReadbackVoltage(f32::from_le_bytes(*buffer))),
-            ReadCommand::ReadbackCurrent => Ok(ReadResult::ReadbackCurrent(f32::from_le_bytes(*buffer))),
+            ReadCommand::ReadbackCurrent => {
+                Ok(ReadResult::ReadbackCurrent(f32::from_le_bytes(*buffer)))
+            }
             ReadCommand::GetTemperature => Ok(ReadResult::Temperature(f32::from_le_bytes(*buffer))),
-            ReadCommand::GetInputVoltage => Ok(ReadResult::InputVoltage(f32::from_le_bytes(*buffer))),
+            ReadCommand::GetInputVoltage => {
+                Ok(ReadResult::InputVoltage(f32::from_le_bytes(*buffer)))
+            }
             _ => Err(PpsError::UnsupportedCommand),
         }
     }
 
-    pub async fn receive_async(self, i2c: &mut I2cType, address: u8) -> Result<ReadResult, PpsError> {
+    pub async fn receive_async(
+        self,
+        i2c: &mut I2cType,
+        address: u8,
+    ) -> Result<ReadResult, PpsError> {
         let (cmd, bytes_to_read) = self.get_read_command();
         let mut buffer = [0_u8; 4];
-        i2c.write_read_async(address, &[cmd], &mut buffer[..bytes_to_read]).await?;
+        i2c.write_read_async(address, &[cmd], &mut buffer[..bytes_to_read])
+            .await?;
         self.evaluate_result(&buffer)
     }
 }
@@ -177,7 +190,10 @@ impl PpsDriver {
 
     pub async fn get_running_mode(&mut self) -> Result<PpsRunningMode, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::GetRunningMode.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::GetRunningMode
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::RunningMode(mode) => Ok(mode),
             _ => Err(PpsError::ReadError),
         }
@@ -185,7 +201,10 @@ impl PpsDriver {
 
     pub async fn get_voltage(&mut self) -> Result<f32, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::ReadbackVoltage.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::ReadbackVoltage
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::ReadbackVoltage(voltage) => Ok(voltage),
             _ => Err(PpsError::ReadError),
         }
@@ -193,7 +212,10 @@ impl PpsDriver {
 
     pub async fn get_current(&mut self) -> Result<f32, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::ReadbackCurrent.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::ReadbackCurrent
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::ReadbackCurrent(current) => Ok(current),
             _ => Err(PpsError::ReadError),
         }
@@ -201,7 +223,10 @@ impl PpsDriver {
 
     pub async fn get_temperature(&mut self) -> Result<f32, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::GetTemperature.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::GetTemperature
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::Temperature(temp) => Ok(temp),
             _ => Err(PpsError::ReadError),
         }
@@ -209,7 +234,10 @@ impl PpsDriver {
 
     pub async fn get_input_voltage(&mut self) -> Result<f32, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::GetInputVoltage.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::GetInputVoltage
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::InputVoltage(voltage) => Ok(voltage),
             _ => Err(PpsError::ReadError),
         }
@@ -218,7 +246,10 @@ impl PpsDriver {
     #[allow(dead_code)]
     pub async fn get_module_id(&mut self) -> Result<u16, PpsError> {
         let mut bus = self.i2c.lock().await;
-        match ReadCommand::ModuleId.receive_async(&mut *bus, self.address).await? {
+        match ReadCommand::ModuleId
+            .receive_async(&mut *bus, self.address)
+            .await?
+        {
             ReadResult::ModuleId(id) => Ok(id),
             _ => Err(PpsError::ReadError),
         }

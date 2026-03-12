@@ -25,8 +25,9 @@ impl SharedI2cBus {
 
     pub fn lock(
         &self,
-    ) -> impl core::future::Future<Output = embassy_sync::mutex::MutexGuard<'_, CriticalSectionRawMutex, I2c<'static, Async>>>
-    {
+    ) -> impl core::future::Future<
+        Output = embassy_sync::mutex::MutexGuard<'_, CriticalSectionRawMutex, I2c<'static, Async>>,
+    > {
         self.0.lock()
     }
 }

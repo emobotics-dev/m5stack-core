@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: BSD-3-Clause
-//! M5Stack CoreS3 (ESP32-S3) BSP example — display init, I2C scan, touch loop.
+//! M5Stack CoreS3 (ESP32-S3) BSP example — display demo, I2C scan, touch loop.
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(type_alias_impl_trait)]
 
+extern crate alloc;
+
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    mono_font::{MonoTextStyle, ascii::FONT_9X18_BOLD},
+    pixelcolor::Rgb565,
+    prelude::*,
+    primitives::{Circle, PrimitiveStyleBuilder, Rectangle, Triangle},
+    text::Text,
+};
+esp_bootloader_esp_idf::esp_app_desc!();
 use embedded_hal::digital::{ErrorType, OutputPin};
 use esp_hal::{
     gpio::{AnyPin, Level, Output, OutputConfig},
@@ -20,18 +31,23 @@ use esp_hal::{
 };
 use esp_sync::RawMutex;
 use lcd_async::{
-    Builder,
+    Builder, Display,
     interface::SpiInterface,
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
+    raw_framebuf::RawFrameBuf,
 };
 use m5stack_core::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
 use m5stack_core::driver::axp2101::Axp2101Driver;
 use m5stack_core::driver::ft6336u;
 use m5stack_core::io::shared_i2c::SharedI2cBus;
-use panic_halt as _;
 use rtt_target::rprintln;
 use static_cell::make_static;
+
+const W: usize = 320;
+const H: usize = 240;
+const STRIP_H: usize = 40;
+const STRIP_BYTES: usize = W * STRIP_H * 2;
 
 /// GPIO35 DC pin via direct register writes (GPIO35 is muxed MISO/DC on CoreS3).
 const BIT: u32 = 1 << (35 - 32);
@@ -129,7 +145,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
     );
     let di = SpiInterface::new(spi_device, Gpio35Dc);
     let mut delay = embassy_time::Delay;
-    let _display = Builder::new(ILI9342CRgb565, di)
+    let mut display = Builder::new(ILI9342CRgb565, di)
         .invert_colors(ColorInversion::Inverted)
         .color_order(ColorOrder::Bgr)
         .display_size(320, 240)
@@ -137,20 +153,111 @@ async fn main(_spawner: embassy_executor::Spawner) {
         .await
         .expect("Display init failed");
 
-    rprintln!("Display initialized, entering touch loop");
+    rprintln!("Display initialized");
+
+    draw_demo(&mut display, "CoreS3", &["Touch anywhere"]).await;
+    rprintln!("Demo drawn, entering touch loop");
 
     // --- Touch loop ---
     loop {
         match ft6336u::read_touch(i2c_bus).await {
-            Ok(Some((x, y))) => {
-                rprintln!("Touch: x={} y={}", x, y);
-            }
+            Ok(Some((x, y))) => rprintln!("Touch: x={} y={}", x, y),
             Ok(None) => {}
-            Err(e) => {
-                rprintln!("Touch read error: {:?}", e);
-            }
+            Err(e) => rprintln!("Touch read error: {:?}", e),
         }
         Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+/// Draw demo scene into a DrawTarget with y_offset applied to all coordinates.
+fn draw_demo_strip(fb: &mut impl DrawTarget<Color = Rgb565>, board: &str, footer: &[&str], y: i32) {
+    let white = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::WHITE);
+    let gray = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::CSS_LIGHT_GRAY);
+
+    Text::new("m5stack-core BSP", Point::new(70, 30 - y), white)
+        .draw(fb)
+        .ok();
+
+    let rect = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::YELLOW)
+        .stroke_width(2)
+        .fill_color(Rgb565::new(4, 8, 0))
+        .build();
+    Rectangle::new(Point::new(20, 50 - y), Size::new(120, 80))
+        .into_styled(rect)
+        .draw(fb)
+        .ok();
+    Text::new(board, Point::new(45, 95 - y), white)
+        .draw(fb)
+        .ok();
+
+    let circle = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::CYAN)
+        .stroke_width(2)
+        .fill_color(Rgb565::new(0, 8, 4))
+        .build();
+    Circle::new(Point::new(170, 55 - y), 70)
+        .into_styled(circle)
+        .draw(fb)
+        .ok();
+
+    let green = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::GREEN)
+        .stroke_width(2)
+        .fill_color(Rgb565::new(0, 12, 0))
+        .build();
+    Triangle::new(
+        Point::new(100, 160 - y),
+        Point::new(40, 230 - y),
+        Point::new(160, 230 - y),
+    )
+    .into_styled(green)
+    .draw(fb)
+    .ok();
+
+    let red = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::RED)
+        .stroke_width(2)
+        .fill_color(Rgb565::new(8, 0, 0))
+        .build();
+    Triangle::new(
+        Point::new(250, 150 - y),
+        Point::new(190, 230 - y),
+        Point::new(310, 230 - y),
+    )
+    .into_styled(red)
+    .draw(fb)
+    .ok();
+
+    let spacing = W as i32 / (footer.len() as i32 + 1);
+    for (i, label) in footer.iter().enumerate() {
+        let x = spacing * (i as i32 + 1) - (label.len() as i32 * 9 / 2);
+        Text::new(label, Point::new(x, 235 - y), gray).draw(fb).ok();
+    }
+}
+
+/// Render demo scene to display using strip-based framebuffer (25 KB heap).
+async fn draw_demo<DI, RST: OutputPin>(
+    display: &mut Display<DI, ILI9342CRgb565, RST>,
+    board: &str,
+    footer: &[&str],
+) where
+    DI: lcd_async::interface::Interface<Word = u8>,
+{
+    let strip_buf = alloc::vec![0u8; STRIP_BYTES];
+    let strip_buf: &'static mut [u8] = strip_buf.leak();
+
+    for strip in 0..(H / STRIP_H) {
+        let y_offset = strip * STRIP_H;
+        {
+            let mut fb = RawFrameBuf::<Rgb565, _>::new(&mut strip_buf[..], W, STRIP_H);
+            fb.clear(Rgb565::new(0, 0, 4)).ok();
+            draw_demo_strip(&mut fb, board, footer, y_offset as i32);
+        }
+        display
+            .show_raw_data(0, y_offset as u16, W as u16, STRIP_H as u16, strip_buf)
+            .await
+            .ok();
     }
 }
 

@@ -41,13 +41,16 @@ const REG_LEDMODE_P1: u8 = 0x13;
 
 // P0 pin masks
 pub const P0_TOUCH_RST: u8 = 0x01; // P0_0
-#[allow(dead_code)] pub const P0_AW_RST: u8 = 0x04; // P0_2
+#[allow(dead_code)]
+pub const P0_AW_RST: u8 = 0x04; // P0_2
 
 // P1 pin masks
 pub const P1_CAM_RST: u8 = 0x01; // P1_0 (output)
 pub const P1_LCD_RST: u8 = 0x02; // P1_1 (output)
-#[allow(dead_code)] pub const P1_TOUCH_INT: u8 = 0x04; // P1_2 (input)
-#[allow(dead_code)] pub const P1_AW_INT: u8 = 0x08; // P1_3 (input)
+#[allow(dead_code)]
+pub const P1_TOUCH_INT: u8 = 0x04; // P1_2 (input)
+#[allow(dead_code)]
+pub const P1_AW_INT: u8 = 0x08; // P1_3 (input)
 
 // P1: P1_0 (CAM_RST), P1_1 (LCD_RST) → outputs; rest inputs
 const CONFIG_P1_VAL: u8 = !(P1_CAM_RST | P1_LCD_RST);
@@ -69,17 +72,28 @@ pub struct Aw9523bResources {
 
 impl Aw9523bDriver {
     pub fn new(res: Aw9523bResources) -> Self {
-        Self { i2c: res.i2c, address: ADDR }
+        Self {
+            i2c: res.i2c,
+            address: ADDR,
+        }
     }
 
     async fn read_reg(&mut self, reg: u8) -> Result<u8, Aw9523bError> {
         let mut buf = [0u8];
-        self.i2c.lock().await.write_read_async(self.address, &[reg], &mut buf).await?;
+        self.i2c
+            .lock()
+            .await
+            .write_read_async(self.address, &[reg], &mut buf)
+            .await?;
         Ok(buf[0])
     }
 
     async fn write_reg(&mut self, reg: u8, value: u8) -> Result<(), Aw9523bError> {
-        self.i2c.lock().await.write_async(self.address, &[reg, value]).await?;
+        self.i2c
+            .lock()
+            .await
+            .write_async(self.address, &[reg, value])
+            .await?;
         Ok(())
     }
 
@@ -103,7 +117,8 @@ impl Aw9523bDriver {
         self.clear_bits(REG_CONFIG_P0, P0_TOUCH_RST).await?; // P0_0 = output (0)
         // P1: full writes (we own all P1 pins)
         self.write_reg(REG_LEDMODE_P1, 0xFF).await?;
-        self.write_reg(REG_OUTPUT_P1, P1_CAM_RST | P1_LCD_RST).await?;
+        self.write_reg(REG_OUTPUT_P1, P1_CAM_RST | P1_LCD_RST)
+            .await?;
         self.write_reg(REG_CONFIG_P1, CONFIG_P1_VAL).await?;
         Ok(())
     }
@@ -112,7 +127,8 @@ impl Aw9523bDriver {
     pub async fn lcd_rst_pulse(&mut self) -> Result<(), Aw9523bError> {
         self.write_reg(REG_OUTPUT_P1, P1_CAM_RST).await?; // LCD_RST=0, CAM_RST=1
         Timer::after(Duration::from_micros(10)).await;
-        self.write_reg(REG_OUTPUT_P1, P1_CAM_RST | P1_LCD_RST).await?;
+        self.write_reg(REG_OUTPUT_P1, P1_CAM_RST | P1_LCD_RST)
+            .await?;
         Timer::after(Duration::from_millis(120)).await;
         Ok(())
     }
