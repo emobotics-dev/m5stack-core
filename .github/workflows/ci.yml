@@ -17,6 +17,7 @@ env:
   RUSTUP_HOME: /opt/rustup
   CARGO_HOME: /opt/cargo
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  GIT_TERMINAL_PROMPT: "0"
 
 permissions:
   contents: read
@@ -37,6 +38,7 @@ jobs:
     steps:
       - name: Fix submodule URLs (relative → sibling-org HTTPS for CI)
         run: |
+          git config --global credential.helper ""
           git config --global \
             url."https://github.com/emobotics-dev/".insteadOf \
             "https://github.com/emobotics-dev/m5stack-core/"
