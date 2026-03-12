@@ -13,7 +13,7 @@ bench = false
 
 [dependencies]
 m5stack-core         = { path = "../../", features = ["fire27"] }
-oxivgl               = { path = "/home/openclaw/oxivgl", features = ["esp-hal", "log-04"] }
+oxivgl               = { git = "https://github.com/emobotics-dev/oxivgl.git", features = ["esp-hal", "log-04"] }
 
 # esp-hal family
 esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }

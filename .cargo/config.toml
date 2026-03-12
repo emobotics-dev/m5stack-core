@@ -22,7 +22,6 @@ build-std = ["alloc", "core"]
 
 [env]
 DEP_LV_CONFIG_PATH = { value = "conf", relative = true }
-LVGL_FONTS_DIR     = { value = "conf/fonts", relative = true }
 ESP_LOG            = "info"
 ESP_BACKTRACE_CONFIG_BACKTRACE_FRAMES = "500"
 ESP_RTOS_CONFIG_TICK_RATE_HZ = "400"
