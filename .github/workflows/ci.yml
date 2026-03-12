@@ -34,6 +34,12 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Configure git to use SSH for emobotics-dev private repos
+        run: |
+          git config --global \
+            url."git@github.com:emobotics-dev/".insteadOf \
+            "https://github.com/emobotics-dev/"
+
       - name: Set ESP libclang + sysroot + PATH for firmware bindgen
         run: |
           ESP_LIBCLANG=$(cat /opt/esp_libclang_path)
