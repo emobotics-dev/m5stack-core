@@ -1,4 +1,21 @@
 // SPDX-License-Identifier: BSD-3-Clause
+//! DS18B20 1-Wire digital temperature sensor driver via RMT peripheral.
+//!
+//! Uses the ROM Search algorithm to enumerate all sensors on the bus,
+//! then reads scratchpad register 0 (TEMP_LSB) and 1 (TEMP_MSB) from each.
+//! Temperature is returned as signed 12.4 fixed-point (0.0625 °C resolution).
+//!
+//! 1-Wire commands used:
+//!   0xCC  Skip ROM — address all devices
+//!   0x44  Convert T — start temperature conversion (750 ms max at 12-bit)
+//!   0x55  Match ROM — address specific device
+//!   0xBE  Read Scratchpad — returns 9 bytes (we read 2: TEMP_LSB, TEMP_MSB)
+//!
+//! RMT channel assignment (chip-specific):
+//!   ESP32 (fire27):   TX=channel0, RX=channel2
+//!   ESP32-S3 (cores3): TX=channel0, RX=channel4
+//!
+//! Datasheet: <https://www.analog.com/media/en/technical-documentation/data-sheets/DS18B20.pdf>
 use esp_hal::{gpio::AnyPin, peripherals::RMT, rmt::Rmt, time::Rate};
 use esp_hal_rmt_onewire::{Address, OneWire, Search};
 use heapless::index_map::FnvIndexMap;

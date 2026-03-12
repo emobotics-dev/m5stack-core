@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
+//! BLE radio driver wrapper around `esp-radio`.
+//!
+//! Initializes the ESP32/ESP32-S3 radio coprocessor and returns a
+//! `BleConnector` for use with the `trouble-host` BLE stack.
+//!
+//! Ref: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/bluetooth/index.html>
 use esp_hal::peripherals::BT;
 use esp_radio::{
     InitializationError,

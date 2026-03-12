@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
-//! Minimal AXP2101 PMIC driver for M5Stack CoreS3.
+//! Minimal AXP2101 PMIC driver for M5Stack CoreS3 (I2C 0x34).
+//!
+//! Only DLDO1 (backlight), battery voltage ADC, and VBUS detection are used.
 //!
 //! Register map (verified against XPowersLib / CircuitPython_AXP2101):
-//!   0x00 - Power status:   bit 3 = VBUS present
-//!   0x90 - LDO enable:     bit 7 = DLDO1 enable
-//!   0x99 - DLDO1 voltage:  bits[4:0] = (mV − 500) / 100, range 500–3400 mV
-//!   0x34 - VBAT ADC high:  bits[5:0] = high 6 bits of 14-bit reading (1 mV/LSB)
-//!   0x35 - VBAT ADC low:   bits[7:0] = low 8 bits
+//!   0x00  Power status    bit 3 = VBUS present
+//!   0x34  VBAT ADC high   bits[5:0] = high 6 bits of 14-bit reading (1 mV/LSB)
+//!   0x35  VBAT ADC low    bits[7:0] = low 8 bits
+//!   0x90  LDO enable      bit 7 = DLDO1 enable
+//!   0x99  DLDO1 voltage   bits[4:0] = (mV − 500) / 100, range 500–3400 mV
+//!
+//! Datasheet: <https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/products/core/CoreS3/AXP2101_Datasheet_V1.1_en.pdf>
+//! Also: <https://github.com/lewisxhe/XPowersLib> (register reference)
 use thiserror_no_std::Error;
 
 use crate::io::shared_i2c::SharedI2cBus;
