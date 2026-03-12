@@ -1,4 +1,7 @@
-# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3
+# SPDX-License-Identifier: BSD-3-Clause
+# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
+# Runs inside ghcr.io/emobotics-dev/altreg-ci:latest on the self-hosted
+# runner group, which provides the Xtensa toolchain and private-repo access.
 
 name: CI
 
@@ -11,32 +14,20 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTUP_HOME: /opt/rustup
+  CARGO_HOME: /opt/cargo
 
 jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
-    runs-on: ubuntu-latest
+    runs-on:
+      group: rust
+      labels: [rust, esp32]
+    container: ghcr.io/emobotics-dev/altreg-ci:latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install ESP Rust toolchain
-        uses: esp-rs/xtensa-toolchain@v1.5
-        with:
-          default: true
-          buildtargets: esp32,esp32s3
-          ldproxy: false
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Build lib (fire27 / ESP32)
         run: cargo build --release --features fire27
