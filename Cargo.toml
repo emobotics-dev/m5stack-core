@@ -42,6 +42,7 @@ esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git",
 esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
 
 [workspace]
+members = ["examples/fire27", "examples/cores3"]
 
 [profile.dev]
 opt-level = "s"

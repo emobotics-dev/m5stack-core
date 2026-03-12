@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 use esp_hal::{Async, i2c::master::I2c};
-use log::debug;
 use thiserror_no_std::Error;
 
 use crate::io::shared_i2c::SharedI2cBus;
 
 #[repr(u8)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum PpsRunningMode {
     Off = 0,
     Voltage = 1,

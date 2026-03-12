@@ -37,8 +37,6 @@ embedded-hal         = "1.0.0"
 log                  = "0.4"
 static_cell          = { version = "2.1.1", features = ["nightly"] }
 
-[workspace]
-
 [profile.dev]
 opt-level = "s"
 
@@ -51,6 +49,3 @@ lto = "fat"
 opt-level = "s"
 overflow-checks = true
 
-[patch.crates-io]
-esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }

@@ -8,6 +8,7 @@
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
+esp_bootloader_esp_idf::esp_app_desc!();
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,

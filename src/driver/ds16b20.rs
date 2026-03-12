@@ -2,7 +2,6 @@
 use esp_hal::{gpio::AnyPin, peripherals::RMT, rmt::Rmt, time::Rate};
 use esp_hal_rmt_onewire::{Address, OneWire, Search};
 use heapless::index_map::FnvIndexMap;
-use log::{debug, trace};
 use thiserror_no_std::Error;
 
 #[derive(Debug, Error)]
