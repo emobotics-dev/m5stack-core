@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTUP_HOME: /opt/rustup
   CARGO_HOME: /opt/cargo
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 permissions:
   contents: read
@@ -34,10 +35,13 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Configure git to use SSH for emobotics-dev private repos
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure git credentials for emobotics-dev private repos
         run: |
           git config --global \
-            url."git@github.com:emobotics-dev/".insteadOf \
+            url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/emobotics-dev/".insteadOf \
             "https://github.com/emobotics-dev/"
 
       - name: Set ESP libclang + sysroot + PATH for firmware bindgen
@@ -48,9 +52,6 @@ jobs:
           [ -n "$ESP_SYSROOT" ] && echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$ESP_SYSROOT" >> "$GITHUB_ENV"
           ESP_ELF_BIN=$(cat /opt/esp_elf_bin_path)
           [ -n "$ESP_ELF_BIN" ] && echo "$ESP_ELF_BIN" >> "$GITHUB_PATH"
-
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Build lib (fire27 / ESP32)
         run: cargo build --release --features fire27
