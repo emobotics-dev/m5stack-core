@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! M5Stack Fire27 (ESP32) BSP example — display demo, I2C scan, button loop.
 #![no_std]
 #![no_main]

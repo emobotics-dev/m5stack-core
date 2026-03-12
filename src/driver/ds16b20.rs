@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! DS18B20 1-Wire digital temperature sensor driver via RMT peripheral.
 //!
 //! Uses the ROM Search algorithm to enumerate all sensors on the bus,

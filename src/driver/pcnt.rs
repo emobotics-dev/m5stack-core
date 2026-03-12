@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! PCNT (Pulse Counter) driver for RPM sensing.
 //!
 //! Uses hardware unit 1 in edge-counting mode: both rising and falling edges

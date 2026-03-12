@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! AW9523B I2C GPIO expander driver for M5Stack CoreS3 (I2C 0x58).
 //!
 //! Register map (AW9523B English datasheet V1.5, §5 "Register Description"):

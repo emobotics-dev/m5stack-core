@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! BLE radio driver wrapper around `esp-radio`.
 //!
 //! Initializes the ESP32/ESP32-S3 radio coprocessor and returns a

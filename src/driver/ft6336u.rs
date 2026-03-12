@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! FT6336U capacitive touch controller driver (I2C 0x38).
 //!
 //! Reads only touch point 1 (single-finger). Returns screen coordinates

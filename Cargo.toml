@@ -3,7 +3,7 @@ name = "m5stack-core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.86"
-license = "BSD-3-Clause"
+license = "MIT OR Apache-2.0"
 description = "Board support crate for M5Stack Fire27 and CoreS3 (ESP32/ESP32-S3)"
 
 [lib]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! M5Stack CoreS3 (ESP32-S3) BSP example — display demo, I2C scan, touch loop.
 #![no_std]
 #![no_main]

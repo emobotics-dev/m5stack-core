@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![no_std]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(type_alias_impl_trait)]

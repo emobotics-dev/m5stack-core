@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use embassy_time::{Duration, Instant, Ticker, with_timeout};
 
 use crate::driver::pps::PpsDriver;

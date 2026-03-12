@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Minimal AXP2101 PMIC driver for M5Stack CoreS3 (I2C 0x34).
 //!
 //! Only DLDO1 (backlight), battery voltage ADC, and VBUS detection are used.

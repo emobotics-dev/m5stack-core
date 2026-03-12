@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Programmable Power Supply (PPS) module driver (I2C 0x35).
 //!
 //! Custom I2C command/response protocol with single-byte command register
