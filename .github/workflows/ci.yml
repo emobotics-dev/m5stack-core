@@ -1,0 +1,51 @@
+# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (ESP32 + ESP32-S3)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ESP Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32,esp32s3
+          ldproxy: false
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build lib (fire27 / ESP32)
+        run: cargo build --release --features fire27
+
+      - name: Build lib (cores3 / ESP32-S3)
+        run: cargo build --release --features cores3 --target xtensa-esp32s3-none-elf
+
+      - name: Build example fire27
+        run: cargo build --release -p fire27
+
+      - name: Build example cores3
+        run: cargo build --release -p cores3 --target xtensa-esp32s3-none-elf
