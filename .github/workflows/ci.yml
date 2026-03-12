@@ -17,15 +17,32 @@ env:
   RUSTUP_HOME: /opt/rustup
   CARGO_HOME: /opt/cargo
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
     runs-on:
       group: rust
       labels: [rust, esp32]
-    container: ghcr.io/emobotics-dev/altreg-ci:latest
+    container:
+      image: ghcr.io/emobotics-dev/altreg-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Set ESP libclang + sysroot + PATH for firmware bindgen
+        run: |
+          ESP_LIBCLANG=$(cat /opt/esp_libclang_path)
+          [ -n "$ESP_LIBCLANG" ] && echo "LIBCLANG_PATH=$ESP_LIBCLANG" >> "$GITHUB_ENV"
+          ESP_SYSROOT=$(cat /opt/esp_sysroot_path)
+          [ -n "$ESP_SYSROOT" ] && echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$ESP_SYSROOT" >> "$GITHUB_ENV"
+          ESP_ELF_BIN=$(cat /opt/esp_elf_bin_path)
+          [ -n "$ESP_ELF_BIN" ] && echo "$ESP_ELF_BIN" >> "$GITHUB_PATH"
+
       - name: Checkout
         uses: actions/checkout@v4
 
