@@ -6,19 +6,15 @@
 //!
 //! Ref: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/bluetooth/index.html>
 use esp_hal::peripherals::BT;
-use esp_radio::{
-    InitializationError,
-    ble::{Config, InvalidConfigError, controller::BleConnector},
-};
-use static_cell::make_static;
+use esp_radio::ble::{Config, InvalidConfigError, controller::{BleConnector, BleInitError}};
 use thiserror_no_std::Error;
 
 #[derive(Debug, Error)]
 pub enum RadioError {
-    #[error("Failed to initialize WIFI/BLE controller")]
-    WifiInitError(#[from] InitializationError),
+    #[error("Failed to initialize BLE controller")]
+    BleInitError(#[from] BleInitError),
 
-    #[error("Failed to initialize WIFI/BLE controller")]
+    #[error("Failed to initialize BLE controller")]
     BleConfigError(#[from] InvalidConfigError),
 }
 
@@ -28,8 +24,7 @@ pub struct WifiDriver {
 
 impl WifiDriver {
     pub fn new(bt: BT<'static>) -> Result<Self, RadioError> {
-        let radio = make_static!(esp_radio::init()?);
-        let ble_connector = BleConnector::new(radio, bt, Config::default().with_task_priority(10))?;
+        let ble_connector = BleConnector::new(bt, Config::default().with_task_priority(10))?;
 
         Ok(Self { ble_connector })
     }
