@@ -13,6 +13,9 @@ bench = false
 [features]
 fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-hal-rmt-onewire/esp32"]
 cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-hal-rmt-onewire/esp32s3"]
+# HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
+# USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
+serial-cmd = []
 
 [dependencies]
 # esp-hal family
