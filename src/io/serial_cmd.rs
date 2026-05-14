@@ -10,7 +10,7 @@
 #[cfg(feature = "fire27")]
 mod imp {
     use esp_hal::{
-        Async,
+        Blocking,
         gpio::AnyPin,
         peripherals::UART0,
         uart::{Config, UartRx},
@@ -21,13 +21,22 @@ mod imp {
         pub rx_pin: AnyPin<'d>,
     }
 
-    pub type SerialRx<'d> = UartRx<'d, Async>;
+    /// Blocking UartRx — caller drives reads via polling + Timer.
+    ///
+    /// `into_async()` is *not* called here. Two reasons:
+    /// 1. The blocking variant works fine with the polled `run_polled` loop
+    ///    and avoids registering a UART interrupt handler entirely.
+    /// 2. **Init ordering matters:** `UartRx::new(...)` (even without
+    ///    `into_async`) must run *after* the BLE radio has finished initializing
+    ///    on ESP32 — calling it earlier hangs BLE setup silently (LCD goes
+    ///    white, no `Device Address` log). The caller is responsible for
+    ///    deferring `take_rx` until radio is up.
+    pub type SerialRx<'d> = UartRx<'d, Blocking>;
 
     pub fn take_rx(r: SerialCmdResources<'static>) -> SerialRx<'static> {
         UartRx::new(r.uart, Config::default())
             .expect("UART0 RX init")
             .with_rx(r.rx_pin)
-            .into_async()
     }
 }
 
