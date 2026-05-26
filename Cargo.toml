@@ -19,7 +19,7 @@ cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-hal-r
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
 esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["ble", "esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
-esp-hal-rmt-onewire = { git = "https://github.com/emobotics-dev/esp-hal-rmt-onewire.git", branch = "git-deps", default-features = false }
+esp-hal-rmt-onewire = { git = "https://github.com/emobotics-dev/esp-hal-rmt-onewire.git", branch = "local", default-features = false }
 
 # embedded-hal family
 embedded-hal        = "1.0.0"
