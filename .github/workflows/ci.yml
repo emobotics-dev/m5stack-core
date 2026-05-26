@@ -9,7 +9,9 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - 'feature/**'   # cover stacked PRs whose base is another feature branch
   workflow_dispatch:
 
 env:
