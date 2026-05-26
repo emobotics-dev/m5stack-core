@@ -23,10 +23,12 @@ esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", b
 esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "embassy", "esp-radio"] }
 esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32"] }
 
-# Embassy
-embassy-embedded-hal = { version = "0.5.0", features = ["time"] }
-embassy-executor     = { version = "0.9.1", features = ["nightly"] }
-embassy-sync         = "0.7.2"
+# Embassy — match alternator-regulator's altreg-fire27 to avoid trait-bound
+# skew (Spi: SetConfig from embassy-embedded-hal 0.6 / SpawnToken API from
+# embassy-executor 0.10) when sharing types through m5stack-core.
+embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
+embassy-executor     = { version = "0.10.0", features = ["nightly"] }
+embassy-sync         = "0.8"
 embassy-time         = "0.5.0"
 
 # Display
