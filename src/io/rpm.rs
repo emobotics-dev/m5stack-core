@@ -35,13 +35,41 @@ pub fn read_rpm(pcnt: &mut PcntDriver, config: &RpmConfig) -> f32 {
         * config.pulley_ratio
 }
 
+/// Number of consecutive zero-pulse intervals before we report "no signal"
+/// (NaN) instead of "engine stopped" (0.0). At the default 100 ms interval
+/// this is 3 s.
+const NO_SIGNAL_INTERVALS: u32 = 30;
+
 /// Convenience loop: ticker + read_rpm + callback.
+///
+/// `on_rpm` is invoked only on **state transitions**, so callers that
+/// store into a shared atomic don't get hammered every 100 ms:
+///   * each non-zero reading       → `rpm` (measured value)
+///   * first zero after non-zero   → `0.0` (engine just stopped)
+///   * [`NO_SIGNAL_INTERVALS`] zeros → `f32::NAN` (signal lost)
+///
+/// Between the "stopped" and "no signal" transitions the callback is
+/// silent, which lets HIL-injected values stick once the rig has been
+/// idle long enough.
 pub async fn rpm_loop(resources: RpmResources<'static>, config: RpmConfig, on_rpm: fn(f32)) {
     let mut pcnt_driver = resources.into_driver();
     let mut ticker = Ticker::every(Duration::from_millis(config.loop_time_ms));
+    let mut zero_intervals: u32 = 0;
     loop {
         let rpm = read_rpm(&mut pcnt_driver, &config);
-        on_rpm(rpm);
+        if rpm > 0.0 {
+            zero_intervals = 0;
+            on_rpm(rpm);
+        } else {
+            let prev = zero_intervals;
+            zero_intervals = zero_intervals.saturating_add(1);
+            if prev == 0 {
+                on_rpm(0.0);                // transition: running → stopped
+            } else if prev == NO_SIGNAL_INTERVALS {
+                on_rpm(f32::NAN);            // transition: stopped → no signal
+            }
+            // else: PROCESS_DATA untouched
+        }
         ticker.next().await;
     }
 }
