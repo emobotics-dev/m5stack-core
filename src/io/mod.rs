@@ -3,3 +3,5 @@ pub mod ow_temp;
 pub mod pps;
 pub mod rpm;
 pub mod shared_i2c;
+#[cfg(feature = "serial-cmd")]
+pub mod serial_cmd;
