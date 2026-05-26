@@ -23,8 +23,25 @@ pub struct WifiDriver {
 }
 
 impl WifiDriver {
+    /// Initialize BLE in scan-only mode with minimal buffer footprint.
+    ///
+    /// esp-radio's `Config::default()` sizes the BT-controller blob for
+    /// `max_connections=6` and `scan_duplicate_list_count=100`. On ESP32-S3
+    /// that defaults to ~36 KB of heap, which doesn't fit alongside LVGL on
+    /// cores3 (56 KB heap). Our use case is passive scanning of Victron
+    /// advertisements — we never open a connection, and only a handful of
+    /// distinct advertisers exist on the bus.
+    ///
+    /// `max_connections=1` is the minimum the controller accepts. Setting
+    /// it to 1 shrinks the per-connection static state. Combined with a
+    /// 10-entry duplicate-filter (the spec minimum, range 10–1000), this
+    /// frees ~10 KB on ESP32-S3 and a smaller amount on ESP32.
     pub fn new(bt: BT<'static>) -> Result<Self, RadioError> {
-        let ble_connector = BleConnector::new(bt, Config::default().with_task_priority(10))?;
+        let cfg = Config::default()
+            .with_task_priority(10)
+            .with_max_connections(1)
+            .with_scan_duplicate_list_count(10);
+        let ble_connector = BleConnector::new(bt, cfg)?;
 
         Ok(Self { ble_connector })
     }
