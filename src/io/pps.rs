@@ -73,6 +73,22 @@ async fn poll_pps(
 }
 
 /// Full PPS loop: 500ms ticker, 1500ms timeout, error counting (break after 10).
+///
+/// Expected behaviour on a bench / HIL rig **without** PPS hardware: the I2C
+/// probe at 0x35 NACKs on every cycle, `error_count` saturates within ~5 s,
+/// and the task logs:
+///
+/// ```text
+/// [WARN ] PPS error: I2C master error: AcknowledgeCheckFailed(Unknown)   x10
+/// [ERROR] stopping PPS task after 10 consecutive errors
+/// ```
+///
+/// Then the task exits cleanly. The board's other tasks (BLE, LVGL, logger,
+/// serial_cmd, control loop) keep running. **This is not a failure** —
+/// during development and HIL testing the PPS module is absent, so the
+/// errors and the "stopping" log are expected and can be ignored. The check
+/// is there for production benches where a wedged PPS shouldn't keep the
+/// I2C bus hot forever.
 pub async fn pps_loop(
     resources: PpsResources,
     on_read: fn(&PpsReadings),
