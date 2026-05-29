@@ -37,10 +37,19 @@ impl WifiDriver {
     /// 10-entry duplicate-filter (the spec minimum, range 10–1000), this
     /// frees ~10 KB on ESP32-S3 and a smaller amount on ESP32.
     pub fn new(bt: BT<'static>) -> Result<Self, RadioError> {
+        // task_stack_size: BLE controller's own task stack (esp-radio default
+        // is 4096 B). The HIL hit a stack-guard watchpoint in
+        // `ld_sscan_frm_cbk` (controller's scan-frame callback): SP within
+        // 32 B of the per-task guard while a `r_rwbtdm_isr_wrapper` was
+        // nesting on top. Bumping to 8 KB gives the controller's deepest
+        // ISR-nested path room without resizing the main task stack region
+        // (which is pinned at [28, 80] KB by ESP_HAL_CONFIG_MAIN_STACK_*).
+        // Costs 4 KB of heap — well within budget on both targets.
         let cfg = Config::default()
             .with_task_priority(10)
             .with_max_connections(1)
-            .with_scan_duplicate_list_count(10);
+            .with_scan_duplicate_list_count(10)
+            .with_task_stack_size(8192);
         let ble_connector = BleConnector::new(bt, cfg)?;
 
         Ok(Self { ble_connector })
