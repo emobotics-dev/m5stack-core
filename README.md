@@ -38,6 +38,29 @@ Async task loops using `embassy_time::Ticker` with `fn(...)` callbacks for decou
 | `ow_temp` | 3 s | `fn(&[(u64, f32)])` — address/temperature pairs |
 | `shared_i2c` | — | `SharedI2cBus` async mutex for multi-task I2C access |
 
+### Serial console (`io::console`)
+
+The **complete** async logging console for the firmware — both the target-agnostic
+pipeline AND the per-target hardware. No `esp-println`/`esp-backtrace`.
+
+- `init()` / `enable_async()` — register the `log::Log` backend (boots blocking;
+  switches to the async drain once spawned).
+- `setup(...) -> (ConsoleRx, ConsoleTx)` — build + split the peripheral
+  (fire27: UART0 @ 1 Mbaud; cores3: USB-Serial-JTAG) into the RX half (→
+  `serial_cmd`) and the TX half (→ the drain task). The binary owns `into_async()`
+  so the IRQ binds to the calling core.
+- `drain_task(ConsoleTxAsync)` — the single console writer (`#[embassy_executor::task]`);
+  drains the cross-core queue to the async TX sink.
+- `send_line(Arguments)` — back-pressuring emit for bulk dumps (the `:cat`
+  read-back); awaits queue space instead of dropping.
+- `blocking_write(&[u8])` (internal) — boot/panic raw-FIFO poke, bounded (drops on
+  a full/host-less FIFO so it never wedges the radio).
+- `on_panic(&PanicInfo) -> !` — shared message-only panic print + halt, used by
+  both binaries' `#[panic_handler]`.
+
+`alternator-regulator` depends on this crate (optional, esp-hal-gated) only so
+`logger::cat_line` can call `send_line`; host builds never pull it.
+
 ### Key types
 
 ```rust
