@@ -1,30 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Async buffered serial console for both targets — the COMPLETE console: the
-//! target-agnostic pipeline (a `log::Log` backend + a cross-core queue + the
-//! drain task) AND the per-target hardware (sink construction + the raw boot/
-//! panic FIFO writer). No esp-println, no esp-backtrace.
+//! Async buffered serial console for both targets — byte-level ring buffer
+//! with **overwrite-on-full** semantics. The producer (`log!()` / [`send_line`])
+//! is O(1) and NEVER blocks the caller: never spins, never awaits, never
+//! creates back-pressure. On full, the **oldest** bytes are overwritten so the
+//! lines fired *just before* a failure survive (those are the informative ones).
 //!
-//! A single `log::Log` backend formats each record and either (steady state)
-//! `try_send`s it to the cross-core channel drained by [`drain_task`] on the
-//! target's async TX sink, or (boot + panic) writes it via the raw per-target
-//! `imp::boot_panic_write`. Producers never block on the sink and the single drain
-//! task is the sole writer — so there's no cross-core print-lock contention to
-//! starve the radio (the recurring-freeze root cause).
+//! A single [`drain_task`] pulls contiguous slices from the ring and writes
+//! them via the target's async TX sink (`write_all().await` parks on the
+//! TX-done IRQ when the FIFO is full — no busy-spin). Producers signal the
+//! drain after every write; the drain awaits the signal when the ring is empty.
 //!
 //! Per-target seam (hardware): the sink types + [`setup`] (build + split the
-//! peripheral) + the raw FIFO writer. fire27 = UART0 @ 1 Mbaud; cores3 =
+//! peripheral) + [`imp::boot_panic_write`]. fire27 = UART0 @ 1 Mbaud; cores3 =
 //! USB-Serial-JTAG CDC. `setup` does NOT make the fire27 TX async — `into_async()`
 //! binds the IRQ to the *calling* core, so the binary does it from `main` (PRO).
 //!
 //! The firmware's `alternator_regulator::logger::cat_line` calls [`send_line`]
-//! for the `:cat` dump (back-pressure). alternator-regulator depends on this
-//! crate ONLY for that — optional + esp-hal-gated, so host builds never pull it.
+//! for the `:cat` dump (same ring write, lossy under overrun — caller self-paces
+//! if it cannot tolerate loss). alternator-regulator depends on this crate ONLY
+//! for that — optional + esp-hal-gated, so host builds never pull it.
 
+use core::cell::RefCell;
 use core::fmt::Write as _;
-use core::sync::atomic::{AtomicBool, Ordering};
 
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embedded_io_async::Write as _;
 use heapless::String;
 
@@ -58,24 +59,23 @@ mod imp {
             .split()
     }
 
-    // Raw UART0 TX-FIFO writer (boot + panic). UART0_FIFO_REG = base; bits
-    // [23:16] of UART0_STATUS_REG = TX FIFO byte count (depth 128). Write only
-    // while the FIFO has space, bounded; drop the rest on budget exhaustion so
-    // the cross-core print path never holds interrupts off for a wire-drain and
-    // starves RWBLE (the recurring-freeze root cause — see fire27-recurring-freeze).
+    // Raw UART0 TX-FIFO writer (boot + panic only). Truly lossy: one volatile
+    // status read per byte, write if there's space, **drop the rest on full —
+    // NO spin**. Used by `on_panic` to synchronously flush the ring after the
+    // async drain is gone (or never started). NEVER call from steady-state
+    // code — `log!()` / `send_line` go through the ring.
     const UART0_FIFO_REG: *mut u32 = 0x3FF4_0000 as *mut u32;
     const UART0_STATUS_REG: *const u32 = 0x3FF4_001C as *const u32;
     const TX_FIFO_DEPTH: u32 = 128;
-    const SPIN_BUDGET: u32 = 4_000;
 
     pub fn boot_panic_write(bytes: &[u8]) {
-        let mut budget = SPIN_BUDGET;
         for &b in bytes {
-            while unsafe { (UART0_STATUS_REG.read_volatile() >> 16) & 0xFF } >= TX_FIFO_DEPTH - 2 {
-                if budget == 0 {
-                    return;
-                }
-                budget -= 1;
+            let used = unsafe { (UART0_STATUS_REG.read_volatile() >> 16) & 0xFF };
+            if used >= TX_FIFO_DEPTH - 2 {
+                // FIFO full — drop the rest of this slice rather than spin.
+                // The async drain owns steady-state throughput; this path is
+                // only the emergency boot/panic poker.
+                return;
             }
             unsafe { UART0_FIFO_REG.write_volatile(b as u32) };
         }
@@ -102,12 +102,11 @@ mod imp {
         UsbSerialJtag::new(usb).into_async().split()
     }
 
-    // Raw SERIAL_JTAG EP1 FIFO writer (boot + panic). CONF bit1 = data-free
-    // (clear ⇒ full); FIFO reg takes one byte; CONF bit0 = wr_done (flush).
-    // Bounded spin per byte, drop remainder on a stuck (host-less) FIFO.
+    // Raw SERIAL_JTAG EP1 FIFO writer (boot + panic only). Truly lossy: probe
+    // the data-free bit per byte; on full, flush whatever's queued and drop
+    // the rest — NO spin.
     const SERIAL_JTAG_FIFO_REG: *mut u32 = 0x6003_8000 as *mut u32;
     const SERIAL_JTAG_CONF_REG: *mut u32 = 0x6003_8004 as *mut u32;
-    const SPIN_BUDGET: u32 = 50_000;
 
     #[inline]
     fn fifo_full() -> bool {
@@ -116,12 +115,10 @@ mod imp {
 
     pub fn boot_panic_write(bytes: &[u8]) {
         for &b in bytes {
-            let mut budget = SPIN_BUDGET;
-            while fifo_full() {
-                if budget == 0 {
-                    return;
-                }
-                budget -= 1;
+            if fifo_full() {
+                // Flush whatever's queued, drop the rest, no spin.
+                unsafe { SERIAL_JTAG_CONF_REG.write_volatile(0b001) };
+                return;
             }
             unsafe { SERIAL_JTAG_FIFO_REG.write_volatile(b as u32) };
         }
@@ -132,19 +129,108 @@ mod imp {
 pub use imp::{ConsoleRx, ConsoleTx, ConsoleTxAsync, setup};
 use imp::boot_panic_write;
 
-// ---- target-agnostic pipeline ----
+// ---- byte-level ring buffer (target-agnostic) ----
 
-/// Per-line buffer. Must fit the largest record: the `[hil-cat]` CSV dump emits
-/// lines up to 320 B + the prefix + CRLF. Too small truncates and loses the
-/// newline, merging records (corrupts the dump).
+/// Ring capacity. ~50 lines × 80 B = ~4 KB — same memory budget as the prior
+/// `Channel<Line, 12>` (~4.2 KB), and large enough to hold a message-only
+/// panic plus the immediate pre-failure context. Bump if `esp-backtrace` is
+/// ever wired up (a trace would add several KB).
+const RING_SIZE: usize = 4096;
+/// Per-line stack-format buffer. Largest record is the `[hil-cat]` CSV dump
+/// (≈ 320 B + prefix + CRLF).
 const LINE_CAP: usize = 352;
-/// Queue depth — buffers bursts (the `[host]` init, a `[hil-cat]` dump) so they
-/// pace out, not FIFO-drop. SD-I/O-paced producers let the drain keep up.
-const QUEUE_DEPTH: usize = 12;
-type Line = String<LINE_CAP>;
 
-static QUEUE: Channel<CriticalSectionRawMutex, Line, QUEUE_DEPTH> = Channel::new();
-static ASYNC_MODE: AtomicBool = AtomicBool::new(false);
+/// Byte ring with overwrite-on-full. Single struct held inside the mutex.
+struct Ring {
+    buf: [u8; RING_SIZE],
+    head: usize, // write position (next byte to be written)
+    tail: usize, // read position (next byte to be read)
+    full: bool,  // disambiguates empty vs full when head == tail
+}
+
+impl Ring {
+    const fn new() -> Self {
+        Self { buf: [0; RING_SIZE], head: 0, tail: 0, full: false }
+    }
+
+    /// Append `bytes`; on full, the **oldest** bytes are overwritten. Always
+    /// succeeds — no return value, no error path, no waiting. Called inside
+    /// the mutex by both the log macros and `send_line`.
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.buf[self.head] = b;
+            self.head = (self.head + 1) % RING_SIZE;
+            if self.full {
+                // Overwrote the tail byte — advance tail to track it.
+                self.tail = (self.tail + 1) % RING_SIZE;
+            } else if self.head == self.tail {
+                self.full = true;
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.full && self.head == self.tail
+    }
+
+    /// Copy up to `dst.len()` readable bytes into `dst` and advance `tail`.
+    /// Bytes are taken from a single contiguous slice — if the ring wraps,
+    /// the caller will get the rest on the next call. Returns bytes copied.
+    fn read_and_consume(&mut self, dst: &mut [u8]) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        // Length of the next contiguous readable slice.
+        let n_contig = if self.head > self.tail {
+            self.head - self.tail
+        } else {
+            RING_SIZE - self.tail
+        };
+        let n = n_contig.min(dst.len());
+        let end = self.tail + n;
+        dst[..n].copy_from_slice(&self.buf[self.tail..end]);
+        self.tail = end % RING_SIZE;
+        if n > 0 {
+            self.full = false;
+        }
+        n
+    }
+}
+
+/// The ring + a CriticalSectionRawMutex so any task on any core can write
+/// safely. Lock scope is per-op (one memcpy + a few indices) — never held
+/// across an `.await`, never spans more than one log line.
+static RING: BlockingMutex<CriticalSectionRawMutex, RefCell<Ring>> =
+    BlockingMutex::new(RefCell::new(Ring::new()));
+
+/// Producer signal — woken after every ring write so the drain can resume
+/// when the ring was empty. Idempotent (multiple signals before a wait =
+/// one wait wakes); the drain reads everything it can per wakeup.
+static DRAIN_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Stack-format a line with a header, push it into the ring, signal the drain.
+/// O(1) on the caller side: brief CS for the memcpy + an idempotent signal.
+fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
+    let now = embassy_time::Instant::now();
+    let mut line: String<LINE_CAP> = String::new();
+    // "[SSSSS.mmm LEVEL ] msg". Format WITHOUT the CRLF, then guarantee
+    // termination so an over-long record is truncated-but-terminated, never
+    // merged into the next (which corrupts e.g. the [hil-cat] CSV dump).
+    let _ = write!(
+        line,
+        "[{:05}.{:03} {:<5}] {}",
+        now.as_secs(),
+        now.as_millis() % 1000,
+        level,
+        args
+    );
+    while line.len() + 2 > LINE_CAP {
+        let _ = line.pop();
+    }
+    let _ = line.push_str("\r\n");
+    RING.lock(|r| r.borrow_mut().write(line.as_bytes()));
+    DRAIN_SIGNAL.signal(());
+}
 
 struct ConsoleLogger;
 
@@ -154,30 +240,16 @@ impl log::Log for ConsoleLogger {
     }
 
     fn log(&self, record: &log::Record) {
-        let now = embassy_time::Instant::now();
-        let mut line: Line = String::new();
-        // "[SSSSS.mmm LEVEL ] msg". Format WITHOUT the CRLF, then guarantee
-        // termination so an over-long record is truncated-but-terminated, never
-        // merged into the next (which corrupts e.g. the [hil-cat] CSV dump).
-        let _ = write!(
-            line,
-            "[{:05}.{:03} {:<5}] {}",
-            now.as_secs(),
-            now.as_millis() % 1000,
-            record.level(),
-            record.args()
-        );
-        while line.len() + 2 > LINE_CAP {
-            let _ = line.pop();
-        }
-        let _ = line.push_str("\r\n");
-        if ASYNC_MODE.load(Ordering::Relaxed) {
-            // Non-blocking: drop on a full queue rather than block (never wedges
-            // the radio). Bulk dumps use back-pressuring `send_line` instead.
-            let _ = QUEUE.try_send(line);
-        } else {
-            boot_panic_write(line.as_bytes());
-        }
+        // Format level as a string so the column width matches the prior layout
+        // exactly (existing log scrapers depend on it).
+        let lvl = match record.level() {
+            log::Level::Error => "ERROR",
+            log::Level::Warn => "WARN ",
+            log::Level::Info => "INFO ",
+            log::Level::Debug => "DEBUG",
+            log::Level::Trace => "TRACE",
+        };
+        push_line(lvl, *record.args());
     }
 
     fn flush(&self) {}
@@ -185,69 +257,82 @@ impl log::Log for ConsoleLogger {
 
 static LOGGER: ConsoleLogger = ConsoleLogger;
 
-/// Register the console as the global `log` backend. Call once, early, before
-/// the first log line. Starts in BLOCKING mode (the raw FIFO writer) until
-/// [`enable_async`].
+/// Register the console as the global `log` backend. Call once, early. The
+/// ring is statically initialised, so producers can write immediately —
+/// pre-[`drain_task`] writes simply accumulate in the ring and are flushed
+/// once the drain runs.
 pub fn init() {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
 }
 
-/// Switch producers from the blocking writer to the async channel. Call after
-/// the [`drain_task`] has been spawned.
-pub fn enable_async() {
-    ASYNC_MODE.store(true, Ordering::Relaxed);
-}
+/// Compatibility no-op. The prior design switched producers from a blocking
+/// writer to an async queue here; with the ring buffer the producer path is
+/// the same in every phase (boot and steady-state both write to the ring),
+/// so there's nothing to switch. Kept so binaries don't have to change in
+/// this commit — can be removed once both binaries stop calling it.
+pub fn enable_async() {}
 
-/// Back-pressuring emit for BULK dumps (the `[hil-cat]` CSV read-back): formats
-/// the line and AWAITS channel space instead of dropping, so a fast dump self-
-/// paces to the drain rate and can't overflow at 1 Mbaud. Normal log records
-/// stay non-blocking (drop-on-full) via `log::Log`, so logging never wedges the
-/// radio. Call from a task whose executor also runs [`drain_task`]; before async
-/// mode (boot), falls back to the blocking writer.
+/// Bulk-dump emit (HIL `:cat` CSV read-back). Same semantics as `log!()`:
+/// O(1), never blocks, never back-pressures, never returns an error. If the
+/// dumper outruns the drain, the **oldest** bytes are overwritten — the
+/// caller self-paces (e.g. a small `Timer::after` between lines) if it can't
+/// tolerate loss. Kept `async fn` for source-compat with existing callers
+/// (the future is immediately Ready).
 pub async fn send_line(args: core::fmt::Arguments<'_>) {
-    let now = embassy_time::Instant::now();
-    let mut line: Line = String::new();
-    let _ = write!(
-        line,
-        "[{:05}.{:03} INFO ] {}",
-        now.as_secs(),
-        now.as_millis() % 1000,
-        args
-    );
-    while line.len() + 2 > LINE_CAP {
-        let _ = line.pop();
-    }
-    let _ = line.push_str("\r\n");
-    if ASYNC_MODE.load(Ordering::Relaxed) {
-        QUEUE.send(line).await; // back-pressure: yields until the drain frees a slot
-    } else {
-        boot_panic_write(line.as_bytes());
-    }
+    push_line("INFO ", args);
 }
 
-/// The single console writer: drains the queue, writing each line interrupt-
-/// driven via the target's async TX sink (it sleeps during the FIFO drain — no
-/// interrupts-off, no cross-core contention). Spawn once from the binary's main
+/// The single console writer: pulls contiguous slices from the ring and
+/// writes them via the target's async TX sink. `write_all().await` parks on
+/// the TX-done IRQ when the FIFO is full — no spin, no interrupts-off, no
+/// cross-core contention. When the ring is empty, awaits [`DRAIN_SIGNAL`]
+/// (woken by every producer write). Spawn once from the binary's main
 /// (fire27: pass `tx.into_async()`; cores3: the split TX is already async).
 #[embassy_executor::task]
 pub async fn drain_task(mut tx: ConsoleTxAsync<'static>) {
+    // Per-iteration scratch. 256 B on the task stack is fine; the loop runs
+    // again immediately to drain whatever didn't fit.
+    let mut scratch = [0u8; 256];
     loop {
-        let line = QUEUE.receive().await;
-        let _ = tx.write_all(line.as_bytes()).await;
+        let n = RING.lock(|r| r.borrow_mut().read_and_consume(&mut scratch));
+        if n == 0 {
+            DRAIN_SIGNAL.wait().await;
+            continue;
+        }
+        // Write outside the lock — `.await` is NEVER inside the ring CS.
+        let _ = tx.write_all(&scratch[..n]).await;
     }
 }
 
-/// Shared message-only panic handler for both targets. Prints the panic info via
-/// the raw blocking writer (NOT the async queue — the drain task is gone by now),
-/// then halts so the fault stays visible (no silent reset masking it as a
-/// reboot). No stack walk: message-only on both targets (deliberate, symmetric),
-/// which is why neither esp-backtrace nor esp-println is pulled in. The binary's
-/// `#[panic_handler]` is a one-line wrapper around this.
+/// Shared message-only panic handler for both targets. Pushes the panic info
+/// into the ring (alongside the pre-panic context that's already there), then
+/// **synchronously drains the ring** via the raw FIFO poker — the async drain
+/// task is gone (or never started) so it can't service the ring for us. After
+/// the drain, halts so the fault stays visible. No stack walk: message-only
+/// on both targets (deliberate, symmetric), which is why neither `esp-backtrace`
+/// nor `esp-println` is pulled in. The binary's `#[panic_handler]` is a
+/// one-line wrapper around this.
 pub fn on_panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    // Push the panic into the ring. Producer-side is unchanged from any
+    // normal log: brief CS, no await.
     let mut line: String<256> = String::new();
     let _ = write!(line, "\r\n[PANIC] {}\r\n", info);
-    boot_panic_write(line.as_bytes());
+    RING.lock(|r| r.borrow_mut().write(line.as_bytes()));
+
+    // Synchronously drain everything in the ring via `boot_panic_write`.
+    // Pull small chunks so the lock is brief and the raw write happens
+    // outside the borrow (the write is itself sync, so the CS scope is still
+    // per-chunk — but keeping them separate is cleaner).
+    loop {
+        let mut chunk = [0u8; 64];
+        let n = RING.lock(|r| r.borrow_mut().read_and_consume(&mut chunk));
+        if n == 0 {
+            break;
+        }
+        boot_panic_write(&chunk[..n]);
+    }
+
     loop {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
