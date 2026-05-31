@@ -7,7 +7,7 @@
 //! A single `log::Log` backend formats each record and either (steady state)
 //! `try_send`s it to the cross-core channel drained by [`drain_task`] on the
 //! target's async TX sink, or (boot + panic) writes it via the raw per-target
-//! `imp::blocking_write`. Producers never block on the sink and the single drain
+//! `imp::boot_panic_write`. Producers never block on the sink and the single drain
 //! task is the sole writer — so there's no cross-core print-lock contention to
 //! starve the radio (the recurring-freeze root cause).
 //!
@@ -68,7 +68,7 @@ mod imp {
     const TX_FIFO_DEPTH: u32 = 128;
     const SPIN_BUDGET: u32 = 4_000;
 
-    pub fn blocking_write(bytes: &[u8]) {
+    pub fn boot_panic_write(bytes: &[u8]) {
         let mut budget = SPIN_BUDGET;
         for &b in bytes {
             while unsafe { (UART0_STATUS_REG.read_volatile() >> 16) & 0xFF } >= TX_FIFO_DEPTH - 2 {
@@ -114,7 +114,7 @@ mod imp {
         unsafe { SERIAL_JTAG_CONF_REG.read_volatile() & 0b010 == 0 }
     }
 
-    pub fn blocking_write(bytes: &[u8]) {
+    pub fn boot_panic_write(bytes: &[u8]) {
         for &b in bytes {
             let mut budget = SPIN_BUDGET;
             while fifo_full() {
@@ -130,7 +130,7 @@ mod imp {
 }
 
 pub use imp::{ConsoleRx, ConsoleTx, ConsoleTxAsync, setup};
-use imp::blocking_write;
+use imp::boot_panic_write;
 
 // ---- target-agnostic pipeline ----
 
@@ -176,7 +176,7 @@ impl log::Log for ConsoleLogger {
             // the radio). Bulk dumps use back-pressuring `send_line` instead.
             let _ = QUEUE.try_send(line);
         } else {
-            blocking_write(line.as_bytes());
+            boot_panic_write(line.as_bytes());
         }
     }
 
@@ -222,7 +222,7 @@ pub async fn send_line(args: core::fmt::Arguments<'_>) {
     if ASYNC_MODE.load(Ordering::Relaxed) {
         QUEUE.send(line).await; // back-pressure: yields until the drain frees a slot
     } else {
-        blocking_write(line.as_bytes());
+        boot_panic_write(line.as_bytes());
     }
 }
 
@@ -247,7 +247,7 @@ pub async fn drain_task(mut tx: ConsoleTxAsync<'static>) {
 pub fn on_panic(info: &core::panic::PanicInfo<'_>) -> ! {
     let mut line: String<256> = String::new();
     let _ = write!(line, "\r\n[PANIC] {}\r\n", info);
-    blocking_write(line.as_bytes());
+    boot_panic_write(line.as_bytes());
     loop {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
