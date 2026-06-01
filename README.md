@@ -53,8 +53,10 @@ pipeline AND the per-target hardware. No `esp-println`/`esp-backtrace`.
   drains the cross-core queue to the async TX sink.
 - `send_line(Arguments)` — back-pressuring emit for bulk dumps (the `:cat`
   read-back); awaits queue space instead of dropping.
-- `blocking_write(&[u8])` (internal) — boot/panic raw-FIFO poke, bounded (drops on
-  a full/host-less FIFO so it never wedges the radio).
+- `boot_panic_write(&[u8])` (internal) — boot/panic raw-FIFO poke, bounded (drops on
+  a full/host-less FIFO so it never wedges the radio). Bounded-spin on TX-FIFO
+  status — an anti-pattern reserved for the two contexts where the async drain
+  cannot run; do NOT call from steady-state code.
 - `on_panic(&PanicInfo) -> !` — shared message-only panic print + halt, used by
   both binaries' `#[panic_handler]`.
 
