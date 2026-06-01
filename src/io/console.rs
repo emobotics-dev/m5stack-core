@@ -16,9 +16,12 @@
 //! binds the IRQ to the *calling* core, so the binary does it from `main` (PRO).
 //!
 //! The firmware's `alternator_regulator::logger::cat_line` calls [`send_line`]
-//! for the `:cat` dump (same ring write, lossy under overrun — caller self-paces
-//! if it cannot tolerate loss). alternator-regulator depends on this crate ONLY
-//! for that — optional + esp-hal-gated, so host builds never pull it.
+//! for the `:cat` dump. Unlike `log!()`, [`send_line`] is **back-pressuring**:
+//! it awaits ring space before writing, so a fast read-back self-paces to the TX
+//! drain rate and is lossless (a plain overwrite-on-full write dropped lines and
+//! made `log_interval`'s read-back show false gaps). alternator-regulator depends
+//! on this crate ONLY for that — optional + esp-hal-gated, so host builds never
+//! pull it.
 
 use core::cell::RefCell;
 use core::fmt::Write as _;
@@ -146,31 +149,60 @@ struct Ring {
     head: usize, // write position (next byte to be written)
     tail: usize, // read position (next byte to be read)
     full: bool,  // disambiguates empty vs full when head == tail
+    /// Bytes silently overwritten (oldest discarded) since the last drain read.
+    /// The drain turns this into a VISIBLE `[CONSOLE-DROP …]` marker so a
+    /// ring overrun never looks like a clean gap (which previously made
+    /// `log_interval`'s read-back fail mysteriously). Saturates.
+    dropped: u32,
 }
 
 impl Ring {
     const fn new() -> Self {
-        Self { buf: [0; RING_SIZE], head: 0, tail: 0, full: false }
+        Self { buf: [0; RING_SIZE], head: 0, tail: 0, full: false, dropped: 0 }
     }
 
     /// Append `bytes`; on full, the **oldest** bytes are overwritten. Always
     /// succeeds — no return value, no error path, no waiting. Called inside
-    /// the mutex by both the log macros and `send_line`.
+    /// the mutex by both the log macros and `send_line`. Each overwritten byte
+    /// bumps `dropped` so the drain can flag the loss.
     fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {
             self.buf[self.head] = b;
             self.head = (self.head + 1) % RING_SIZE;
             if self.full {
-                // Overwrote the tail byte — advance tail to track it.
+                // Overwrote the tail byte — advance tail to track it, and
+                // record the drop so it surfaces downstream.
                 self.tail = (self.tail + 1) % RING_SIZE;
+                self.dropped = self.dropped.saturating_add(1);
             } else if self.head == self.tail {
                 self.full = true;
             }
         }
     }
 
+    /// Read + reset the overwritten-byte counter (drain-side).
+    fn take_dropped(&mut self) -> u32 {
+        core::mem::take(&mut self.dropped)
+    }
+
     fn is_empty(&self) -> bool {
         !self.full && self.head == self.tail
+    }
+
+    /// Bytes currently queued (unread).
+    fn used(&self) -> usize {
+        if self.full {
+            RING_SIZE
+        } else if self.head >= self.tail {
+            self.head - self.tail
+        } else {
+            RING_SIZE - self.tail + self.head
+        }
+    }
+
+    /// Free bytes available before overwrite-on-full would discard data.
+    fn free(&self) -> usize {
+        RING_SIZE - self.used()
     }
 
     /// Copy up to `dst.len()` readable bytes into `dst` and advance `tail`.
@@ -208,14 +240,18 @@ static RING: BlockingMutex<CriticalSectionRawMutex, RefCell<Ring>> =
 /// one wait wakes); the drain reads everything it can per wakeup.
 static DRAIN_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Stack-format a line with a header, push it into the ring, signal the drain.
-/// O(1) on the caller side: brief CS for the memcpy + an idempotent signal.
-fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
+/// Drain → producer signal — raised after every drain read so a *back-pressuring*
+/// producer ([`send_line`], the HIL `:cat` dump) can wake and retry once the ring
+/// has freed space. The non-blocking hot log path ([`push_line`]) ignores it.
+static SPACE_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Stack-format a line with a `[SSSSS.mmm LEVEL ] msg\r\n` header. Formats
+/// WITHOUT the CRLF first, then guarantees termination so an over-long record is
+/// truncated-but-terminated, never merged into the next (which would corrupt the
+/// `[hil-cat]` CSV dump).
+fn format_line(level: &str, args: core::fmt::Arguments<'_>) -> String<LINE_CAP> {
     let now = embassy_time::Instant::now();
     let mut line: String<LINE_CAP> = String::new();
-    // "[SSSSS.mmm LEVEL ] msg". Format WITHOUT the CRLF, then guarantee
-    // termination so an over-long record is truncated-but-terminated, never
-    // merged into the next (which corrupts e.g. the [hil-cat] CSV dump).
     let _ = write!(
         line,
         "[{:05}.{:03} {:<5}] {}",
@@ -228,6 +264,14 @@ fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
         let _ = line.pop();
     }
     let _ = line.push_str("\r\n");
+    line
+}
+
+/// Format + push a line into the ring, signal the drain. O(1) on the caller
+/// side: brief CS for the memcpy + an idempotent signal. **Non-blocking** —
+/// on full the oldest bytes are overwritten (protects time-critical producers).
+fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
+    let line = format_line(level, args);
     RING.lock(|r| r.borrow_mut().write(line.as_bytes()));
     DRAIN_SIGNAL.signal(());
 }
@@ -273,14 +317,38 @@ pub fn init() {
 /// this commit — can be removed once both binaries stop calling it.
 pub fn enable_async() {}
 
-/// Bulk-dump emit (HIL `:cat` CSV read-back). Same semantics as `log!()`:
-/// O(1), never blocks, never back-pressures, never returns an error. If the
-/// dumper outruns the drain, the **oldest** bytes are overwritten — the
-/// caller self-paces (e.g. a small `Timer::after` between lines) if it can't
-/// tolerate loss. Kept `async fn` for source-compat with existing callers
-/// (the future is immediately Ready).
+/// Bulk-dump emit (HIL `:cat` CSV read-back) — **back-pressuring** (lossless).
+/// Unlike the hot log path ([`push_line`], which overwrites-oldest and never
+/// blocks to protect time-critical producers like RWBLE), this AWAITS until the
+/// ring has room for the whole line before writing, then signals the drain. So a
+/// fast `:cat` dump self-paces to the TX drain rate instead of overflowing the
+/// ~4 KB ring and dropping lines (which made `log_interval`'s read-back show
+/// false gaps). Safe because the dump runs on a non-time-critical task and can
+/// tolerate await latency; the `log!()` path does NOT use this.
 pub async fn send_line(args: core::fmt::Arguments<'_>) {
-    push_line("INFO ", args);
+    let line = format_line("INFO ", args);
+    loop {
+        // Reserve only if the WHOLE line fits — a partial write would still
+        // overwrite-on-full and corrupt the dump. LINE_CAP < RING_SIZE, so it
+        // always fits once the drain has caught up.
+        let wrote = RING.lock(|r| {
+            let mut r = r.borrow_mut();
+            if r.free() >= line.len() {
+                r.write(line.as_bytes());
+                true
+            } else {
+                false
+            }
+        });
+        if wrote {
+            DRAIN_SIGNAL.signal(());
+            return;
+        }
+        // Ring full — wait for the drain to free space, then retry. (No lost
+        // wakeup: SPACE_SIGNAL latches, so a signal between the check above and
+        // this wait still wakes us.)
+        SPACE_SIGNAL.wait().await;
+    }
 }
 
 /// The single console writer: pulls contiguous slices from the ring and
@@ -295,11 +363,27 @@ pub async fn drain_task(mut tx: ConsoleTxAsync<'static>) {
     // again immediately to drain whatever didn't fit.
     let mut scratch = [0u8; 256];
     loop {
-        let n = RING.lock(|r| r.borrow_mut().read_and_consume(&mut scratch));
+        // Read the next slice AND any overwrite count in one lock.
+        let (n, dropped) = RING.lock(|r| {
+            let mut r = r.borrow_mut();
+            let n = r.read_and_consume(&mut scratch);
+            (n, r.take_dropped())
+        });
+        // Surface a ring overrun as a LOUD, greppable marker at the
+        // discontinuity — so dropped bytes never masquerade as a clean gap
+        // (the silent loss that made `log_interval`'s read-back fail). The
+        // host can grep `[CONSOLE-DROP` to fail loudly instead of guessing.
+        if dropped > 0 {
+            let mut mark: String<48> = String::new();
+            let _ = write!(mark, "\r\n[CONSOLE-DROP {}B]\r\n", dropped);
+            let _ = tx.write_all(mark.as_bytes()).await;
+        }
         if n == 0 {
             DRAIN_SIGNAL.wait().await;
             continue;
         }
+        // Freed `n` bytes — wake any back-pressuring producer (the :cat dump).
+        SPACE_SIGNAL.signal(());
         // Write outside the lock — `.await` is NEVER inside the ring CS.
         let _ = tx.write_all(&scratch[..n]).await;
     }
