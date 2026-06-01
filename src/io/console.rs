@@ -362,6 +362,9 @@ pub async fn drain_task(mut tx: ConsoleTxAsync<'static>) {
     // Per-iteration scratch. 256 B on the task stack is fine; the loop runs
     // again immediately to drain whatever didn't fit.
     let mut scratch = [0u8; 256];
+    // Overflow-marker rate-limit state (see below).
+    let mut drop_accum: u32 = 0;
+    let mut last_drop_report = embassy_time::Instant::now();
     loop {
         // Read the next slice AND any overwrite count in one lock.
         let (n, dropped) = RING.lock(|r| {
@@ -369,14 +372,29 @@ pub async fn drain_task(mut tx: ConsoleTxAsync<'static>) {
             let n = r.read_and_consume(&mut scratch);
             (n, r.take_dropped())
         });
-        // Surface a ring overrun as a LOUD, greppable marker at the
-        // discontinuity — so dropped bytes never masquerade as a clean gap
-        // (the silent loss that made `log_interval`'s read-back fail). The
-        // host can grep `[CONSOLE-DROP` to fail loudly instead of guessing.
-        if dropped > 0 {
-            let mut mark: String<48> = String::new();
-            let _ = write!(mark, "\r\n[CONSOLE-DROP {}B]\r\n", dropped);
-            let _ = tx.write_all(mark.as_bytes()).await;
+        drop_accum = drop_accum.saturating_add(dropped);
+        // Surface a ring overrun as a LOUD, greppable marker so dropped bytes
+        // never masquerade as a clean gap (the silent loss that made
+        // `log_interval`'s read-back fail; host can grep `[CONSOLE-DROP`).
+        //
+        // RATE-LIMITED + coalesced: the marker is written by the drain straight
+        // to TX (bypassing the ring, so it costs no ring space and can't itself
+        // be overwritten), but it still shares TX bandwidth + drain time with
+        // the data it's preserving. Emitting it every 256-B chunk under a
+        // sustained log storm would steal drain throughput and AMPLIFY the
+        // overrun (more drops → more markers → slower drain). So emit at most
+        // ~4×/s with the accumulated byte count, plus an immediate flush the
+        // moment the ring drains (episode end). Never blocks/back-pressures
+        // producers — it only delays the drain slightly, now bounded.
+        if drop_accum > 0 {
+            let now = embassy_time::Instant::now();
+            if n == 0 || (now - last_drop_report).as_millis() >= 250 {
+                let mut mark: String<48> = String::new();
+                let _ = write!(mark, "\r\n[CONSOLE-DROP {}B]\r\n", drop_accum);
+                let _ = tx.write_all(mark.as_bytes()).await;
+                drop_accum = 0;
+                last_drop_report = now;
+            }
         }
         if n == 0 {
             DRAIN_SIGNAL.wait().await;
