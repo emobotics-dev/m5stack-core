@@ -6,5 +6,6 @@
 #[macro_use]
 mod fmt;
 
+pub mod board;
 pub mod driver;
 pub mod io;
