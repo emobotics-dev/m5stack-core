@@ -38,6 +38,30 @@ Async task loops using `embassy_time::Ticker` with `fn(...)` callbacks for decou
 | `ow_temp` | 3 s | `fn(&[(u64, f32)])` — address/temperature pairs |
 | `shared_i2c` | — | `SharedI2cBus` async mutex for multi-task I2C access |
 
+### Memory (`mem::`)
+
+PSRAM heap integration. Both boards have external SPI PSRAM (Fire27 ~4 MB,
+CoreS3 ~8 MB). `mem::init_psram_heap(peripherals.PSRAM)` maps it and registers
+it as an external region of the `esp-alloc` global heap, returning the free
+PSRAM bytes. Applications can then allocate from it either implicitly (the
+global allocator spills into PSRAM after internal DRAM) or **explicitly** using
+the re-exported marker allocators with `allocator_api2` containers:
+
+```rust
+use allocator_api2::vec::Vec;
+use m5stack_core::mem::{ExternalMemory, InternalMemory};
+
+let psram_free = m5stack_core::mem::init_psram_heap(peripherals.PSRAM);
+let mut big: Vec<u8, _> = Vec::with_capacity_in(512 * 1024, ExternalMemory); // PSRAM
+let mut dma: Vec<u8, _> = Vec::with_capacity_in(4 * 1024, InternalMemory);   // DRAM
+```
+
+Caveats: keep `Atomic*`-bearing types out of PSRAM (broken atomics on
+ESP32/-S3); the ESP32 (Fire27) cannot DMA out of PSRAM (keep DMA buffers in
+`InternalMemory`); build with optimizations (PSRAM timing calibration needs
+`opt-level` > 0 — both profiles already use `"s"`). No esp-hal Cargo feature is
+required — PSRAM is available under the already-enabled `unstable` feature.
+
 ### Serial console (`io::console`)
 
 The **complete** async logging console for the firmware — both the target-agnostic

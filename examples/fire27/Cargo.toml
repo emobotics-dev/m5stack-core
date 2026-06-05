@@ -36,6 +36,7 @@ embedded-graphics    = "0.8.1"
 lcd-async            = "0.1.1"
 
 # misc
+allocator-api2       = { version = "0.3.0", default-features = false, features = ["alloc"] }
 embedded-hal         = "1.0.0"
 log                  = "0.4"
 static_cell          = { version = "2.1.1", features = ["nightly"] }

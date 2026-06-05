@@ -19,6 +19,7 @@ serial-cmd = []
 
 [dependencies]
 # esp-hal family
+esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
 esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["ble", "esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
