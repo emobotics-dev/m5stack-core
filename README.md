@@ -135,7 +135,7 @@ Display demo with AW9523B/AXP2101 init, I2C scan, and touch polling.
 cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf
 ```
 
-GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35(muxed), RST via AW9523B, BL via AXP2101 DLDO1.
+GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1.
 
 ## Design
 
@@ -143,7 +143,7 @@ GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35(muxed), RST via 
 - **`SharedI2cBus`** wraps `Mutex<RawMutex, I2c>` — safe for single-executor async tasks
 - **Resource pattern**: `*Resources` structs bundle peripherals, consumed by `into_driver()` or task loops
 - **IO loops** use error counting with threshold (e.g. PPS breaks after 10 consecutive errors)
-- **GPIO35 muxing** (CoreS3): `Gpio35Dc` implements `OutputPin` via direct register writes — GPIO35 is shared between SPI MISO and display DC
+- **GPIO35 (CoreS3)**: GPIO35 is the display DC line (and is hardware-shared with SPI2 MISO). The cores3 example uses no SD/MISO, so it drives DC as a plain `Output` — `Output::new` configures the pad's IO-MUX so the pin actually drives. (A consumer that *also* needs MISO on the same bus, like alternator-regulator's SD card, must instead claim GPIO35 as MISO and toggle DC via register-level muxing.)
 
 ## License
 

@@ -20,7 +20,7 @@ use embedded_graphics::{
     text::Text,
 };
 esp_bootloader_esp_idf::esp_app_desc!();
-use embedded_hal::digital::{ErrorType, OutputPin};
+use embedded_hal::digital::OutputPin;
 use esp_hal::{
     gpio::{AnyPin, Level, Output, OutputConfig},
     i2c::master::{BusTimeout, Config as I2cConfig, I2c},
@@ -49,34 +49,6 @@ const W: usize = 320;
 const H: usize = 240;
 const STRIP_H: usize = 40;
 const STRIP_BYTES: usize = W * STRIP_H * 2;
-
-/// GPIO35 DC pin via direct register writes (GPIO35 is muxed MISO/DC on CoreS3).
-const BIT: u32 = 1 << (35 - 32);
-
-struct Gpio35Dc;
-
-impl ErrorType for Gpio35Dc {
-    type Error = core::convert::Infallible;
-}
-
-impl OutputPin for Gpio35Dc {
-    fn set_low(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1tc().write(|w| w.bits(BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(BIT));
-        }
-        Ok(())
-    }
-    fn set_high(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1ts().write(|w| w.bits(BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(BIT));
-        }
-        Ok(())
-    }
-}
 
 #[esp_rtos::main]
 async fn main(_spawner: embassy_executor::Spawner) {
@@ -162,7 +134,16 @@ async fn main(_spawner: embassy_executor::Spawner) {
         display_cs,
         spi_config.with_frequency(Rate::from_khz(40_000)).clone(),
     );
-    let di = SpiInterface::new(spi_device, Gpio35Dc);
+    // Display DC on GPIO35. The example doesn't use SD/MISO, so GPIO35 is a
+    // plain output here — `Output::new` configures the pad's IO-MUX so the pin
+    // actually drives (a bare GPIO-register hack leaves the pad unrouted and DC
+    // never toggles, so the panel never wakes → black screen).
+    let dc = Output::new(
+        AnyPin::from(peripherals.GPIO35),
+        Level::Low,
+        OutputConfig::default(),
+    );
+    let di = SpiInterface::new(spi_device, dc);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ILI9342CRgb565, di)
         .invert_colors(ColorInversion::Inverted)
