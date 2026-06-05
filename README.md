@@ -169,10 +169,14 @@ pub async fn ow_loop(resources: OnewireResources<'static>, on_temperatures: fn(&
 
 ### Fire27 (ESP32)
 
-Display demo with I2C scan and button polling.
+Display demo with I2C scan, button polling, and WiFi STA bring-up (DHCP + scan);
+the IP is shown on the LCD. Set `WIFI_SSID`/`WIFI_PASSWORD` to join a network
+(unset → WiFi skipped, display still runs). `--features coex` adds a BLE peer-MAC
+scanner alongside, listing MACs under the IP (build `--release`).
 
 ```bash
-cargo +esp run --release -p fire27
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --features coex
 ```
 
 GPIO: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37.
