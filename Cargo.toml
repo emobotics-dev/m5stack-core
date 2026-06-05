@@ -16,6 +16,10 @@ cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-hal-r
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
+# External PSRAM heap support (the `mem` module). Enabling it activates a
+# build-time guard requiring opt-level > 0 (build.rs) and the compile-time
+# `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
+psram = []
 
 [dependencies]
 # esp-hal family
@@ -35,6 +39,7 @@ embassy-sync        = "0.8"
 embassy-time        = "0.5.0"
 
 # misc
+allocator-api2      = { version = "0.3.0", default-features = false, features = ["alloc"] }
 fixed               = "1.29.0"
 heapless            = { version = "0.9.1", features = ["nightly"] }
 log                 = "0.4"

@@ -8,7 +8,6 @@
 extern crate alloc;
 
 use panic_halt as _;
-use allocator_api2::vec::Vec;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
@@ -93,8 +92,9 @@ async fn main(_spawner: embassy_executor::Spawner) {
     // 320x240x2 framebuffer could live here instead of the strip workaround.
     let psram_free = m5stack_core::mem::init_psram_heap(peripherals.PSRAM);
     {
-        let mut scratch: Vec<u8, _> =
-            Vec::with_capacity_in(256 * 1024, m5stack_core::mem::ExternalMemory);
+        // Checked PSRAM allocation: `psram_vec` bounds `T: PsramSafe`, so an
+        // atomic-bearing element type would be a compile error here.
+        let mut scratch = m5stack_core::mem::psram_vec::<u8>(256 * 1024);
         scratch.resize(256 * 1024, 0xa5);
         rprintln!(
             "PSRAM: {} KiB free, 256 KiB scratch @ {:p}",

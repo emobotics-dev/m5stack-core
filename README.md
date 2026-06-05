@@ -40,27 +40,38 @@ Async task loops using `embassy_time::Ticker` with `fn(...)` callbacks for decou
 
 ### Memory (`mem::`)
 
-PSRAM heap integration. Both boards have external SPI PSRAM (Fire27 ~4 MB,
-CoreS3 ~8 MB). `mem::init_psram_heap(peripherals.PSRAM)` maps it and registers
-it as an external region of the `esp-alloc` global heap, returning the free
-PSRAM bytes. Applications can then allocate from it either implicitly (the
-global allocator spills into PSRAM after internal DRAM) or **explicitly** using
-the re-exported marker allocators with `allocator_api2` containers:
+PSRAM heap integration, behind the **`psram`** Cargo feature. Both boards have
+external SPI PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB). `mem::init_psram_heap(peripherals.PSRAM)`
+maps it and registers it as an external region of the `esp-alloc` global heap,
+returning the free PSRAM bytes. Applications can then allocate from it either
+implicitly (the global allocator spills into PSRAM after internal DRAM) or
+**explicitly** — preferably via the *checked* helpers:
 
 ```rust
-use allocator_api2::vec::Vec;
-use m5stack_core::mem::{ExternalMemory, InternalMemory};
+use m5stack_core::mem;
 
-let psram_free = m5stack_core::mem::init_psram_heap(peripherals.PSRAM);
-let mut big: Vec<u8, _> = Vec::with_capacity_in(512 * 1024, ExternalMemory); // PSRAM
-let mut dma: Vec<u8, _> = Vec::with_capacity_in(4 * 1024, InternalMemory);   // DRAM
+let psram_free = mem::init_psram_heap(peripherals.PSRAM);
+let mut big = mem::psram_vec::<u8>(512 * 1024);  // in PSRAM; atomics rejected at compile time
+let scratch = mem::psram_box([0u32; 1024]);      // in PSRAM
+let dma = mem::dma_buffer(4 * 1024);             // in internal DRAM; DMA-safe
 ```
 
-Caveats: keep `Atomic*`-bearing types out of PSRAM (broken atomics on
-ESP32/-S3); the ESP32 (Fire27) cannot DMA out of PSRAM (keep DMA buffers in
-`InternalMemory`); build with optimizations (PSRAM timing calibration needs
-`opt-level` > 0 — both profiles already use `"s"`). No esp-hal Cargo feature is
-required — PSRAM is available under the already-enabled `unstable` feature.
+The raw markers `ExternalMemory` / `InternalMemory` are still re-exported for
+direct `allocator_api2` use, but they skip the atomic check — use them only when
+you know what's going into PSRAM.
+
+The three hardware caveats are now mostly **enforced** rather than just
+documented:
+
+| Caveat | Enforcement |
+|--------|-------------|
+| No `Atomic*` in PSRAM (broken atomic RMW on ESP32/-S3) | **Compile-time** — `psram_box`/`psram_vec` bound `T: PsramSafe`, a `Send`/`Sync`-style auto trait with negative impls for the atomics. A type embedding an atomic (directly or transitively) won't compile. |
+| ESP32 (Fire27) can't DMA out of PSRAM | **Runtime `debug_assert`** — `mem::assert_dma_capable(buf)` rejects a PSRAM-backed buffer on Fire27 (no-op on CoreS3, which *can* DMA from PSRAM). Use `mem::dma_buffer(n)` to get an internal-DRAM buffer. |
+| PSRAM timing needs `opt-level` > 0 | **Build-time** — `build.rs` fails the build if the `psram` feature is on at `opt-level = 0`. Both profiles already use `"s"`. |
+
+`PsramSafe` requires the `esp` toolchain's `auto_traits` + `negative_impls`
+(enabled only when `psram` is on). No esp-hal Cargo feature is required — PSRAM
+itself is available under the already-enabled `unstable` feature.
 
 ### Serial console (`io::console`)
 
