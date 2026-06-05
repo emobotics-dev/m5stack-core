@@ -21,11 +21,19 @@ serial-cmd = []
 # `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
 psram = []
 
+# --- Radio (driver::radio) — orthogonal to the chip features; combine per app.
+# The radio is shared, so `coex` is required to run BLE and WiFi at once.
+ble      = ["esp-radio/ble"]                                  # driver::radio::ble (BleRadio → BleConnector)
+wifi     = ["esp-radio/wifi"]                                 # driver::radio::wifi (controller + scan)
+wifi-sta = ["wifi", "dep:embassy-net", "dep:embassy-futures"] # STA + DHCP embassy_net::Stack
+wifi-ap  = ["wifi", "dep:embassy-net", "dep:embassy-futures"] # reserved for AP mode (not yet implemented)
+coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BLE coexistence (extra RAM)
+
 [dependencies]
 # esp-hal family
 esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
-esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["ble", "esp-alloc", "unstable"] }
+esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
 esp-hal-rmt-onewire = { git = "https://github.com/emobotics-dev/esp-hal-rmt-onewire.git", branch = "local", default-features = false }
 
@@ -35,6 +43,8 @@ embedded-io-async   = "0.7.0"
 
 # Embassy
 embassy-executor    = { version = "0.10.0", features = ["nightly"] }
+embassy-futures     = { version = "0.1", optional = true }
+embassy-net         = { version = "0.8.0", optional = true, default-features = false, features = ["dhcpv4", "proto-ipv4", "medium-ethernet", "tcp", "udp", "dns"] }
 embassy-sync        = "0.8"
 embassy-time        = "0.5.0"
 
@@ -45,7 +55,6 @@ heapless            = { version = "0.9.1", features = ["nightly"] }
 log                 = "0.4"
 static_cell         = { version = "2.1.1", features = ["nightly"] }
 thiserror-no-std    = "2.0.2"
-trouble-host        = { git = "https://github.com/emobotics-dev/trouble.git", branch = "local-0.5.0", features = ["scan", "derive"] }
 
 [patch.crates-io]
 esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }

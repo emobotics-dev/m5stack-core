@@ -20,7 +20,7 @@ use embedded_graphics::{
     text::Text,
 };
 esp_bootloader_esp_idf::esp_app_desc!();
-use embedded_hal::digital::{ErrorType, OutputPin};
+use embedded_hal::digital::OutputPin;
 use esp_hal::{
     gpio::{AnyPin, Level, Output, OutputConfig},
     i2c::master::{BusTimeout, Config as I2cConfig, I2c},
@@ -38,52 +38,47 @@ use lcd_async::{
     options::{ColorInversion, ColorOrder},
     raw_framebuf::RawFrameBuf,
 };
+use embassy_net::StackResources;
+use esp_hal::rng::Rng;
 use m5stack_core::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
 use m5stack_core::driver::axp2101::Axp2101Driver;
 use m5stack_core::driver::ft6336u;
+#[cfg(feature = "coex")]
+use m5stack_core::driver::radio::ble::BleRadio;
+use m5stack_core::driver::radio::wifi::{self, AuthenticationMethod, IpSetup, StaCredentials};
 use m5stack_core::io::shared_i2c::SharedI2cBus;
 use rtt_target::rprintln;
 use static_cell::make_static;
+
+#[cfg(feature = "coex")]
+mod ble;
 
 const W: usize = 320;
 const H: usize = 240;
 const STRIP_H: usize = 40;
 const STRIP_BYTES: usize = W * STRIP_H * 2;
 
-/// GPIO35 DC pin via direct register writes (GPIO35 is muxed MISO/DC on CoreS3).
-const BIT: u32 = 1 << (35 - 32);
-
-struct Gpio35Dc;
-
-impl ErrorType for Gpio35Dc {
-    type Error = core::convert::Infallible;
-}
-
-impl OutputPin for Gpio35Dc {
-    fn set_low(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1tc().write(|w| w.bits(BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(BIT));
-        }
-        Ok(())
-    }
-    fn set_high(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1ts().write(|w| w.bits(BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(BIT));
-        }
-        Ok(())
-    }
-}
+/// WiFi credentials, supplied at build time. When `WIFI_SSID` is unset the demo
+/// skips WiFi and just runs the display:
+/// `WIFI_SSID=ssid WIFI_PASSWORD=pw cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf`
+const WIFI_SSID: Option<&str> = option_env!("WIFI_SSID");
+const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 
 #[esp_rtos::main]
-async fn main(_spawner: embassy_executor::Spawner) {
+async fn main(spawner: embassy_executor::Spawner) {
     // CRITICAL: esp_hal::init() MUST come before rtt_init_print!()
     let peripherals = esp_hal::init(esp_hal::Config::default());
     rtt_target::rtt_init_print!();
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+    // WiFi keeps its RX/TX buffers in internal SRAM. NOTE: esp-alloc's global
+    // heap holds at most 3 regions — this internal heap, the reclaimed region
+    // above, and the PSRAM region (registered below) are exactly 3, so do NOT
+    // add a 4th `heap_allocator!`. Coex (WiFi + BLE) needs more controller heap,
+    // so it gets a larger region.
+    #[cfg(not(feature = "coex"))]
+    esp_alloc::heap_allocator!(size: 64 * 1024);
+    #[cfg(feature = "coex")]
+    esp_alloc::heap_allocator!(size: 96 * 1024);
 
     // --- PSRAM heap (CoreS3 carries ~8 MB SPI PSRAM) ---
     // Registers PSRAM as an external heap region, then shows an application
@@ -106,6 +101,44 @@ async fn main(_spawner: embassy_executor::Spawner) {
     let tg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(tg0.timer0, sw_int.software_interrupt0);
+
+    // --- WiFi (STA + DHCP) ---
+    // The BSP brings up the station and the embassy-net stack; the app supplies a
+    // seed (here from the RNG; real apps derive it from their TRNG) and the
+    // `StackResources`, then spawns the runner task. `Stack` is `Copy`, so we
+    // keep a handle for the on-screen IP readout.
+    let mut wifi_stack: Option<embassy_net::Stack<'static>> = None;
+    if let Some(ssid) = WIFI_SSID {
+        let rng = Rng::new();
+        let seed = ((rng.random() as u64) << 32) | rng.random() as u64;
+        let resources = make_static!(StackResources::<3>::new());
+        let creds = StaCredentials {
+            ssid,
+            password: WIFI_PASSWORD.unwrap_or(""),
+            auth: AuthenticationMethod::Wpa2Personal,
+        };
+        match wifi::Wifi::new(peripherals.WIFI)
+            .and_then(|w| w.into_sta(creds, IpSetup::Dhcp, seed, resources))
+        {
+            Ok((stack, control, runner)) => {
+                wifi_stack = Some(stack);
+                spawner.spawn(wifi::wifi_task(runner).unwrap());
+                spawner.spawn(net_demo(stack, control).unwrap());
+            }
+            Err(e) => rprintln!("WiFi init failed: {:?}", e),
+        }
+    } else {
+        rprintln!("WiFi disabled (set WIFI_SSID/WIFI_PASSWORD to enable)");
+    }
+
+    // --- BLE peer-MAC scanner (coexistence) ---
+    #[cfg(feature = "coex")]
+    match BleRadio::new(peripherals.BT) {
+        Ok(ble) => {
+            spawner.spawn(ble::ble_scan_task(ble).unwrap());
+        }
+        Err(e) => rprintln!("BLE init failed: {:?}", e),
+    }
 
     // --- I2C ---
     let i2c = I2c::new(
@@ -162,7 +195,16 @@ async fn main(_spawner: embassy_executor::Spawner) {
         display_cs,
         spi_config.with_frequency(Rate::from_khz(40_000)).clone(),
     );
-    let di = SpiInterface::new(spi_device, Gpio35Dc);
+    // Display DC on GPIO35. The example doesn't use SD/MISO, so GPIO35 is a
+    // plain output here — `Output::new` configures the pad's IO-MUX so the pin
+    // actually drives (a bare GPIO-register hack leaves the pad unrouted and DC
+    // never toggles, so the panel never wakes → black screen).
+    let dc = Output::new(
+        AnyPin::from(peripherals.GPIO35),
+        Level::Low,
+        OutputConfig::default(),
+    );
+    let di = SpiInterface::new(spi_device, dc);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ILI9342CRgb565, di)
         .invert_colors(ColorInversion::Inverted)
@@ -174,17 +216,99 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     rprintln!("Display initialized");
 
-    draw_demo(&mut display, "CoreS3", &["Touch anywhere"]).await;
-    rprintln!("Demo drawn, entering touch loop");
+    // Strip framebuffer in a static internal-RAM buffer (the SPI DMA/FIFO
+    // source), shared by the splash and the status loop — allocated once, never
+    // leaked per frame.
+    let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
 
-    // --- Touch loop ---
+    draw_demo(&mut display, &mut strip_buf[..], "CoreS3", &["coex smoke test"]).await;
+    rprintln!("Demo drawn, entering status loop");
+
+    // --- Status loop: show the DHCP IP and discovered BLE peer MACs ---
     loop {
         match ft6336u::read_touch(i2c_bus).await {
             Ok(Some((x, y))) => rprintln!("Touch: x={} y={}", x, y),
             Ok(None) => {}
             Err(e) => rprintln!("Touch read error: {:?}", e),
         }
-        Timer::after(Duration::from_millis(50)).await;
+
+        let mut lines: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
+        lines.push(alloc::string::String::from("CoreS3 coex"));
+        match wifi_stack.and_then(|s| s.config_v4()) {
+            Some(cfg) => lines.push(alloc::format!("IP {}", cfg.address)),
+            None => lines.push(alloc::string::String::from(if wifi_stack.is_some() {
+                "WiFi: connecting..."
+            } else {
+                "WiFi: disabled"
+            })),
+        }
+        #[cfg(feature = "coex")]
+        {
+            lines.push(alloc::string::String::from("BLE peers:"));
+            for mac in ble::snapshot() {
+                // Conventional MSB-first notation (raw() is little-endian).
+                lines.push(alloc::format!(
+                    "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]
+                ));
+            }
+        }
+        let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        draw_status(&mut display, &mut strip_buf[..], &refs).await;
+
+        Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+/// Wait for a DHCP lease, print the IP, then scan for nearby APs (rprintln).
+#[embassy_executor::task]
+async fn net_demo(stack: embassy_net::Stack<'static>, control: wifi::WifiControl) {
+    rprintln!("WiFi: connecting + waiting for DHCP...");
+    stack.wait_config_up().await;
+    if let Some(cfg) = stack.config_v4() {
+        rprintln!("WiFi: got IP {}", cfg.address);
+    }
+    match control.scan().await {
+        Ok(aps) => {
+            rprintln!("WiFi scan: {} AP(s)", aps.len());
+            for ap in &aps {
+                rprintln!(
+                    "  {:<32} ch{:>2} {:>4} dBm",
+                    ap.ssid.as_str(),
+                    ap.channel,
+                    ap.signal_strength
+                );
+            }
+        }
+        Err(e) => rprintln!("WiFi scan failed: {:?}", e),
+    }
+}
+
+/// Render a list of text lines full-screen using the reused strip framebuffer.
+async fn draw_status<DI, RST: OutputPin>(
+    display: &mut Display<DI, ILI9342CRgb565, RST>,
+    strip_buf: &mut [u8],
+    lines: &[&str],
+) where
+    DI: lcd_async::interface::Interface<Word = u8>,
+{
+    let white = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::WHITE);
+    for strip in 0..(H / STRIP_H) {
+        let y_offset = (strip * STRIP_H) as i32;
+        {
+            let mut fb = RawFrameBuf::<Rgb565, _>::new(&mut strip_buf[..], W, STRIP_H);
+            fb.clear(Rgb565::new(0, 0, 4)).ok();
+            for (i, line) in lines.iter().enumerate() {
+                let y = 18 + i as i32 * 18;
+                Text::new(line, Point::new(8, y - y_offset), white)
+                    .draw(&mut fb)
+                    .ok();
+            }
+        }
+        display
+            .show_raw_data(0, (strip * STRIP_H) as u16, W as u16, STRIP_H as u16, strip_buf)
+            .await
+            .ok();
     }
 }
 
@@ -255,17 +379,16 @@ fn draw_demo_strip(fb: &mut impl DrawTarget<Color = Rgb565>, board: &str, footer
     }
 }
 
-/// Render demo scene to display using strip-based framebuffer (25 KB heap).
+/// Render demo scene to display using a caller-provided strip framebuffer
+/// (must be in internal RAM — it is the SPI source).
 async fn draw_demo<DI, RST: OutputPin>(
     display: &mut Display<DI, ILI9342CRgb565, RST>,
+    strip_buf: &mut [u8],
     board: &str,
     footer: &[&str],
 ) where
     DI: lcd_async::interface::Interface<Word = u8>,
 {
-    let strip_buf = alloc::vec![0u8; STRIP_BYTES];
-    let strip_buf: &'static mut [u8] = strip_buf.leak();
-
     for strip in 0..(H / STRIP_H) {
         let y_offset = strip * STRIP_H;
         {

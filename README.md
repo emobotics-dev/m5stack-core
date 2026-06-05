@@ -25,7 +25,57 @@ Exactly one feature must be enabled.
 | `aw9523b` | I2C GPIO expander (CoreS3, 0x58) — LCD/touch reset pulses |
 | `axp2101` | PMIC (CoreS3, 0x34) — backlight voltage, battery ADC, VBUS detection |
 | `ft6336u` | Capacitive touch controller (0x38) — stateless `read_touch()` |
-| `radio` | BLE radio init wrapper (`BleConnector` from `esp-radio`) |
+| `radio` | Shared radio (`esp-radio`). Parent of `radio::ble` (BLE `BleConnector`) and `radio::wifi` (WiFi controller + STA stack) — see [WiFi + BLE](#radio-wifi--ble-driverradio) |
+
+### Radio: WiFi + BLE (`driver::radio`)
+
+The on-package radio is shared between **BLE** and **WiFi**, modelled as
+sub-modules of `driver::radio` and gated by cargo features so a binary only
+compiles (and pays the RAM for) the radios it uses. All WiFi is `async`.
+
+| Feature    | Enables | Pulls in |
+|------------|---------|----------|
+| `ble`      | `radio::ble::BleRadio` — `BleConnector` (HCI transport) | — |
+| `wifi`     | `radio::wifi::Wifi` — controller + `scan()` (no IP stack) | — |
+| `wifi-sta` | `Wifi::into_sta()` → `embassy_net::Stack` (STA + DHCP/static) | `embassy-net` |
+| `wifi-ap`  | reserved for AP mode (not yet implemented) | `embassy-net` |
+| `coex`     | run BLE and WiFi simultaneously (implies `wifi` + `ble`) | extra RAM |
+
+The BSP exposes only the BLE *controller* (`BleConnector`); the BLE host stack
+(`trouble-host`) is an application dependency — see the cores3 coex example. On
+this esp-hal 1.1 line `BleConnector` speaks **bt-hci 0.8**, so pair it with
+`trouble-host` 0.6 (the older 0.5 / bt-hci 0.6 line won't bind). `coex` costs
+significant heap (~96 KB reclaimed on ESP32); enable it only when both radios run
+together. `esp_rtos::start(..)` must run before any radio is created.
+
+**STA bring-up.** The BSP owns the controller + net runner; the app supplies a
+`seed` (from its own TRNG — the BSP leaves `RNG`/`ADC1` free) and a
+`static`-lifetime `StackResources`, then spawns one task:
+
+```rust
+use m5stack_core::driver::radio::wifi::{self, AuthenticationMethod, IpSetup, StaCredentials};
+
+let wifi = wifi::Wifi::new(peripherals.WIFI)?;
+let (stack, control, runner) = wifi.into_sta(
+    StaCredentials { ssid, password, auth: AuthenticationMethod::Wpa2Personal },
+    IpSetup::Dhcp,                                       // or IpSetup::Static(..)
+    seed,
+    make_static!(embassy_net::StackResources::<3>::new()),
+)?;
+spawner.spawn(wifi::wifi_task(runner).unwrap());        // manages assoc + runs the stack
+stack.wait_config_up().await;                           // IP acquired
+let aps = control.scan().await?;                        // scan while associated
+```
+
+`wifi_task` is the single owner of the controller: it auto-connects, reconnects
+on link loss, and serves `WifiControl` commands (`scan`/`connect`/`disconnect`)
+so scanning never races association. Scan-only firmware can skip `wifi-sta` and
+call `Wifi::scan()` directly. AP mode is a planned extension point (`into_ap` +
+`Config::AccessPoint`).
+
+Variant note: the esp-radio WiFi API is identical on both chips; only RAM
+differs. The `ControllerConfig` RX buffers are trimmed on Fire27 (ESP32). **Fire27
+cannot DMA from PSRAM** — keep `StackResources`/socket buffers in internal RAM.
 
 ### IO Tasks (`io::`)
 
@@ -119,23 +169,40 @@ pub async fn ow_loop(resources: OnewireResources<'static>, on_temperatures: fn(&
 
 ### Fire27 (ESP32)
 
-Display demo with I2C scan and button polling.
+Display demo with I2C scan, button polling, and WiFi STA bring-up (DHCP + scan);
+the IP is shown on the LCD. Set `WIFI_SSID`/`WIFI_PASSWORD` to join a network
+(unset → WiFi skipped, display still runs). `--features coex` adds a BLE peer-MAC
+scanner alongside, listing MACs under the IP (build `--release`).
 
 ```bash
-cargo +esp run --release -p fire27
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --features coex
 ```
 
 GPIO: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37.
 
 ### CoreS3 (ESP32-S3)
 
-Display demo with AW9523B/AXP2101 init, I2C scan, and touch polling.
+Display demo with AW9523B/AXP2101 init, I2C scan, touch polling, and WiFi STA
+bring-up (DHCP + scan). The obtained IP is shown on the LCD. Set
+`WIFI_SSID`/`WIFI_PASSWORD` to join a network; if unset, WiFi is skipped and the
+display demo still runs.
 
 ```bash
-cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf
+WIFI_SSID=myssid WIFI_PASSWORD=secret \
+  cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf
 ```
 
-GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35(muxed), RST via AW9523B, BL via AXP2101 DLDO1.
+Add `--features coex` to also run a BLE peer-MAC scanner alongside WiFi; the
+discovered BLE MACs are listed on the LCD under the IP. Coex must be built
+`--release` (the BLE deps trip a dev-profile xtensa codegen bug):
+
+```bash
+WIFI_SSID=myssid WIFI_PASSWORD=secret \
+  cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf --features coex
+```
+
+GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1.
 
 ## Design
 
@@ -143,7 +210,7 @@ GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35(muxed), RST via 
 - **`SharedI2cBus`** wraps `Mutex<RawMutex, I2c>` — safe for single-executor async tasks
 - **Resource pattern**: `*Resources` structs bundle peripherals, consumed by `into_driver()` or task loops
 - **IO loops** use error counting with threshold (e.g. PPS breaks after 10 consecutive errors)
-- **GPIO35 muxing** (CoreS3): `Gpio35Dc` implements `OutputPin` via direct register writes — GPIO35 is shared between SPI MISO and display DC
+- **GPIO35 (CoreS3)**: GPIO35 is the display DC line (and is hardware-shared with SPI2 MISO). The cores3 example uses no SD/MISO, so it drives DC as a plain `Output` — `Output::new` configures the pad's IO-MUX so the pin actually drives. (A consumer that *also* needs MISO on the same bus, like alternator-regulator's SD card, must instead claim GPIO35 as MISO and toggle DC via register-level muxing.)
 
 ## License
 

@@ -11,8 +11,13 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+# WiFi/BLE coexistence: run a BLE peer-MAC scanner alongside the WiFi station.
+# Build with `--release` (the BLE deps trip a dev-profile xtensa codegen bug).
+coex = ["m5stack-core/ble", "m5stack-core/coex", "dep:trouble-host", "dep:embassy-futures"]
+
 [dependencies]
-m5stack-core         = { path = "../../", features = ["fire27", "psram"] }
+m5stack-core         = { path = "../../", features = ["fire27", "psram", "wifi-sta"] }
 
 # esp-hal family
 esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }
@@ -28,6 +33,7 @@ esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", b
 # embassy-executor 0.10) when sharing types through m5stack-core.
 embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
 embassy-executor     = { version = "0.10.0", features = ["nightly"] }
+embassy-net          = { version = "0.8.0", default-features = false, features = ["dhcpv4", "proto-ipv4", "medium-ethernet", "tcp", "udp", "dns"] }
 embassy-sync         = "0.8"
 embassy-time         = "0.5.0"
 
@@ -37,8 +43,13 @@ lcd-async            = "0.1.1"
 
 # misc
 embedded-hal         = "1.0.0"
+heapless             = "0.9.1"
 log                  = "0.4"
 static_cell          = { version = "2.1.1", features = ["nightly"] }
+
+# BLE (coex only). trouble-host 0.6 tracks bt-hci 0.8 — matching esp-radio.
+embassy-futures      = { version = "0.1", optional = true }
+trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu-255", "scan", "derive"], optional = true }
 
 [profile.dev]
 opt-level = "s"

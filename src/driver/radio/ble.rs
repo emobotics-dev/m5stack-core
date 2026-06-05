@@ -18,11 +18,11 @@ pub enum RadioError {
     BleConfigError(#[from] InvalidConfigError),
 }
 
-pub struct WifiDriver {
+pub struct BleRadio {
     pub ble_connector: BleConnector<'static>,
 }
 
-impl WifiDriver {
+impl BleRadio {
     /// Initialize BLE in scan-only mode with minimal buffer footprint.
     ///
     /// esp-radio's `Config::default()` sizes the BT-controller blob for
