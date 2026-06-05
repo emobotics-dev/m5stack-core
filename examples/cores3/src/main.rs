@@ -85,6 +85,24 @@ async fn main(_spawner: embassy_executor::Spawner) {
     rtt_target::rtt_init_print!();
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
 
+    // --- PSRAM heap (CoreS3 carries ~8 MB SPI PSRAM) ---
+    // Registers PSRAM as an external heap region, then shows an application
+    // explicitly placing a large buffer there via `ExternalMemory`. The S3 can
+    // also DMA from PSRAM (subject to cache/alignment rules), so a full
+    // 320x240x2 framebuffer could live here instead of the strip workaround.
+    let psram_free = m5stack_core::mem::init_psram_heap(peripherals.PSRAM);
+    {
+        // Checked PSRAM allocation: `psram_vec` bounds `T: PsramSafe`, so an
+        // atomic-bearing element type would be a compile error here.
+        let mut scratch = m5stack_core::mem::psram_vec::<u8>(256 * 1024);
+        scratch.resize(256 * 1024, 0xa5);
+        rprintln!(
+            "PSRAM: {} KiB free, 256 KiB scratch @ {:p}",
+            psram_free / 1024,
+            scratch.as_ptr(),
+        );
+    }
+
     let tg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(tg0.timer0, sw_int.software_interrupt0);

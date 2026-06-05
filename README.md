@@ -38,6 +38,41 @@ Async task loops using `embassy_time::Ticker` with `fn(...)` callbacks for decou
 | `ow_temp` | 3 s | `fn(&[(u64, f32)])` — address/temperature pairs |
 | `shared_i2c` | — | `SharedI2cBus` async mutex for multi-task I2C access |
 
+### Memory (`mem::`)
+
+PSRAM heap integration, behind the **`psram`** Cargo feature. Both boards have
+external SPI PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB). `mem::init_psram_heap(peripherals.PSRAM)`
+maps it and registers it as an external region of the `esp-alloc` global heap,
+returning the free PSRAM bytes. Applications can then allocate from it either
+implicitly (the global allocator spills into PSRAM after internal DRAM) or
+**explicitly** — preferably via the *checked* helpers:
+
+```rust
+use m5stack_core::mem;
+
+let psram_free = mem::init_psram_heap(peripherals.PSRAM);
+let mut big = mem::psram_vec::<u8>(512 * 1024);  // in PSRAM; atomics rejected at compile time
+let scratch = mem::psram_box([0u32; 1024]);      // in PSRAM
+let dma = mem::dma_buffer(4 * 1024);             // in internal DRAM; DMA-safe
+```
+
+The raw markers `ExternalMemory` / `InternalMemory` are still re-exported for
+direct `allocator_api2` use, but they skip the atomic check — use them only when
+you know what's going into PSRAM.
+
+The three hardware caveats are now mostly **enforced** rather than just
+documented:
+
+| Caveat | Enforcement |
+|--------|-------------|
+| No `Atomic*` in PSRAM (broken atomic RMW on ESP32/-S3) | **Compile-time** — `psram_box`/`psram_vec` bound `T: PsramSafe`, a `Send`/`Sync`-style auto trait with negative impls for the atomics. A type embedding an atomic (directly or transitively) won't compile. |
+| ESP32 (Fire27) can't DMA out of PSRAM | **Runtime `debug_assert`** — `mem::assert_dma_capable(buf)` rejects a PSRAM-backed buffer on Fire27 (no-op on CoreS3, which *can* DMA from PSRAM). Use `mem::dma_buffer(n)` to get an internal-DRAM buffer. |
+| PSRAM timing needs `opt-level` > 0 | **Build-time** — `build.rs` fails the build if the `psram` feature is on at `opt-level = 0`. Both profiles already use `"s"`. |
+
+`PsramSafe` requires the `esp` toolchain's `auto_traits` + `negative_impls`
+(enabled only when `psram` is on). No esp-hal Cargo feature is required — PSRAM
+itself is available under the already-enabled `unstable` feature.
+
 ### Serial console (`io::console`)
 
 The **complete** async logging console for the firmware — both the target-agnostic

@@ -12,7 +12,7 @@ test = false
 bench = false
 
 [dependencies]
-m5stack-core          = { path = "../../", features = ["cores3"] }
+m5stack-core          = { path = "../../", features = ["cores3", "psram"] }
 
 # esp-hal family
 esp-alloc             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }
