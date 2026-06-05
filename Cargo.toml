@@ -19,7 +19,7 @@ serial-cmd = []
 # External PSRAM heap support (the `mem` module). Enabling it activates a
 # build-time guard requiring opt-level > 0 (build.rs) and the compile-time
 # `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
-psram = []
+psram = ["dep:esp-alloc", "dep:allocator-api2"]
 
 # --- Radio (driver::radio) — orthogonal to the chip features; combine per app.
 # The radio is shared, so `coex` is required to run BLE and WiFi at once.
@@ -31,7 +31,7 @@ coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BL
 
 [dependencies]
 # esp-hal family
-esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", optional = true }
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
 esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
@@ -49,7 +49,7 @@ embassy-sync        = "0.8"
 embassy-time        = "0.5.0"
 
 # misc
-allocator-api2      = { version = "0.3.0", default-features = false, features = ["alloc"] }
+allocator-api2      = { version = "0.3.0", default-features = false, features = ["alloc"], optional = true }
 fixed               = "1.29.0"
 heapless            = { version = "0.9.1", features = ["nightly"] }
 log                 = "0.4"
