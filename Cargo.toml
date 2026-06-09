@@ -31,7 +31,7 @@ coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BL
 
 [dependencies]
 # esp-hal family
-esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", optional = true }
+esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", optional = true, default-features = false, features = ["compat"] }
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
 esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }

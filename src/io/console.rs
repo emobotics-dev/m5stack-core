@@ -271,6 +271,14 @@ fn format_line(level: &str, args: core::fmt::Arguments<'_>) -> String<LINE_CAP> 
 /// side: brief CS for the memcpy + an idempotent signal. **Non-blocking** —
 /// on full the oldest bytes are overwritten (protects time-critical producers).
 fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
+    // A non-RTOS *private* core (APP/CPU1) must never drive this console. The
+    // ring lock and DRAIN_SIGNAL both take the GLOBAL critical-section (so PRO
+    // spins with interrupts disabled while APP holds it) and DRAIN_SIGNAL wakes
+    // PRO's executor task cross-core — any of which can stall PRO under load and
+    // make the radio blob misbehave. Drop log lines emitted from any core but PRO.
+    if esp_hal::system::Cpu::current() != esp_hal::system::Cpu::ProCpu {
+        return;
+    }
     let line = format_line(level, args);
     RING.lock(|r| r.borrow_mut().write(line.as_bytes()));
     DRAIN_SIGNAL.signal(());
