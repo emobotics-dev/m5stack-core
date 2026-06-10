@@ -62,23 +62,28 @@ mod imp {
             .split()
     }
 
-    // Raw UART0 TX-FIFO writer (boot + panic only). Truly lossy: one volatile
-    // status read per byte, write if there's space, **drop the rest on full —
-    // NO spin**. Used by `on_panic` to synchronously flush the ring after the
-    // async drain is gone (or never started). NEVER call from steady-state
-    // code — `log!()` / `send_line` go through the ring.
+    // Raw UART0 TX-FIFO writer (panic only). Spins for FIFO room with a
+    // bounded budget per byte: the panic message MUST get out — a dropped
+    // [PANIC] line turns a clean panic into a silent "wedge" (cost a long
+    // stack-overflow hunt on cores3). The bound keeps a dead/unclocked UART
+    // from hanging the panic loop forever. Used by `on_panic` to synchronously
+    // flush the ring after the async drain is gone (or never started). NEVER
+    // call from steady-state code — `log!()` / `send_line` go through the ring.
     const UART0_FIFO_REG: *mut u32 = 0x3FF4_0000 as *mut u32;
     const UART0_STATUS_REG: *const u32 = 0x3FF4_001C as *const u32;
     const TX_FIFO_DEPTH: u32 = 128;
+    /// ~a few ms at CPU speed — plenty for one byte at 1 Mbaud.
+    const PANIC_SPIN_PER_BYTE: u32 = 1_000_000;
 
     pub fn boot_panic_write(bytes: &[u8]) {
         for &b in bytes {
-            let used = unsafe { (UART0_STATUS_REG.read_volatile() >> 16) & 0xFF };
-            if used >= TX_FIFO_DEPTH - 2 {
-                // FIFO full — drop the rest of this slice rather than spin.
-                // The async drain owns steady-state throughput; this path is
-                // only the emergency boot/panic poker.
-                return;
+            let mut budget = PANIC_SPIN_PER_BYTE;
+            while unsafe { (UART0_STATUS_REG.read_volatile() >> 16) & 0xFF } >= TX_FIFO_DEPTH - 2 {
+                budget -= 1;
+                if budget == 0 {
+                    return; // UART dead — give up rather than hang the panic
+                }
+                core::hint::spin_loop();
             }
             unsafe { UART0_FIFO_REG.write_volatile(b as u32) };
         }
@@ -105,11 +110,17 @@ mod imp {
         UsbSerialJtag::new(usb).into_async().split()
     }
 
-    // Raw SERIAL_JTAG EP1 FIFO writer (boot + panic only). Truly lossy: probe
-    // the data-free bit per byte; on full, flush whatever's queued and drop
-    // the rest — NO spin.
+    // Raw SERIAL_JTAG EP1 FIFO writer (panic only). Spins for FIFO room with
+    // a bounded budget per fill: the panic message MUST get out — the old
+    // drop-on-full policy lost the [PANIC] line whenever the ring held more
+    // than one 64-byte EP buffer of pre-panic context, turning every panic
+    // into a silent "wedge" (cost a long stack-overflow hunt). The bound
+    // keeps an unplugged USB host from hanging the panic loop forever.
     const SERIAL_JTAG_FIFO_REG: *mut u32 = 0x6003_8000 as *mut u32;
     const SERIAL_JTAG_CONF_REG: *mut u32 = 0x6003_8004 as *mut u32;
+    /// ~tens of ms at CPU speed — the host polls the 64-byte EP every USB
+    /// micro-frame, so a live host clears the FIFO well within this.
+    const PANIC_SPIN_PER_FILL: u32 = 5_000_000;
 
     #[inline]
     fn fifo_full() -> bool {
@@ -119,9 +130,17 @@ mod imp {
     pub fn boot_panic_write(bytes: &[u8]) {
         for &b in bytes {
             if fifo_full() {
-                // Flush whatever's queued, drop the rest, no spin.
-                unsafe { SERIAL_JTAG_CONF_REG.write_volatile(0b001) };
-                return;
+                // Hand the queued bytes to the host, then wait (bounded) for
+                // room. No host within the budget → give up, don't hang.
+                unsafe { SERIAL_JTAG_CONF_REG.write_volatile(0b001) }; // flush (wr_done)
+                let mut budget = PANIC_SPIN_PER_FILL;
+                while fifo_full() {
+                    budget -= 1;
+                    if budget == 0 {
+                        return;
+                    }
+                    core::hint::spin_loop();
+                }
             }
             unsafe { SERIAL_JTAG_FIFO_REG.write_volatile(b as u32) };
         }
