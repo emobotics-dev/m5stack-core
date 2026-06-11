@@ -17,6 +17,7 @@ use thiserror_no_std::Error;
 use crate::io::shared_i2c::SharedI2cBus;
 
 const REG_PWR_STATUS: u8 = 0x00;
+const REG_ADC_EN: u8 = 0x30; // ADC channel enable (XPowersLib: ADC_CHANNEL_CTRL)
 const REG_LDO_EN: u8 = 0x90;
 const REG_DLDO1_VOL: u8 = 0x99;
 const REG_VBAT_H: u8 = 0x34;
@@ -25,6 +26,7 @@ const DLDO1_VOL_MIN_MV: u16 = 500;
 const DLDO1_VOL_STEP_MV: u16 = 100;
 const DLDO1_EN_BIT: u8 = 0x80; // bit 7
 const VBUS_PRESENT_BIT: u8 = 0x08; // bit 3
+const VBAT_ADC_EN_BIT: u8 = 0x01; // REG 0x30 bit 0 = battery-voltage ADC
 
 #[derive(Debug, Error)]
 pub enum Axp2101Error {
@@ -85,6 +87,15 @@ impl Axp2101Driver {
             en_reg & !DLDO1_EN_BIT
         };
         self.write_reg(REG_LDO_EN, en_val).await?;
+        Ok(())
+    }
+
+    /// Enable the battery-voltage ADC channel (REG 0x30 bit 0). Must be called
+    /// once before [`battery_voltage_mv`](Self::battery_voltage_mv) returns a
+    /// live reading — the ADC is off at reset, so the VBAT registers read 0.
+    pub async fn enable_battery_adc(&mut self) -> Result<(), Axp2101Error> {
+        let en = self.read_reg(REG_ADC_EN).await?;
+        self.write_reg(REG_ADC_EN, en | VBAT_ADC_EN_BIT).await?;
         Ok(())
     }
 
