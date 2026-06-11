@@ -83,11 +83,9 @@ pub async fn ble_scan_task(ble: BleRadio) {
         config.interval = Duration::from_millis(500);
         config.window = Duration::from_millis(400);
         match scanner.scan(&config).await {
-            Ok(_session) => {
-                loop {
-                    Timer::after(Duration::from_secs(2)).await;
-                }
-            }
+            Ok(_session) => loop {
+                Timer::after(Duration::from_secs(2)).await;
+            },
             Err(e) => warn!("BLE scan start failed: {:?}", e),
         }
     })

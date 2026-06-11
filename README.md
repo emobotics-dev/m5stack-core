@@ -202,42 +202,64 @@ pub async fn ow_loop(resources: OnewireResources<'static>, on_temperatures: fn(&
 
 ## Examples
 
+Each board crate is a set of small, single-topic binaries (one subsystem each)
+rather than one kitchen-sink demo, so each is copy-pasteable as a starting point.
+Chip-agnostic helpers (colour wheel, splash/status rendering, I2C scan) live in
+the shared `examples/common` crate; per-board chip bring-up lives in each crate's
+`src/lib.rs`. Select a binary with `--bin <name>`.
+
+`WIFI_SSID`/`WIFI_PASSWORD` are read at build time; unset → WiFi is skipped and
+the display still runs. The `coex` bins need `--features coex` and must be built
+`--release` (the BLE deps trip a dev-profile xtensa codegen bug). The `m5go` bin
+needs the M5GO Battery Bottom attached to do anything visible.
+
 ### Fire27 (ESP32)
 
-Display demo with I2C scan, button polling, and WiFi STA bring-up (DHCP + scan);
-the IP is shown on the LCD. Set `WIFI_SSID`/`WIFI_PASSWORD` to join a network
-(unset → WiFi skipped, display still runs). `--features coex` adds a BLE peer-MAC
-scanner alongside, listing MACs under the IP (build `--release`).
-
 ```bash
-WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27
-WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --features coex
+cargo +esp run --release -p fire27 --bin <name>
 ```
 
-GPIO: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37.
+| bin        | what it shows                                   | needs |
+|------------|-------------------------------------------------|-------|
+| `display`  | splash + 3-button (39/38/37) readout, no radio  | — |
+| `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD     | — |
+| `m5go`     | SK6812 LEDs (G15) colour-wheel + IP5306 battery %| M5GO bottom attached |
+| `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD            | `WIFI_SSID`/`WIFI_PASSWORD` |
+| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner          | `--features coex`, `--release` |
+
+```bash
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --bin wifi_sta
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --bin coex --features coex
+```
+
+GPIO: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37, M5GO LEDs=15, IP5306@0x75.
 
 ### CoreS3 (ESP32-S3)
 
-Display demo with AW9523B/AXP2101 init, I2C scan, touch polling, and WiFi STA
-bring-up (DHCP + scan). The obtained IP is shown on the LCD. Set
-`WIFI_SSID`/`WIFI_PASSWORD` to join a network; if unset, WiFi is skipped and the
-display demo still runs.
+```bash
+cargo +esp run --release -p cores3 --bin <name> --target xtensa-esp32s3-none-elf
+```
+
+| bin        | what it shows                                              | needs |
+|------------|-----------------------------------------------------------|-------|
+| `display`  | splash + capacitive-touch readout, no radio               | — |
+| `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD               | — |
+| `m5go`     | SK6812 LEDs (G13) colour-wheel + AXP2101 battery (mV) + M-Bus 5V enable | M5GO bottom attached |
+| `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                      | `WIFI_SSID`/`WIFI_PASSWORD` |
+| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                    | `--features coex`, `--release` |
+
+The `m5go` bin enables the M-Bus 5V rail (off by default on CoreS3) via the
+AW9523 expander, guarded against shared-VBUS contention — see the M5GO Battery
+Bottom section above.
 
 ```bash
 WIFI_SSID=myssid WIFI_PASSWORD=secret \
-  cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf
-```
-
-Add `--features coex` to also run a BLE peer-MAC scanner alongside WiFi; the
-discovered BLE MACs are listed on the LCD under the IP. Coex must be built
-`--release` (the BLE deps trip a dev-profile xtensa codegen bug):
-
-```bash
+  cargo +esp run --release -p cores3 --bin wifi_sta --target xtensa-esp32s3-none-elf
 WIFI_SSID=myssid WIFI_PASSWORD=secret \
-  cargo +esp run --release -p cores3 --target xtensa-esp32s3-none-elf --features coex
+  cargo +esp run --release -p cores3 --bin coex --features coex --target xtensa-esp32s3-none-elf
 ```
 
-GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1.
+GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 
 ## Design
 
