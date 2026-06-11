@@ -19,6 +19,7 @@ use embedded_graphics::{
     text::Text,
 };
 esp_bootloader_esp_idf::esp_app_desc!();
+use embassy_net::StackResources;
 use embedded_hal::digital::OutputPin;
 use esp_backtrace as _;
 use esp_hal::{
@@ -41,11 +42,12 @@ use lcd_async::{
     options::{ColorInversion, ColorOrder},
     raw_framebuf::RawFrameBuf,
 };
-use embassy_net::StackResources;
 use log::info;
+use m5stack_core::driver::ip5306::{IP5306_ADDR, Ip5306Driver};
 #[cfg(feature = "coex")]
 use m5stack_core::driver::radio::ble::BleRadio;
 use m5stack_core::driver::radio::wifi::{self, AuthenticationMethod, IpSetup, StaCredentials};
+use m5stack_core::driver::sk6812::{Rgb, Sk6812Driver};
 use m5stack_core::io::shared_i2c::SharedI2cBus;
 use static_cell::make_static;
 
@@ -224,7 +226,13 @@ async fn main(spawner: embassy_executor::Spawner) {
     // never leaked per frame.
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
 
-    draw_demo(&mut display, &mut strip_buf[..], "Fire27", &["coex smoke test"]).await;
+    draw_demo(
+        &mut display,
+        &mut strip_buf[..],
+        "Fire27",
+        &["coex smoke test"],
+    )
+    .await;
     info!("Demo drawn, entering status loop");
 
     let btn_left = Input::new(
@@ -239,6 +247,19 @@ async fn main(spawner: embassy_executor::Spawner) {
         AnyPin::from(peripherals.GPIO37),
         InputConfig::default().with_pull(Pull::Up),
     );
+
+    // --- M5GO Battery Bottom: IP5306 fuel gauge (I2C 0x75, shared bus) and
+    // SK6812 LED bars (M-Bus pin 23 = GPIO15 on the ESP32 Fire). Both are
+    // best-effort: if the bottom isn't attached, the gauge reads as absent and
+    // the LED writes go nowhere.
+    let mut bottom_batt = Ip5306Driver::new(i2c_bus, IP5306_ADDR);
+    let bottom_present = bottom_batt.present().await;
+    info!("M5GO bottom IP5306 present: {}", bottom_present);
+
+    let mut leds = Sk6812Driver::new(peripherals.RMT, AnyPin::from(peripherals.GPIO15))
+        .inspect_err(|e| info!("SK6812 init failed: {:?}", e))
+        .ok();
+    let mut led_step: u8 = 0;
 
     // --- Status loop: show the DHCP IP and discovered BLE peer MACs ---
     loop {
@@ -262,18 +283,50 @@ async fn main(spawner: embassy_executor::Spawner) {
                 "WiFi: disabled"
             })),
         }
+        if bottom_present {
+            match (
+                bottom_batt.battery_level().await,
+                bottom_batt.is_charging().await,
+            ) {
+                (Ok(pct), Ok(chg)) => lines.push(alloc::format!(
+                    "Batt {}% {}",
+                    pct,
+                    if chg { "CHG" } else { "" }
+                )),
+                _ => lines.push(alloc::string::String::from("Batt: read err")),
+            }
+        }
         #[cfg(feature = "coex")]
         {
             lines.push(alloc::string::String::from("BLE peers:"));
             for mac in ble::snapshot() {
                 lines.push(alloc::format!(
                     "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]
+                    mac[5],
+                    mac[4],
+                    mac[3],
+                    mac[2],
+                    mac[1],
+                    mac[0]
                 ));
             }
         }
         let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         draw_status(&mut display, &mut strip_buf[..], &refs).await;
+
+        // Rotate a colour wheel across the 10 SK6812 LEDs on the bottom.
+        if let Some(leds) = leds.as_mut() {
+            let mut frame = [Rgb::OFF; 10];
+            for (i, px) in frame.iter_mut().enumerate() {
+                let c = wheel(led_step.wrapping_add((i as u8) * 25));
+                // ~1/4 brightness — comfortable behind the frosted diffusers.
+                *px = Rgb::new(c.r >> 2, c.g >> 2, c.b >> 2);
+            }
+            if let Err(e) = leds.write(&frame).await {
+                info!("SK6812 write failed: {:?}", e);
+            }
+            led_step = led_step.wrapping_add(8);
+        }
 
         Timer::after(Duration::from_millis(500)).await;
     }
@@ -325,7 +378,13 @@ async fn draw_status<DI, RST: OutputPin>(
             }
         }
         display
-            .show_raw_data(0, (strip * STRIP_H) as u16, W as u16, STRIP_H as u16, strip_buf)
+            .show_raw_data(
+                0,
+                (strip * STRIP_H) as u16,
+                W as u16,
+                STRIP_H as u16,
+                strip_buf,
+            )
             .await
             .ok();
     }
@@ -425,6 +484,20 @@ async fn draw_demo<DI, RST: OutputPin>(
             .show_raw_data(0, y_offset as u16, W as u16, STRIP_H as u16, strip_buf)
             .await
             .ok();
+    }
+}
+
+/// Map 0..=255 to a colour wheel (red → green → blue → red) at low brightness.
+fn wheel(pos: u8) -> Rgb {
+    let p = pos % 255;
+    if p < 85 {
+        Rgb::new(255 - p * 3, p * 3, 0)
+    } else if p < 170 {
+        let p = p - 85;
+        Rgb::new(0, 255 - p * 3, p * 3)
+    } else {
+        let p = p - 170;
+        Rgb::new(p * 3, 0, 255 - p * 3)
     }
 }
 

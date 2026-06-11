@@ -22,10 +22,45 @@ Exactly one feature must be enabled.
 | `pcnt` | Pulse counter wrapper for RPM sensing (`PcntDriver`) |
 | `pps` | Programmable Power Supply I2C driver (0x35) — voltage, current, temperature |
 | `ds16b20` | 1-Wire temperature sensor via RMT (chip-specific RMT channel selection) |
-| `aw9523b` | I2C GPIO expander (CoreS3, 0x58) — LCD/touch reset pulses |
+| `aw9523b` | I2C GPIO expander (CoreS3, 0x58) — LCD/touch reset pulses, M-Bus 5 V enable (`enable_bus_5v`) |
 | `axp2101` | PMIC (CoreS3, 0x34) — backlight voltage, battery ADC, VBUS detection |
 | `ft6336u` | Capacitive touch controller (0x38) — stateless `read_touch()` |
+| `ip5306` | Fire27 / classic-Core battery gauge (I2C 0x75) — coarse battery %, charge / charge-full flags (CoreS3 uses `axp2101` instead) |
+| `sk6812` | M5GO Battery Bottom RGB LED bars (SK6812/WS2812 via RMT) — `write()` a colour frame |
 | `radio` | Shared radio (`esp-radio`). Parent of `radio::ble` (BLE `BleConnector`) and `radio::wifi` (WiFi controller + STA stack) — see [WiFi + BLE](#radio-wifi--ble-driverradio) |
+
+#### M5GO Battery Bottom
+
+The M5GO Battery Bottom plugs into the M-Bus and adds a LiPo cell and ten RGB
+LEDs (the A014 "Base M5GO Bottom" uses SK6812; the CoreS3-matched A014-D
+"Bottom3" uses WS2812 — the RMT driver drives both). The LED data line sits on a
+fixed *physical* M-Bus pin (pin 23) that maps to a **different GPIO per core**:
+
+| | Fire27 (ESP32) | CoreS3 (ESP32-S3) |
+|---|---|---|
+| RGB LEDs (RMT, M-Bus pin 23) | `GPIO15` | `GPIO13` |
+| Battery | `ip5306` @ I2C `0x75` (onboard) | `axp2101` @ I2C `0x34` (onboard) |
+| LED 5 V rail | always present | **must be enabled** via `aw9523b` |
+
+The LEDs are a one-wire NRZ protocol (RMT), **not** I2C. **Battery management
+differs by board:** the Fire (and the PMIC-less classic Core, via the bottom's
+own IP5306) report through an **IP5306 at `0x75`**; the **CoreS3 manages the
+cell — including the bottom's battery — with its onboard AXP2101 at `0x34`**, so
+a bottom's IP5306 does not appear on the CoreS3 I2C bus.
+
+**CoreS3 — powering the LEDs.** The bottom's LEDs are fed from the CoreS3 M-Bus
+5 V rail, which is **off by default** and gated by the AW9523 expander. Call
+[`Aw9523bDriver::enable_bus_5v`] to bring it up — it asserts `BOOST_EN` (P1_7) and
+`BUS_OUT_EN` (P0_1) **high** (both active-HIGH; P0 must be switched to push-pull
+first, as it is open-drain by default). Guard it as M5Unified does: only enable
+when a **battery is present or USB is absent** (the bus output shares the USB
+VBUS node, so enabling it with no battery on USB contends the rail). Note the
+A014 bottom is a *classic-Core* part — it can't sustain the CoreS3 on battery
+(the board powers down on unplug), so in practice it runs on USB with the
+bottom's battery present. The CoreS3-matched bottom is the **Bottom3 (A014-D)**.
+
+Both examples drive a colour-wheel animation on the bars and show the battery
+reading on the LCD (Fire27: IP5306 %; CoreS3: AXP2101 mV).
 
 ### Radio: WiFi + BLE (`driver::radio`)
 

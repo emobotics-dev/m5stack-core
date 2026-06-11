@@ -7,7 +7,6 @@
 
 extern crate alloc;
 
-use panic_halt as _;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
@@ -19,8 +18,11 @@ use embedded_graphics::{
     primitives::{Circle, PrimitiveStyleBuilder, Rectangle, Triangle},
     text::Text,
 };
+use panic_halt as _;
 esp_bootloader_esp_idf::esp_app_desc!();
+use embassy_net::StackResources;
 use embedded_hal::digital::OutputPin;
+use esp_hal::rng::Rng;
 use esp_hal::{
     gpio::{AnyPin, Level, Output, OutputConfig},
     i2c::master::{BusTimeout, Config as I2cConfig, I2c},
@@ -38,14 +40,13 @@ use lcd_async::{
     options::{ColorInversion, ColorOrder},
     raw_framebuf::RawFrameBuf,
 };
-use embassy_net::StackResources;
-use esp_hal::rng::Rng;
 use m5stack_core::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
 use m5stack_core::driver::axp2101::Axp2101Driver;
 use m5stack_core::driver::ft6336u;
 #[cfg(feature = "coex")]
 use m5stack_core::driver::radio::ble::BleRadio;
 use m5stack_core::driver::radio::wifi::{self, AuthenticationMethod, IpSetup, StaCredentials};
+use m5stack_core::driver::sk6812::{Rgb, Sk6812Driver};
 use m5stack_core::io::shared_i2c::SharedI2cBus;
 use rtt_target::rprintln;
 use static_cell::make_static;
@@ -172,6 +173,11 @@ async fn main(spawner: embassy_executor::Spawner) {
     if let Err(e) = axp.set_dldo1(true, 3300).await {
         rprintln!("AXP2101 backlight enable failed: {:?}", e);
     }
+    // CoreS3 manages the battery (incl. the M5GO bottom's cell) via this AXP2101,
+    // not the bottom's IP5306. Enable the VBAT ADC so we can read the voltage.
+    if let Err(e) = axp.enable_battery_adc().await {
+        rprintln!("AXP2101 battery ADC enable failed: {:?}", e);
+    }
 
     // --- SPI display (GPIO35 = DC, no RST pin — handled by AW9523B) ---
     let spi_config = SpiConfig::default()
@@ -221,8 +227,74 @@ async fn main(spawner: embassy_executor::Spawner) {
     // leaked per frame.
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
 
-    draw_demo(&mut display, &mut strip_buf[..], "CoreS3", &["coex smoke test"]).await;
+    draw_demo(
+        &mut display,
+        &mut strip_buf[..],
+        "CoreS3",
+        &["coex smoke test"],
+    )
+    .await;
     rprintln!("Demo drawn, entering status loop");
+
+    // --- M5GO Battery Bottom: SK6812 LED bars on M-Bus pin 23 = GPIO13 on the
+    // ESP32-S3 CoreS3 (a *different* GPIO than the Fire's pin-23/GPIO15). The
+    // battery is read above via the AXP2101 — CoreS3's own PMIC manages the
+    // cell, so the bottom's IP5306 (used on the PMIC-less Basic Core / Fire) is
+    // not the battery path here. Best-effort: LED writes go nowhere if absent.
+    let mut leds = Sk6812Driver::new(peripherals.RMT, AnyPin::from(peripherals.GPIO13))
+        .inspect_err(|e| rprintln!("SK6812 init failed: {:?}", e))
+        .ok();
+    let mut led_step: u8 = 0;
+
+    // --- M5GO bottom 5V output: power the SK6812 LED bars ---
+    // The bottom's LEDs are fed from the CoreS3 M-Bus 5V rail, which is the
+    // SY7088 boost + load switch gated by the AW9523 (BOOST_EN=P1_7, BUS_OUT_EN
+    // =P0_1, both active-HIGH — verified vs M5Unified). M5Unified only refuses to
+    // enable it when there's NO battery AND USB is present (shared-VBUS contention),
+    // so we replicate that guard: enable when a battery is present *or* USB is
+    // absent. (The A014 bottom can't sustain CoreS3 on battery — it powers down on
+    // unplug — so in practice this runs on USB with the bottom's battery present.)
+    let vbus = axp.vbus_present().await.unwrap_or(true);
+    let mv = axp.battery_voltage_mv().await.unwrap_or(0);
+    let battery_present = mv > 3300;
+    let bus_5v_on = if battery_present || !vbus {
+        match aw.enable_bus_5v().await {
+            Ok(()) => {
+                rprintln!(
+                    "M-Bus 5V enabled (BOOST_EN+BUS_OUT_EN); batt={}mV vbus={}",
+                    mv,
+                    vbus
+                );
+                true
+            }
+            Err(e) => {
+                rprintln!("enable_bus_5v failed: {:?}", e);
+                false
+            }
+        }
+    } else {
+        rprintln!("M-Bus 5V NOT enabled — no battery while on USB (contention guard)");
+        false
+    };
+    {
+        let l1 = alloc::format!("5V bus: {}", if bus_5v_on { "ON" } else { "OFF" });
+        let l2 = alloc::format!("batt {}mV vbus={}", mv, if vbus { "Y" } else { "N" });
+        draw_status(
+            &mut display,
+            &mut strip_buf[..],
+            &[
+                "M5GO LED test",
+                "",
+                &l1,
+                &l2,
+                "",
+                "LEDs should cycle",
+                "on G13",
+            ],
+        )
+        .await;
+    }
+    Timer::after(Duration::from_millis(1500)).await;
 
     // --- Status loop: show the DHCP IP and discovered BLE peer MACs ---
     loop {
@@ -242,6 +314,14 @@ async fn main(spawner: embassy_executor::Spawner) {
                 "WiFi: disabled"
             })),
         }
+        match (axp.battery_voltage_mv().await, axp.vbus_present().await) {
+            (Ok(mv), Ok(vbus)) => lines.push(alloc::format!(
+                "Batt {} mV {}",
+                mv,
+                if vbus { "USB" } else { "" }
+            )),
+            _ => lines.push(alloc::string::String::from("Batt: read err")),
+        }
         #[cfg(feature = "coex")]
         {
             lines.push(alloc::string::String::from("BLE peers:"));
@@ -249,12 +329,31 @@ async fn main(spawner: embassy_executor::Spawner) {
                 // Conventional MSB-first notation (raw() is little-endian).
                 lines.push(alloc::format!(
                     "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]
+                    mac[5],
+                    mac[4],
+                    mac[3],
+                    mac[2],
+                    mac[1],
+                    mac[0]
                 ));
             }
         }
         let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         draw_status(&mut display, &mut strip_buf[..], &refs).await;
+
+        // Rotate a colour wheel across the 10 SK6812 LEDs on the bottom.
+        if let Some(leds) = leds.as_mut() {
+            let mut frame = [Rgb::OFF; 10];
+            for (i, px) in frame.iter_mut().enumerate() {
+                let c = wheel(led_step.wrapping_add((i as u8) * 25));
+                // ~1/4 brightness — comfortable behind the frosted diffusers.
+                *px = Rgb::new(c.r >> 2, c.g >> 2, c.b >> 2);
+            }
+            if let Err(e) = leds.write(&frame).await {
+                rprintln!("SK6812 write failed: {:?}", e);
+            }
+            led_step = led_step.wrapping_add(8);
+        }
 
         Timer::after(Duration::from_millis(500)).await;
     }
@@ -306,7 +405,13 @@ async fn draw_status<DI, RST: OutputPin>(
             }
         }
         display
-            .show_raw_data(0, (strip * STRIP_H) as u16, W as u16, STRIP_H as u16, strip_buf)
+            .show_raw_data(
+                0,
+                (strip * STRIP_H) as u16,
+                W as u16,
+                STRIP_H as u16,
+                strip_buf,
+            )
             .await
             .ok();
     }
@@ -400,6 +505,20 @@ async fn draw_demo<DI, RST: OutputPin>(
             .show_raw_data(0, y_offset as u16, W as u16, STRIP_H as u16, strip_buf)
             .await
             .ok();
+    }
+}
+
+/// Map 0..=255 to a colour wheel (red → green → blue → red) at low brightness.
+fn wheel(pos: u8) -> Rgb {
+    let p = pos % 255;
+    if p < 85 {
+        Rgb::new(255 - p * 3, p * 3, 0)
+    } else if p < 170 {
+        let p = p - 85;
+        Rgb::new(0, 255 - p * 3, p * 3)
+    } else {
+        let p = p - 170;
+        Rgb::new(p * 3, 0, 255 - p * 3)
     }
 }
 
