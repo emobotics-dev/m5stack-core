@@ -54,11 +54,11 @@ m5stack-core          = { path = "../../", features = ["cores3", "psram", "wifi-
 common                = { path = "../common" }
 
 # esp-hal family
-esp-alloc             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["internal-heap-stats"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32s3"] }
-esp-hal               = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32s3", "unstable"] }
-esp-rtos              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32s3", "embassy", "esp-radio", "log-04"] }
-esp-sync              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32s3", "log-04"] }
+esp-alloc             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["internal-heap-stats"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["esp32s3"] }
+esp-hal               = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["esp32s3", "unstable"] }
+esp-rtos              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["esp32s3", "embassy", "esp-radio", "log-04"] }
+esp-sync              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["esp32s3", "log-04"] }
 
 # RTT (no esp-println/esp-backtrace on cores3 — conflicts with USB-JTAG)
 panic-halt            = "1.0.0"

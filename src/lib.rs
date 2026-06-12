@@ -19,7 +19,7 @@
 #![cfg_attr(feature = "psram", feature(auto_traits, negative_impls))]
 
 // Link-only: pins esp-rom-sys to the version esp-hal's code actually needs
-// (esp-hal 1.1.0 under-constrains it to ~0.1 but calls a 0.1.4 API). Referenced
+// (esp-hal 1.1.x under-constrains it to ~0.1 but calls a 0.1.4 API). Referenced
 // here so the pin in Cargo.toml survives `cargo package` rather than being
 // dropped as an unused dependency.
 use esp_rom_sys as _;

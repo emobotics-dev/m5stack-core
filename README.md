@@ -261,37 +261,51 @@ WIFI_SSID=myssid WIFI_PASSWORD=secret \
 
 GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 
-### LVGL UI (`examples/lvgl`, Fire27)
+### LVGL UI (`examples/lvgl`, Fire27 + CoreS3)
 
 A separate example crate that drives the panel with
 **[oxivgl](https://github.com/emobotics-dev/oxivgl)** (safe LVGL 9 bindings)
 instead of `embedded-graphics` — an LVGL render loop with the SPI flush running
 on a high-priority `InterruptExecutor`, so the UI animates smoothly while the
 main task keeps working. The demo shows a title, an animated spinner and a
-frame counter.
+frame counter. Builds for both boards (default `fire27`):
 
 ```bash
-cargo +esp run --release -p lvgl-example --bin lvgl
+cargo +esp run --release -p lvgl-example --bin lvgl                                              # Fire27
+cargo +esp run --release -p lvgl-example --bin lvgl --no-default-features --features cores3 \
+  --target xtensa-esp32s3-none-elf                                                               # CoreS3
 ```
 
 Notes:
 
-- The flush uses an explicit `SpiDmaBus` (`.with_dma`/`.with_buffers`). On the
-  ESP32 PDMA path a *plain* `Spi::into_async()` flush goes "usr-stuck" after the
-  first frame; a descriptor-backed DMA bus avoids it.
+- The flush uses an explicit `SpiDmaBus` (`.with_dma`/`.with_buffers`): Fire27
+  drives SPI2 on GPIO18/23 over PDMA (a *plain* `Spi::into_async()` flush goes
+  "usr-stuck" after the first frame; a descriptor-backed DMA bus avoids it);
+  CoreS3 drives SPI2 on GPIO36/37 over GDMA, with the panel reset via the AW9523
+  expander and the backlight via the AXP2101 (no GPIO reset/backlight pins).
+- **Logging differs by board.** Fire27 logs over UART (`esp-println`/
+  `esp-backtrace`). CoreS3 uses **RTT** (`rtt-target` + `panic-halt`) read via
+  `probe-rs run`/`attach`, since `esp-println`/`esp-backtrace` conflict with the
+  USB-Serial-JTAG. **The RTT logger runs at `Info`, not Trace** — and this
+  matters: at Trace, oxivgl's per-frame DEBUG stream floods the RTT buffer, and
+  with no debugger draining it the channel back-pressures and **stalls the
+  render loop** (HIL-confirmed freeze). At Info the demo emits only a few startup
+  lines and runs standalone. (More generally: never emit a per-frame log stream
+  over an undrained RTT/USB-Serial-JTAG/UART channel — it will eventually block.)
 - `oxivgl-sys` downloads and compiles LVGL 9.5 at build time, so this example
-  needs network access, a C compiler (`xtensa-esp32-elf-gcc`) and `libclang`
-  for `bindgen` — all provided by the devcontainer.
+  needs network access, the target C compiler (`xtensa-esp32{,s3}-elf-gcc`) and
+  `libclang` for `bindgen` (with `BINDGEN_EXTRA_CLANG_ARGS` pointing at the
+  newlib sysroot) — all provided by the devcontainer.
 
 ## Dependencies & the esp-hal fork
 
-The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.0,
+The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.1,
 `esp-radio` 0.18.0, `esp-sync`, `esp-alloc`) — it uses no fork-specific API
 (the 1-Wire-over-RMT driver is vendored in-tree; see `driver::onewire`).
 
 The **examples**, and all local workspace builds, are redirected to a fork —
 [`emobotics-dev/esp-hal`](https://github.com/emobotics-dev/esp-hal/tree/local) —
-via `[patch.crates-io]`. The fork is esp-hal 1.1.0 plus a small set of **ESP32
+via `[patch.crates-io]`. The fork is esp-hal 1.1.1 plus a small set of **ESP32
 fixes not yet upstream**, primarily **SPI-DMA correctness** that the LVGL
 display example's `SpiDmaBus` flush depends on:
 

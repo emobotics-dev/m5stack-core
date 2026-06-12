@@ -2,14 +2,20 @@
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type, type_alias_impl_trait)]
-//! LVGL example for the M5Stack Fire v2.7 (ESP32).
+//! LVGL example for the M5Stack Fire v2.7 (ESP32) and CoreS3 (ESP32-S3).
 //!
 //! Demonstrates driving the on-board ILI9342C display with the [`oxivgl`]
 //! (LVGL) UI framework instead of hand-rolled drawing. The UI shows a title,
 //! a continuously animating [`Spinner`], and a frame counter so that the
 //! refresh/animation pipeline is visibly doing work.
 //!
-//! Hardware wiring (Fire27):
+//! Dual-board: build for the Fire27 with the default `fire27` feature, or for
+//! the CoreS3 with `--no-default-features --features cores3 --target
+//! xtensa-esp32s3-none-elf`. The chip-agnostic oxivgl glue (`DisplayDriver`,
+//! `flush_task`, `DemoView`, `run_app`) is shared; only the SPI/GPIO/PMIC
+//! bring-up and the front-panel buttons differ per board.
+//!
+//! Hardware wiring (Fire27, ESP32):
 //!
 //! | Signal | GPIO |   | Signal     | GPIO |
 //! |--------|------|---|------------|------|
@@ -22,25 +28,36 @@
 //! NEXT, active-low with external pull-ups) are wired to an LVGL keypad input
 //! device, mirroring oxivgl's `fire27` integration template.
 //!
+//! Hardware wiring (CoreS3, ESP32-S3): SPI2 SCK=GPIO36, MOSI=GPIO37, CS=GPIO3,
+//! DC=GPIO35. There is no GPIO reset or backlight pin: the AW9523B expander
+//! pulses the LCD/touch resets and the AXP2101 DLDO1 rail powers the backlight,
+//! both over the shared I2C0 bus (SDA=GPIO12, SCL=GPIO11). The CoreS3 is touch
+//! input only, so the front-panel button / keypad indev is fire27-only.
+//!
 //! The display flush runs on a high-priority [`InterruptExecutor`] (SWI1) so
 //! the SPI transfer does not stall the LVGL render loop. The flush bus is an
 //! explicit [`SpiDmaBus`]: on the ESP32 PDMA path a plain `Spi::into_async()`
 //! flush goes "usr-stuck" after the first frame, so a descriptor-backed DMA
-//! bus is required here (see the `SpiBusType` note below).
-
-use core::sync::atomic::{AtomicU32, Ordering};
+//! bus is required here (see the `SpiBusType` note below). The CoreS3 uses the
+//! GDMA `DMA_CH0` channel for the same descriptor-backed bus.
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::Delay;
+// Panic handler differs per board: Fire27 uses esp-backtrace (UART console);
+// CoreS3 uses USB-Serial-JTAG, with which esp-backtrace/esp-println conflict, so
+// it uses panic-halt + RTT instead (matching examples/cores3).
+#[cfg(feature = "fire27")]
 use esp_backtrace as _;
+#[cfg(feature = "cores3")]
+use panic_halt as _;
 use esp_hal::{
     Async,
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{Input, InputConfig, Level, Output, OutputConfig},
+    gpio::{Level, Output, OutputConfig},
     interrupt::Priority,
     interrupt::software::SoftwareInterruptControl,
     ram,
@@ -51,6 +68,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
+#[cfg(feature = "fire27")]
 use esp_println as _;
 use esp_rtos::embassy::InterruptExecutor;
 use esp_sync::RawMutex;
@@ -60,10 +78,13 @@ use lcd_async::{
     models::ILI9342CRgb565,
     options::{ColorInversion, ColorOrder},
 };
+// CoreS3 resets the panel via the AW9523B expander, so its display takes the
+// `NoResetPin` type parameter (no GPIO reset pin); Fire27 uses a GPIO reset.
+#[cfg(feature = "cores3")]
+use lcd_async::NoResetPin;
 use log::info;
 use oxivgl::{
     display::{COLOR_BUF_LINES, LvglBuffers},
-    enums::Key,
     flush_pipeline::{DisplayOutput, UiError, flush_frame_buffer},
     style::{Selector, Style},
     view::{NavAction, View, run_app},
@@ -71,9 +92,21 @@ use oxivgl::{
 };
 use static_cell::{StaticCell, make_static};
 
+// Fire27-only imports: front-panel buttons + LVGL keypad indev.
+#[cfg(feature = "fire27")]
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "fire27")]
+use embassy_time::{Duration, Timer};
+#[cfg(feature = "fire27")]
+use esp_hal::gpio::{Input, InputConfig};
+#[cfg(feature = "fire27")]
+use oxivgl::enums::Key;
+
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// Halt quietly on panic so the backtrace is the only output.
+/// Halt quietly on panic so the backtrace is the only output (Fire27 only —
+/// esp-backtrace's `custom-halt`; CoreS3 uses panic-halt).
+#[cfg(feature = "fire27")]
 #[unsafe(no_mangle)]
 fn custom_halt() -> ! {
     loop {}
@@ -91,27 +124,35 @@ const LVGL_BUF_BYTES: usize = SCREEN_W as usize * COLOR_BUF_LINES * 2;
 // "usr-stuck" after the first transfer (LVGL renders frame 1 then the flush
 // hangs). A properly-configured DMA bus with descriptor-backed buffers avoids
 // it — matching the `dma_display` example, which runs continuously on the fork.
+// The CoreS3 (GDMA) shares the same descriptor-backed bus type.
 type SpiBusType = SpiDmaBus<'static, Async>;
 type SpiDeviceType = SpiDeviceWithConfig<'static, RawMutex, SpiBusType, Output<'static>>;
 type DisplayInterface = SpiInterface<SpiDeviceType, Output<'static>>;
+// The reset-pin type parameter differs per board: Fire27 drives a GPIO reset
+// (`Output`), CoreS3 resets via the AW9523B expander (`NoResetPin`).
+#[cfg(feature = "fire27")]
 type LcdDisplay = Display<DisplayInterface, ILI9342CRgb565, Output<'static>>;
+#[cfg(feature = "cores3")]
+type LcdDisplay = Display<DisplayInterface, ILI9342CRgb565, NoResetPin>;
 
 static SPI_BUS: StaticCell<Mutex<RawMutex, SpiBusType>> = StaticCell::new();
 
 /// Glue between oxivgl's flush pipeline and the `lcd-async` display.
 ///
-/// Owns the backlight pin (kept high for the lifetime of the program) and the
-/// initialized display, exposing the single [`DisplayOutput`] method LVGL's
-/// flush task calls with each dirty rectangle.
+/// On the Fire27 it also owns the backlight pin (kept high for the lifetime of
+/// the program); the CoreS3 has no GPIO backlight (the AXP2101 DLDO1 rail is
+/// already on), so that field is fire27-only. The single [`DisplayOutput`]
+/// method is what LVGL's flush task calls with each dirty rectangle.
 struct DisplayDriver {
+    #[cfg(feature = "fire27")]
     _bl: Output<'static>,
     display: LcdDisplay,
 }
 
 // SAFETY: `DisplayDriver` holds `Spi<Async>`, whose `PhantomData<*const ()>`
 // makes it `!Send` to guard against accidental cross-thread sharing. On the
-// single-core ESP32 the `flush_task` is the sole owner; no concurrent access
-// occurs, so moving it onto the interrupt executor is sound.
+// single-core ESP32/ESP32-S3 the `flush_task` is the sole owner; no concurrent
+// access occurs, so moving it onto the interrupt executor is sound.
 unsafe impl Send for DisplayDriver {}
 
 impl DisplayOutput for DisplayDriver {
@@ -139,16 +180,19 @@ async fn flush_task(driver: DisplayDriver) -> ! {
 }
 
 // ---------------------------------------------------------------------------
-// Hardware button → LVGL keypad input device (verbatim from oxivgl's fire27)
+// Hardware button → LVGL keypad input device (Fire27 only — verbatim from
+// oxivgl's fire27 template). The CoreS3 is touch input only and omits this.
 // ---------------------------------------------------------------------------
 
 /// Pending LVGL key code written by the button tasks and consumed by the LVGL
 /// read callback. `0` means "no pending key". Single-core ESP32: `Relaxed`
 /// ordering is sufficient.
+#[cfg(feature = "fire27")]
 static KEY_PENDING: AtomicU32 = AtomicU32::new(0);
 
 /// One task per button. Awaits a press edge, latches the LVGL key code, then
 /// debounces the release so a single press maps to a single key event.
+#[cfg(feature = "fire27")]
 #[embassy_executor::task(pool_size = 3)]
 async fn button_task(mut pin: Input<'static>, key_code: u32) -> ! {
     // Buttons are active-low (external pull-ups on GPIO34-39). Respond on the
@@ -168,6 +212,7 @@ async fn button_task(mut pin: Input<'static>, key_code: u32) -> ! {
 /// # Safety
 /// Called from the LVGL task only (single-core ESP32). `data` is a non-null
 /// pointer LVGL owns for the duration of this callback.
+#[cfg(feature = "fire27")]
 unsafe extern "C" fn keypad_read_cb(
     _indev: *mut oxivgl_sys::lv_indev_t,
     data: *mut oxivgl_sys::lv_indev_data_t,
@@ -189,6 +234,7 @@ unsafe extern "C" fn keypad_read_cb(
 /// Must be called after `lv_init()` (i.e. from inside `View::create`, which
 /// `run_app` invokes after driver init) and before any focusable widget needs
 /// keypad routing.
+#[cfg(feature = "fire27")]
 fn register_keypad_indev() {
     // SAFETY: `lv_indev_create`/`set_type`/`set_read_cb` run after `lv_init()`
     // (guaranteed by `run_app` calling `create`). The indev pointer is checked
@@ -220,12 +266,15 @@ struct DemoView {
     _spinner: Option<Spinner<'static>>,
     /// Frames rendered so far.
     frame: u32,
-    /// `true` once the keypad indev has been registered.
+    /// `true` once the keypad indev has been registered (Fire27 only).
+    #[cfg(feature = "fire27")]
     indev_registered: bool,
 }
 
 impl View for DemoView {
     fn create(&mut self, container: &Obj<'static>) -> Result<(), WidgetError> {
+        // The CoreS3 is touch-only and registers no keypad indev.
+        #[cfg(feature = "fire27")]
         if !self.indev_registered {
             register_keypad_indev();
             self.indev_registered = true;
@@ -272,10 +321,20 @@ impl View for DemoView {
 }
 
 #[esp_rtos::main]
-async fn main(low_prio_spawner: Spawner) {
+async fn main(_low_prio_spawner: Spawner) {
+    #[cfg(feature = "fire27")]
     esp_println::logger::init_logger_from_env();
 
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    // CoreS3 logs over RTT (read via `probe-rs run`/`attach`). Log at **Info**,
+    // NOT rtt_init_log!()'s default of Trace: oxivgl emits a per-flush/per-tick
+    // DEBUG stream, which floods the RTT buffer — and with no debugger draining
+    // it, that back-pressures and STALLS the render loop (HIL-confirmed freeze).
+    // At Info the demo only emits a few startup lines, so it runs standalone.
+    // (esp-println over USB-Serial-JTAG is avoided entirely — it spin-waits on a
+    // full FIFO.) Must run after `esp_hal::init` (RTT control-block setup).
+    #[cfg(feature = "cores3")]
+    rtt_target::rtt_init_log!(log::LevelFilter::Info);
     // LVGL allocates its object/style pool from the global heap. 50 KiB in the
     // reclaimed (post-boot ROM) DRAM region is ample for this UI; the
     // InterruptExecutor flush keeps DRAM-stack pressure low.
@@ -286,19 +345,8 @@ async fn main(low_prio_spawner: Spawner) {
     esp_rtos::start(tg0.timer0, sw_int.software_interrupt0);
     info!("Embassy initialized");
 
-    // Front-panel buttons. GPIO34-39 are input-only (no internal pull-up);
-    // the Fire27 has external pull-ups, so the bare InputConfig is correct.
-    let btn_a = Input::new(p.GPIO39, InputConfig::default()); // A — PREV
-    let btn_b = Input::new(p.GPIO38, InputConfig::default()); // B — ENTER
-    let btn_c = Input::new(p.GPIO37, InputConfig::default()); // C — NEXT
-
-    // The task macro yields a `Result<SpawnToken, SpawnError>`; pool exhaustion
-    // here is a startup logic bug (pool_size = 3 fits all three buttons), so
-    // `.expect` is the right failure mode.
-    low_prio_spawner.spawn(button_task(btn_a, Key::PREV.0).expect("spawn button A"));
-    low_prio_spawner.spawn(button_task(btn_b, Key::ENTER.0).expect("spawn button B"));
-    low_prio_spawner.spawn(button_task(btn_c, Key::NEXT.0).expect("spawn button C"));
-
+    // SPI device config: 40 MHz, mode 0 — shared by both boards. The
+    // SpiDeviceWithConfig re-applies this per transaction over the shared bus.
     let spi_config = SpiConfig::default()
         .with_frequency(Rate::from_khz(40_000))
         .with_mode(Mode::_0);
@@ -310,37 +358,142 @@ async fn main(low_prio_spawner: Spawner) {
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("DMA rx buf alloc failed");
     let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("DMA tx buf alloc failed");
 
-    let spi_bus = Spi::new(p.SPI2, spi_config.clone())
-        .expect("SPI2 init failed")
-        .with_sck(p.GPIO18)
-        .with_mosi(p.GPIO23)
-        .with_dma(p.DMA_SPI2)
-        .with_buffers(dma_rx_buf, dma_tx_buf)
+    // -----------------------------------------------------------------------
+    // Fire27 (ESP32): direct GPIO bring-up. SPI2 on the PDMA channel
+    // (`DMA_SPI2`); DC=GPIO27, RST=GPIO33 (driven via the lcd-async reset pin),
+    // BL=GPIO32. Three front-panel buttons → LVGL keypad indev.
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "fire27")]
+    let driver = {
+        // Front-panel buttons. GPIO34-39 are input-only (no internal pull-up);
+        // the Fire27 has external pull-ups, so the bare InputConfig is correct.
+        let btn_a = Input::new(p.GPIO39, InputConfig::default()); // A — PREV
+        let btn_b = Input::new(p.GPIO38, InputConfig::default()); // B — ENTER
+        let btn_c = Input::new(p.GPIO37, InputConfig::default()); // C — NEXT
+
+        // The task macro yields a `Result<SpawnToken, SpawnError>`; pool
+        // exhaustion here is a startup logic bug (pool_size = 3 fits all three
+        // buttons), so `.expect` is the right failure mode.
+        _low_prio_spawner.spawn(button_task(btn_a, Key::PREV.0).expect("spawn button A"));
+        _low_prio_spawner.spawn(button_task(btn_b, Key::ENTER.0).expect("spawn button B"));
+        _low_prio_spawner.spawn(button_task(btn_c, Key::NEXT.0).expect("spawn button C"));
+
+        let spi_bus = Spi::new(p.SPI2, spi_config.clone())
+            .expect("SPI2 init failed")
+            .with_sck(p.GPIO18)
+            .with_mosi(p.GPIO23)
+            .with_dma(p.DMA_SPI2)
+            .with_buffers(dma_rx_buf, dma_tx_buf)
+            .into_async();
+
+        let shared_bus = SPI_BUS.init(Mutex::new(spi_bus));
+        let display_cs = Output::new(p.GPIO14, Level::High, OutputConfig::default());
+        let spi_device = SpiDeviceWithConfig::new(shared_bus, display_cs, spi_config);
+
+        let mut bl = Output::new(p.GPIO32, Level::Low, OutputConfig::default());
+        let dc = Output::new(p.GPIO27, Level::Low, OutputConfig::default());
+        let rst = Output::new(p.GPIO33, Level::Low, OutputConfig::default());
+
+        let di = SpiInterface::new(spi_device, dc);
+        let mut delay = Delay;
+        let display = Builder::new(ILI9342CRgb565, di)
+            .invert_colors(ColorInversion::Inverted)
+            .color_order(ColorOrder::Bgr)
+            .display_size(SCREEN_W, SCREEN_H)
+            .reset_pin(rst)
+            .init(&mut delay)
+            .await
+            .expect("Display init failed");
+
+        bl.set_high();
+        info!("Display initialized, backlight on");
+
+        DisplayDriver { _bl: bl, display }
+    };
+
+    // -----------------------------------------------------------------------
+    // CoreS3 (ESP32-S3): the panel has no GPIO reset/backlight. The AW9523B
+    // expander pulses the LCD/touch resets and the AXP2101 DLDO1 rail powers
+    // the backlight, both over the shared I2C0 bus (SDA=GPIO12, SCL=GPIO11).
+    // SPI2 runs on the GDMA `DMA_CH0` channel; DC=GPIO35 (must be a configured
+    // Output so the pad routes), CS=GPIO3. No front-panel buttons (touch only).
+    // Mirrors `examples/cores3/src/lib.rs::init_display`, inlined because this
+    // example owns its own descriptor-backed `SpiDmaBus`.
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "cores3")]
+    let driver = {
+        use esp_hal::i2c::master::{Config as I2cConfig, I2c};
+        use m5stack_core::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
+        use m5stack_core::driver::axp2101::Axp2101Driver;
+        use m5stack_core::io::shared_i2c::SharedI2cBus;
+
+        /// The AXP2101 PMIC I2C address (CoreS3 onboard).
+        const AXP2101_ADDR: u8 = 0x34;
+
+        // I2C0 @ 400 kHz on the CoreS3 bus pins, shared by the expander + PMIC.
+        let i2c = I2c::new(
+            p.I2C0,
+            I2cConfig::default().with_frequency(Rate::from_khz(400)),
+        )
+        .expect("I2C0 init failed")
+        .with_sda(p.GPIO12)
+        .with_scl(p.GPIO11)
         .into_async();
+        let i2c_bus: &'static SharedI2cBus = make_static!(SharedI2cBus::new(i2c));
 
-    let shared_bus = SPI_BUS.init(Mutex::new(spi_bus));
-    let display_cs = Output::new(p.GPIO14, Level::High, OutputConfig::default());
-    let spi_device = SpiDeviceWithConfig::new(shared_bus, display_cs, spi_config);
+        // AW9523B: pulse the LCD + touch resets (the CoreS3 has no GPIO reset).
+        let mut aw = Aw9523bDriver::new(Aw9523bResources { i2c: i2c_bus });
+        aw.init().await.expect("AW9523B init failed");
+        aw.lcd_rst_pulse().await.expect("AW9523B LCD RST failed");
+        aw.touch_rst_pulse()
+            .await
+            .expect("AW9523B TOUCH RST failed");
 
-    let mut bl = Output::new(p.GPIO32, Level::Low, OutputConfig::default());
-    let dc = Output::new(p.GPIO27, Level::Low, OutputConfig::default());
-    let rst = Output::new(p.GPIO33, Level::Low, OutputConfig::default());
+        // AXP2101: enable the DLDO1 rail (display backlight) and the battery ADC.
+        let mut axp = Axp2101Driver::new(i2c_bus, AXP2101_ADDR);
+        axp.set_dldo1(true, 3300)
+            .await
+            .expect("AXP2101 backlight enable failed");
+        axp.enable_battery_adc()
+            .await
+            .expect("AXP2101 battery ADC enable failed");
 
-    let di = SpiInterface::new(spi_device, dc);
-    let mut delay = Delay;
-    let display = Builder::new(ILI9342CRgb565, di)
-        .invert_colors(ColorInversion::Inverted)
-        .color_order(ColorOrder::Bgr)
-        .display_size(SCREEN_W, SCREEN_H)
-        .reset_pin(rst)
-        .init(&mut delay)
-        .await
-        .expect("Display init failed");
+        // SPI2 on the GDMA `DMA_CH0` channel (esp32s3 uses GDMA, not the ESP32's
+        // PDMA `DMA_SPI2`).
+        let spi_bus = Spi::new(p.SPI2, spi_config.clone())
+            .expect("SPI2 init failed")
+            .with_sck(p.GPIO36)
+            .with_mosi(p.GPIO37)
+            .with_dma(p.DMA_CH0)
+            .with_buffers(dma_rx_buf, dma_tx_buf)
+            .into_async();
 
-    bl.set_high();
-    info!("Display initialized, backlight on");
+        let shared_bus = SPI_BUS.init(Mutex::new(spi_bus));
+        let display_cs = Output::new(p.GPIO3, Level::High, OutputConfig::default());
+        let spi_device = SpiDeviceWithConfig::new(shared_bus, display_cs, spi_config);
 
-    let driver = DisplayDriver { _bl: bl, display };
+        // DC on GPIO35: `Output::new` configures the pad's IO-MUX so the pin
+        // actually drives — a bare GPIO-register hack leaves the pad unrouted
+        // and DC never toggles, so the panel never wakes (black screen).
+        let dc = Output::new(p.GPIO35, Level::Low, OutputConfig::default());
+
+        let di = SpiInterface::new(spi_device, dc);
+        let mut delay = Delay;
+        // No `.reset_pin(...)`: reset was performed via the AW9523B above, so the
+        // lcd-async builder takes the `NoResetPin` path (the cores3 `LcdDisplay`
+        // alias above carries the matching `NoResetPin` type parameter).
+        let display = Builder::new(ILI9342CRgb565, di)
+            .invert_colors(ColorInversion::Inverted)
+            .color_order(ColorOrder::Bgr)
+            .display_size(SCREEN_W, SCREEN_H)
+            .init(&mut delay)
+            .await
+            .expect("Display init failed");
+
+        info!("Display initialized (CoreS3: AXP2101 backlight on)");
+
+        DisplayDriver { display }
+    };
 
     // Run the SPI flush on a high-priority interrupt executor (SWI1) so it
     // never blocks the LVGL render loop on the low-priority executor.
