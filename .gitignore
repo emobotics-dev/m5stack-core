@@ -2,3 +2,6 @@
 /examples/*/target/
 Cargo.lock
 /work/
+
+# crates.io publish token — never commit
+.cargo/credentials.toml
