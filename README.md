@@ -299,13 +299,13 @@ Notes:
 
 ## Dependencies & the esp-hal fork
 
-The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.0,
+The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.1,
 `esp-radio` 0.18.0, `esp-sync`, `esp-alloc`) — it uses no fork-specific API
 (the 1-Wire-over-RMT driver is vendored in-tree; see `driver::onewire`).
 
 The **examples**, and all local workspace builds, are redirected to a fork —
 [`emobotics-dev/esp-hal`](https://github.com/emobotics-dev/esp-hal/tree/local) —
-via `[patch.crates-io]`. The fork is esp-hal 1.1.0 plus a small set of **ESP32
+via `[patch.crates-io]`. The fork is esp-hal 1.1.1 plus a small set of **ESP32
 fixes not yet upstream**, primarily **SPI-DMA correctness** that the LVGL
 display example's `SpiDmaBus` flush depends on:
 

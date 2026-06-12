@@ -4,6 +4,25 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1]
+
+### Changed
+
+- Bumped **esp-hal 1.1.0 → 1.1.1** — both the published stock dependency and
+  the esp-hal fork (rebased onto the 1.1.1 release as the `local-1.1.1` branch,
+  pinned by rev in `[patch.crates-io]`). `esp-rom-sys` stays pinned to `=0.1.4`.
+  Verified: lib builds on stock crates.io esp-hal 1.1.1; both boards run on HW.
+
+### Examples
+
+- The `examples/lvgl` (oxivgl/LVGL) example now builds and runs on **CoreS3**
+  (ESP32-S3) as well as Fire27 — GDMA flush, panel reset via AW9523B + backlight
+  via AXP2101, and RTT logging (`rtt-target`) + `panic-halt` over USB-Serial-JTAG
+  (esp-println/esp-backtrace conflict with USB-Serial-JTAG). The RTT logger runs
+  at **Info**, not Trace: oxivgl's per-frame DEBUG stream otherwise floods the
+  RTT buffer and, with no debugger draining it, back-pressures and stalls the
+  render loop — HIL-confirmed. At Info the demo runs standalone.
+
 ## [0.3.0]
 
 ### Added
