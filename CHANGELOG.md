@@ -47,6 +47,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `examples/fire27/src/bin/onewire.rs` — a DS18B20 1-Wire HIL example
   (2× sensors on Port B / G26).
 
+### Packaging
+
+- The library now depends on **stock crates.io** versions of the esp-hal family
+  (`esp-hal 1.1.0`, `esp-radio 0.18.0`, `esp-sync`, `esp-alloc`) — **no git
+  dependencies** — so it is publishable to crates.io. `esp-rom-sys` is pinned to
+  `=0.1.4` (esp-hal 1.1.0 calls a 0.1.4 API but only constrains it to `~0.1`).
+- Local and example builds are redirected to the emobotics esp-hal fork (ESP32
+  SPI/DMA patches the examples need) via `[patch.crates-io]`, pinned to a commit
+  rev for reproducibility; `cargo publish` ignores it. The LVGL example's
+  `oxivgl` deps use the crates.io release. See the README "Dependencies" section.
+
 ### Hardware notes
 
 - 1-Wire / DS18B20 hardening verified on Fire27 with 2× DS18B20 on Port B

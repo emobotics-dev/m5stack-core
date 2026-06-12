@@ -37,11 +37,20 @@ wifi-ap  = ["wifi", "dep:embassy-net"] # reserved for AP mode (not yet implement
 coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BLE coexistence (extra RAM)
 
 [dependencies]
-# esp-hal family
-esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", optional = true }
-esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
-esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp-alloc", "unstable"] }
-esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+# esp-hal family — stock crates.io versions so the crate publishes. The whole
+# family is version-locked together, so they are pinned exactly; local and
+# example builds are redirected to the emobotics fork (a coherent snapshot of
+# the same versions, plus SPI/DMA patches the examples need) via the rev-pinned
+# [patch.crates-io] below, which `cargo publish` ignores.
+esp-alloc           = { version = "=0.10.0", optional = true }
+esp-hal             = { version = "=1.1.0", features = ["unstable"] }
+esp-radio           = { version = "=0.18.0", features = ["esp-alloc", "unstable"] }
+esp-sync            = { version = "=0.2.1" }
+# Pinned (and referenced via `use esp_rom_sys as _` in lib.rs so it survives
+# `cargo package`): esp-hal 1.1.0 calls esp_rom_sys::init_syscall_table, added
+# in 0.1.4, but only constrains it to ~0.1 — without this pin a stock resolve
+# drifts to 0.1.1 (which lacks the function) and esp-hal fails to compile.
+esp-rom-sys         = { version = "=0.1.4" }
 
 # embedded-hal family
 embedded-hal        = "1.0.0"
@@ -62,9 +71,17 @@ log                 = "0.4"
 static_cell         = { version = "2.1.1", features = ["nightly"] }
 thiserror-no-std    = "2.0.2"
 
+# Local/example builds only: redirect the esp-hal family the library declares
+# (stock, above) to the emobotics fork at a pinned rev — a coherent snapshot of
+# those versions with the SPI/DMA patches the examples need. Pinned to a rev,
+# not the floating `local` branch, so builds are reproducible. `cargo publish`
+# ignores [patch], so downstream consumers resolve the stock crates.io versions.
 [patch.crates-io]
-esp-hal                = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
+esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
 
 [workspace]
 members = ["examples/common", "examples/fire27", "examples/cores3", "examples/lvgl"]
