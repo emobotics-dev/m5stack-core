@@ -21,7 +21,7 @@ Exactly one feature must be enabled.
 |--------|-------------|
 | `pcnt` | Pulse counter wrapper for RPM sensing (`PcntDriver`) |
 | `pps` | Programmable Power Supply I2C driver (0x35) — voltage, current, temperature |
-| `ds16b20` | 1-Wire temperature sensor via RMT (chip-specific RMT channel selection) |
+| `ds18b20` | 1-Wire temperature sensor via RMT (chip-specific RMT channel selection) |
 | `aw9523b` | I2C GPIO expander (CoreS3, 0x58) — LCD/touch reset pulses, M-Bus 5 V enable (`enable_bus_5v`) |
 | `axp2101` | PMIC (CoreS3, 0x34) — backlight voltage, battery ADC, VBUS detection |
 | `ft6336u` | Capacitive touch controller (0x38) — stateless `read_touch()` |
@@ -285,7 +285,7 @@ Notes:
 
 ## Design
 
-- **Chip differences** handled via `#[cfg(feature = "...")]` (e.g. RMT channel in `ds16b20`)
+- **Chip differences** handled via `#[cfg(feature = "...")]` (e.g. RMT channel in `ds18b20`)
 - **`SharedI2cBus`** wraps `Mutex<RawMutex, I2c>` — safe for single-executor async tasks
 - **Resource pattern**: `*Resources` structs bundle peripherals, consumed by `into_driver()` or task loops
 - **IO loops** use error counting with threshold (e.g. PPS breaks after 10 consecutive errors)

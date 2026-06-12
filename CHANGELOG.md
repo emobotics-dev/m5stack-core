@@ -4,6 +4,46 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Added
+
+- `driver::onewire` — async 1-Wire bus master over the RMT peripheral, vendored
+  in-tree (previously the external `esp-hal-rmt-onewire` git dependency, which
+  blocked publishing and lagged esp-hal releases). Public API: `OneWire`,
+  `Address`, `Search`, `crc8`. New `search-masks` feature gates the masked ROM
+  search.
+- `driver::ds18b20::Ds18b20Driver::rescan` — re-enumerate the bus on demand.
+
+### Changed — breaking
+
+- Renamed `driver::ds16b20` → `driver::ds18b20` and `Ds16b20Driver` →
+  `Ds18b20Driver` (the sensor is the DS**18**B20; "16" was a typo).
+- `Address` is now `driver::onewire::Address` (previously surfaced from the
+  external crate). Its `Display`/`LowerHex` render byte-wise, family-code first
+  and zero-padded. `onewire::Error`, `SearchError`, and `ds18b20::Error` are
+  reworked onto `thiserror_no_std` with `#[from]` sources.
+- DS18B20 ROM addresses are now enumerated once and cached (no sensor hot-plug
+  assumed); reads address each sensor by `Match ROM` instead of re-running the
+  full ROM search every cycle.
+
+### Fixed
+
+- DS18B20 reads wait for the temperature conversion to complete before reading,
+  so the first read no longer returns the stale 85 °C power-up value.
+- Each device's full 9-byte scratchpad is read and CRC-8 validated, and ROM
+  addresses are CRC-checked during enumeration. A CRC-bad or dropped sensor is
+  warned and omitted rather than aborting the whole read; its address stays
+  cached and is retried on the next cycle.
+- Replaced the 1-Wire RX-timeout hack (a second TX "delay pulse" plus
+  undocumented select-polling) with a software-timer-bounded `join(rx, tx)`.
+
+### Hardware notes
+
+- 1-Wire / DS18B20 hardening verified on Fire27 with 2× DS18B20 on Port B
+  (G26): correct reads across cycles, and a bus disconnect degrades gracefully
+  (per-sensor warn + omit, addresses retained, no hang or crash).
+
 ## [0.2.0]
 
 ### Added — M5GO Battery Bottom support
