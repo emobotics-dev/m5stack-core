@@ -12,24 +12,72 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+# Exactly one board feature must be enabled. `default = ["fire27"]` keeps the
+# bare `cargo build -p lvgl-example` building for the Fire27 (ESP32); the CoreS3
+# (ESP32-S3) build selects `--no-default-features --features cores3`. The chip
+# is propagated to the whole esp-hal family from here (esp-hal/esp32 vs
+# esp-hal/esp32s3) so no esp-* dep hardcodes a chip below.
+default = ["fire27"]
+fire27 = [
+    "esp-hal/esp32",
+    "esp-backtrace/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-println/esp32",
+    "esp-println/uart",
+    "esp-rtos/esp32",
+    "esp-sync/esp32",
+]
+cores3 = [
+    "esp-hal/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+    "esp-rtos/esp32s3",
+    "esp-sync/esp32s3",
+    "dep:m5stack-core",
+    "m5stack-core/cores3",
+    # CoreS3 logs over RTT + halts via panic-halt (NOT esp-backtrace/esp-println,
+    # which spin on a full USB-Serial-JTAG FIFO and stall the app under load).
+    "dep:panic-halt",
+    "dep:rtt-target",
+]
+
 [dependencies]
 # LVGL UI framework + raw bindings. oxivgl-sys downloads & compiles LVGL 9.5.0
 # at build time (needs network + libclang; see this crate's README/build notes).
-oxivgl     = { version = "0.4.0", features = ["esp-hal", "esp32", "log-04"] }
+# oxivgl is chip-agnostic at the Rust level — the chip is selected by this
+# crate's own esp-hal feature (esp32 vs esp32s3), so we DON'T enable oxivgl's
+# `esp32` feature; oxivgl-sys auto-selects its cmake toolchain from the target.
+oxivgl     = { version = "0.4.0", features = ["esp-hal", "log-04"] }
 oxivgl-sys = { version = "0.2.1", default-features = false }
 
+# m5stack-core — only needed on CoreS3 for the AW9523/AXP2101 bring-up and the
+# shared-I2C bus (the Fire27 path drives the panel directly). Pulled in by the
+# `cores3` feature with no default features; `cores3` also turns on its
+# `m5stack-core/cores3` chip feature.
+m5stack-core = { path = "../..", optional = true, default-features = false }
+
 # esp-hal family — the emobotics fork pinned to a rev (master == release v0.4.0
-# for oxivgl, so that one uses the crates.io release above); matched to
-# examples/fire27/Cargo.toml.
+# for oxivgl, so that one uses the crates.io release above). The chip feature is
+# supplied per-board via this crate's [features] table, not hardcoded here.
 esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["internal-heap-stats"] }
-esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32", "panic-handler", "custom-halt", "colors", "println"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32"] }
-esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32", "unstable"] }
-esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32", "log-04", "colors", "timestamp", "uart"], default-features = false }
-esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32", "embassy"] }
-esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["esp32"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["panic-handler", "custom-halt", "colors", "println"], optional = true }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["log-04", "colors", "timestamp"], default-features = false, optional = true }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e", features = ["embassy"] }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "70d1c87f8e9dc9e41fbd80d267696d733c08d33e" }
+
+# CoreS3 logging/panic (USB-Serial-JTAG): RTT (rides the JTAG channel) +
+# panic-halt; esp-backtrace/esp-println conflict with USB-Serial-JTAG. NOTE: the
+# RTT logger must run at Info, not Trace — a per-frame DEBUG flood fills the RTT
+# buffer and, with no debugger draining it, back-pressures and stalls the render
+# loop (see main.rs). Fire27 keeps esp-backtrace/esp-println (UART).
+panic-halt           = { version = "1.0.0", optional = true }
+rtt-target           = { version = "0.6.2", features = ["log"], optional = true }
 
 # Embassy — versions matched to examples/fire27 to avoid trait-bound skew.
+# embassy-embedded-hal is NON-optional: both boards drive the panel through
+# `SpiDeviceWithConfig` from this crate.
 embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
 embassy-executor     = { version = "0.10.0", features = ["nightly"] }
 embassy-sync         = "0.8"
