@@ -27,6 +27,9 @@ fire27 = [
     "esp-println/uart",
     "esp-rtos/esp32",
     "esp-sync/esp32",
+    "dep:m5stack-core",
+    "m5stack-core/fire27",
+    "m5stack-core/display",
 ]
 cores3 = [
     "esp-hal/esp32s3",
@@ -35,6 +38,7 @@ cores3 = [
     "esp-sync/esp32s3",
     "dep:m5stack-core",
     "m5stack-core/cores3",
+    "m5stack-core/display",
     # CoreS3 logs over RTT + halts via panic-halt (NOT esp-backtrace/esp-println,
     # which spin on a full USB-Serial-JTAG FIFO and stall the app under load).
     "dep:panic-halt",
@@ -50,10 +54,10 @@ cores3 = [
 oxivgl     = { version = "0.4.0", features = ["esp-hal", "log-04"] }
 oxivgl-sys = { version = "0.2.1", default-features = false }
 
-# m5stack-core — only needed on CoreS3 for the AW9523/AXP2101 bring-up and the
-# shared-I2C bus (the Fire27 path drives the panel directly). Pulled in by the
-# `cores3` feature with no default features; `cores3` also turns on its
-# `m5stack-core/cores3` chip feature.
+# m5stack-core — both boards use its ILI9342C bring-up (board::display); the
+# CoreS3 additionally uses the AW9523/AXP2101 drivers and the shared-I2C bus.
+# Pulled in by either board feature with no default features; each turns on
+# the matching chip feature plus `m5stack-core/display`.
 m5stack-core = { path = "../..", optional = true, default-features = false }
 
 # esp-hal family — the emobotics fork pinned to a rev (master == release v0.4.0

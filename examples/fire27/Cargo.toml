@@ -50,7 +50,7 @@ required-features = ["coex"]
 coex = ["m5stack-core/ble", "m5stack-core/coex", "dep:trouble-host", "dep:embassy-futures"]
 
 [dependencies]
-m5stack-core         = { path = "../../", features = ["fire27", "psram", "wifi-sta"] }
+m5stack-core         = { path = "../../", features = ["fire27", "psram", "wifi-sta", "display"] }
 common               = { path = "../common" }
 
 # esp-hal family

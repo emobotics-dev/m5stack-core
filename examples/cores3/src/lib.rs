@@ -22,12 +22,8 @@ use esp_hal::{
     time::Rate,
 };
 use esp_sync::RawMutex;
-use lcd_async::{
-    Builder, NoResetPin,
-    interface::SpiInterface,
-    models::ILI9342CRgb565,
-    options::{ColorInversion, ColorOrder},
-};
+use lcd_async::interface::SpiInterface;
+use m5stack_core::board::display::{Ili9342c, init_ili9342c};
 use m5stack_core::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
 use m5stack_core::driver::axp2101::Axp2101Driver;
 use m5stack_core::driver::radio::wifi::{
@@ -51,15 +47,13 @@ type SharedSpi = Mutex<RawMutex, Spi<'static, esp_hal::Async>>;
 pub const AXP2101_ADDR: u8 = 0x34;
 
 /// The concrete CoreS3 display: an ILI9342C over SPI with **no** GPIO reset pin
-/// (the 3rd type parameter is [`NoResetPin`] — the panel is reset via the AW9523
+/// (no 2nd `Ili9342c` type parameter — the panel is reset via the AW9523
 /// expander in [`init_display`], not a dedicated GPIO).
-pub type Lcd = lcd_async::Display<
+pub type Lcd = Ili9342c<
     SpiInterface<
         SpiDeviceWithConfig<'static, RawMutex, Spi<'static, esp_hal::Async>, Output<'static>>,
         Output<'static>,
     >,
-    ILI9342CRgb565,
-    NoResetPin,
 >;
 
 /// Bring up I2C0 on the CoreS3 bus pins (SDA=GPIO12, SCL=GPIO11) and wrap it in
@@ -151,14 +145,7 @@ pub async fn init_display(
     // never toggles, so the panel never wakes → black screen).
     let dc = Output::new(dc, Level::Low, OutputConfig::default());
     let di = SpiInterface::new(spi_device, dc);
-    let mut delay = embassy_time::Delay;
-    let display = Builder::new(ILI9342CRgb565, di)
-        .invert_colors(ColorInversion::Inverted)
-        .color_order(ColorOrder::Bgr)
-        .display_size(320, 240)
-        .init(&mut delay)
-        .await
-        .expect("Display init failed");
+    let display = init_ili9342c(di).await.expect("Display init failed");
 
     (display, axp)
 }
