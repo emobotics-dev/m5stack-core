@@ -43,13 +43,13 @@ pub enum Error {
     TooManySensorsConnected,
 }
 
-pub struct Ds16b20Driver {
+pub struct Ds18b20Driver {
     ow: OneWire<'static>,
     /// ROM addresses discovered by the last scan, reused across reads.
     addresses: Vec<Address, { Self::MAX_SENSORS }>,
 }
 
-impl Ds16b20Driver {
+impl Ds18b20Driver {
     const MAX_SENSORS: usize = 16;
     pub fn new(rmt: RMT<'static>, pin: AnyPin<'static>) -> Result<Self, Error> {
         let rmt = Rmt::new(rmt, Rate::from_mhz(80_u32))?.into_async();
@@ -59,7 +59,7 @@ impl Ds16b20Driver {
         let ow = OneWire::new(rmt.channel0, rmt.channel2, pin)?;
         #[cfg(feature = "cores3")]
         let ow = OneWire::new(rmt.channel0, rmt.channel4, pin)?;
-        Ok(Ds16b20Driver {
+        Ok(Ds18b20Driver {
             ow,
             addresses: Vec::new(),
         })

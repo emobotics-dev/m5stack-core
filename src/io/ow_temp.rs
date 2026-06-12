@@ -2,7 +2,7 @@
 use embassy_time::{Duration, Ticker};
 use esp_hal::{gpio::AnyPin, peripherals::RMT};
 
-use crate::driver::ds16b20::{Ds16b20Driver, Error};
+use crate::driver::ds18b20::{Ds18b20Driver, Error};
 
 pub struct OnewireResources<'a> {
     pub rmt: RMT<'a>,
@@ -10,8 +10,8 @@ pub struct OnewireResources<'a> {
 }
 
 impl OnewireResources<'static> {
-    pub fn into_driver(self) -> Result<Ds16b20Driver, Error> {
-        Ok(Ds16b20Driver::new(self.rmt, self.pin)?)
+    pub fn into_driver(self) -> Result<Ds18b20Driver, Error> {
+        Ok(Ds18b20Driver::new(self.rmt, self.pin)?)
     }
 }
 
