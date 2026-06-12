@@ -247,6 +247,28 @@ impl From<esp_hal::rmt::Error> for Error {
     }
 }
 
+/// Dallas/Maxim 1-Wire CRC-8 (polynomial X^8 + X^5 + X^4 + 1, reflected 0x8C).
+///
+/// Used to validate ROM addresses (byte 7 covers bytes 0..7) and DS18B20
+/// scratchpad reads (byte 8 covers bytes 0..8). A correct frame CRCs to 0 when
+/// the trailing CRC byte is included; this helper returns the CRC of `data`, so
+/// callers compare it against the received CRC byte. See Maxim app note 27.
+pub fn crc8(data: &[u8]) -> u8 {
+    let mut crc = 0u8;
+    for &byte in data {
+        let mut b = byte;
+        for _ in 0..8 {
+            let mix = (crc ^ b) & 0x01;
+            crc >>= 1;
+            if mix != 0 {
+                crc ^= 0x8C;
+            }
+            b >>= 1;
+        }
+    }
+    crc
+}
+
 /// A 64-bit 1-Wire ROM address (family code, serial, CRC).
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Address(pub u64);
@@ -290,6 +312,10 @@ pub enum SearchError {
     SearchComplete,
     /// No device responded to the search.
     NoDevicesPresent,
+    /// The enumerated ROM address failed its CRC-8 check (bus glitch). The
+    /// search state has still advanced, so a subsequent [`Search::next`] call
+    /// continues enumeration past the corrupt address.
+    CrcMismatch,
     /// An underlying bus error occurred.
     BusError(Error),
 }
@@ -382,6 +408,13 @@ impl Search {
             }
             self.last_discrepancy = last_zero;
             self.complete = last_zero.is_none();
+            // Byte 7 of the ROM is a CRC-8 over the family code + 48-bit serial
+            // (bytes 0..7). Reject a corrupt enumeration rather than handing the
+            // caller a bogus address; enumeration state has already advanced.
+            let rom = self.address.to_le_bytes();
+            if crc8(&rom[..7]) != rom[7] {
+                return Err(SearchError::CrcMismatch);
+            }
             Ok(Address(self.address))
         } else {
             Err(SearchError::NoDevicesPresent)
