@@ -197,13 +197,13 @@ impl<'a> OneWire<'a> {
         // 8 bit-slots followed by a trailing end marker; sized 10 for headroom.
         let mut data = [PulseCode::end_marker(); 10];
         let mut indata = [PulseCode::end_marker(); 10];
-        for n in 0..8 {
-            data[n] = Self::encode_bit(0 != byte & 1 << n);
+        for (n, slot) in data.iter_mut().take(8).enumerate() {
+            *slot = Self::encode_bit(byte & (1 << n) != 0);
         }
         let _res = self.send_and_receive(&mut indata, &data).await?;
         let mut res: u8 = 0;
-        for n in 0..8 {
-            if Self::decode_bit(indata[n]) {
+        for (n, &code) in indata.iter().take(8).enumerate() {
+            if Self::decode_bit(code) {
                 res |= 1 << n;
             }
         }
@@ -213,10 +213,10 @@ impl<'a> OneWire<'a> {
     /// Write one byte (LSB first) without reading the response.
     pub async fn send_byte(&mut self, byte: u8) -> Result<(), Error> {
         let mut data = [PulseCode::end_marker(); 10];
-        for n in 0..8 {
-            data[n] = Self::encode_bit(0 != byte & 1 << n);
+        for (n, slot) in data.iter_mut().take(8).enumerate() {
+            *slot = Self::encode_bit(byte & (1 << n) != 0);
         }
-        let _res = self.tx.transmit(&data).await?;
+        self.tx.transmit(&data).await?;
         Ok(())
     }
 

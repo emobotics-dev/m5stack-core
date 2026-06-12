@@ -11,7 +11,7 @@ pub struct OnewireResources<'a> {
 
 impl OnewireResources<'static> {
     pub fn into_driver(self) -> Result<Ds18b20Driver, Error> {
-        Ok(Ds18b20Driver::new(self.rmt, self.pin)?)
+        Ds18b20Driver::new(self.rmt, self.pin)
     }
 }
 
