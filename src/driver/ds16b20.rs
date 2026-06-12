@@ -21,7 +21,7 @@
 use crate::driver::onewire::{Address, OneWire, Search, SearchError, crc8};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{gpio::AnyPin, peripherals::RMT, rmt::Rmt, time::Rate};
-use heapless::index_map::FnvIndexMap;
+use heapless::Vec;
 use thiserror_no_std::Error;
 
 #[derive(Debug, Error)]
@@ -42,6 +42,8 @@ pub enum Error {
 
 pub struct Ds16b20Driver {
     ow: OneWire<'static>,
+    /// ROM addresses discovered by the last scan, reused across reads.
+    addresses: Vec<Address, { Self::MAX_SENSORS }>,
 }
 
 impl Ds16b20Driver {
@@ -56,52 +58,72 @@ impl Ds16b20Driver {
         let ow = OneWire::new(rmt.channel0, rmt.channel2, pin)?;
         #[cfg(feature = "cores3")]
         let ow = OneWire::new(rmt.channel0, rmt.channel4, pin)?;
-        Ok(Ds16b20Driver { ow })
+        Ok(Ds16b20Driver {
+            ow,
+            addresses: Vec::new(),
+        })
     }
 
-    pub async fn read_all_temperatures(
-        &mut self,
-    ) -> Result<impl Iterator<Item = (Address, f32)>, Error> {
-        trace!("Resetting the bus");
-        self.ow.reset().await?;
-
-        trace!("Broadcasting a measure temperature command to all attached sensors");
-        for a in [0xCC, 0x44] {
-            self.ow.send_byte(a).await?;
-        }
-
-        // A read immediately after Convert T returns the *previous* conversion
-        // (the very first read after power-up is the 85 °C reset value). Wait
-        // for completion before scanning so callers get the fresh measurement.
-        self.wait_conversion_complete().await?;
-
-        trace!("Scanning the bus to retrieve the measured temperatures");
+    /// Enumerate the bus and cache the discovered ROM addresses.
+    ///
+    /// Runs the full ROM Search once. [`read_all_temperatures`] calls this
+    /// lazily on first use; call it explicitly to refresh the set. As no sensor
+    /// hot-plug is assumed at runtime, the cached addresses are reused across
+    /// reads — avoiding a 64-step ROM search on every cycle (which otherwise
+    /// dominates the RMT round-trips and task wakeups, the main cost here since
+    /// the RMT does the bit timing in hardware).
+    pub async fn rescan(&mut self) -> Result<(), Error> {
+        self.addresses.clear();
         let mut search = Search::new();
-        let mut temperatures = FnvIndexMap::<_, _, { Self::MAX_SENSORS }>::new();
         loop {
             match search.next(&mut self.ow).await {
                 Ok(address) => {
-                    debug!("Reading device {:?}", address);
-                    match self.read_scratchpad(address).await {
-                        Ok(temperature_celsius) => {
-                            temperatures
-                                .insert(address, temperature_celsius)
-                                .map_err(|_| Error::TooManySensorsConnected)?;
-                            debug!("sensor {}: {}°C", address, temperature_celsius);
-                        }
-                        // A single sensor failing its scratchpad CRC must not
-                        // abort the whole scan — warn and omit it.
-                        Err(e) => warn!("skipping sensor {}: {:?}", address, e),
+                    debug!("found device {}", address);
+                    if self.addresses.push(address).is_err() {
+                        return Err(Error::TooManySensorsConnected);
                     }
                 }
                 // A corrupt ROM CRC affects only this one enumeration step; the
                 // search state has advanced, so keep scanning the rest.
                 Err(SearchError::CrcMismatch) => warn!("ROM CRC mismatch, skipping device"),
-                Err(SearchError::SearchComplete) | Err(SearchError::NoDevicesPresent) => {
-                    trace!("End of search");
-                    break;
-                }
+                Err(SearchError::SearchComplete) | Err(SearchError::NoDevicesPresent) => break,
                 Err(SearchError::BusError(e)) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn read_all_temperatures(
+        &mut self,
+    ) -> Result<impl Iterator<Item = (Address, f32)>, Error> {
+        if self.addresses.is_empty() {
+            self.rescan().await?;
+        }
+
+        trace!("Broadcasting a measure temperature command to all attached sensors");
+        self.ow.reset().await?;
+        for cmd in [0xCC, 0x44] {
+            self.ow.send_byte(cmd).await?;
+        }
+
+        // A read immediately after Convert T returns the *previous* conversion
+        // (the very first read after power-up is the 85 °C reset value). Wait
+        // for completion before reading so callers get the fresh measurement.
+        self.wait_conversion_complete().await?;
+
+        // Read each cached sensor by ROM address. A sensor that drops out is
+        // warned and omitted from this cycle's results; since no hot-plug is
+        // assumed, its address stays cached so it is retried on the next read.
+        let mut temperatures = Vec::<(Address, f32), { Self::MAX_SENSORS }>::new();
+        for i in 0..self.addresses.len() {
+            let address = self.addresses[i];
+            match self.read_scratchpad(address).await {
+                Ok(temperature_celsius) => {
+                    // Capacity is guaranteed: addresses.len() <= MAX_SENSORS.
+                    let _ = temperatures.push((address, temperature_celsius));
+                    debug!("sensor {}: {}°C", address, temperature_celsius);
+                }
+                Err(e) => warn!("sensor {} lost: {:?}", address, e),
             }
         }
         Ok(temperatures.into_iter())
