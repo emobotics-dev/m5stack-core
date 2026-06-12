@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "lvgl-example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+publish = false
+
+[[bin]]
+name = "lvgl"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+# LVGL UI framework + raw bindings. oxivgl-sys downloads & compiles LVGL 9.5.0
+# at build time (needs network + libclang; see this crate's README/build notes).
+oxivgl     = { git = "https://github.com/emobotics-dev/oxivgl.git", branch = "master", features = ["esp-hal", "esp32", "log-04"] }
+oxivgl-sys = { package = "oxivgl-sys", git = "https://github.com/emobotics-dev/oxivgl.git", branch = "master", default-features = false }
+
+# esp-hal family — our fork (branch=local), matched to examples/fire27/Cargo.toml.
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32"] }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "log-04", "colors", "timestamp", "uart"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32", "embassy"] }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp32"] }
+
+# Embassy — versions matched to examples/fire27 to avoid trait-bound skew.
+embassy-embedded-hal = { version = "0.6.0", features = ["time"] }
+embassy-executor     = { version = "0.10.0", features = ["nightly"] }
+embassy-sync         = "0.8"
+embassy-time         = "0.5.0"
+
+# Display
+lcd-async            = "0.1.1"
+
+# misc
+heapless             = "0.9.1"
+log                  = "0.4"
+static_cell          = { version = "2.1.1", features = ["nightly"] }

@@ -11,15 +11,22 @@ USER root
 
 # ── System packages (only what's NOT in base image) ──────────────
 # libudev-dev: required by espflash / probe-rs for serial + USB enumeration.
+# python3 + pypng + lz4: the `lvgl` example's oxivgl-sys/oxivgl build scripts
+#   run LVGL's `LVGLImage.py` (converts a bundled image asset), which imports
+#   the `png` (pypng) and `lz4` modules.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libudev-dev \
+        python3 python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages pypng lz4 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── ESP Rust toolchain (copied from CI image) ────────────────────
 # The Xtensa rustc (channel `esp`, pinned in the CI base image) plus the
 # xtensa-esp-elf GCC. `build-std` compiles core/alloc from source, so no
 # prebuilt target std is needed — only the toolchain and the linkers.
-# The BSP has no bindgen, so libclang/sysroot hints are intentionally omitted.
+# The `lvgl` example uses bindgen (via oxivgl-sys). oxivgl-sys auto-detects the
+# ESP clang under $RUSTUP_HOME, but bindgen still needs the newlib sysroot so
+# clang's `#include_next <inttypes.h>` resolves — wired into .clco-env below.
 COPY --from=esp-toolchain /opt/rustup           /opt/rustup
 COPY --from=esp-toolchain /opt/cargo            /opt/cargo
 COPY --from=esp-toolchain /opt/esp_elf_bin_path /opt/esp_elf_bin_path
@@ -50,6 +57,17 @@ RUN rm -f "$CARGO_HOME/bin/espflash" "$CARGO_HOME/bin/probe-rs" \
 RUN bash -c '\
     ELF_BIN=$(cat /opt/esp_elf_bin_path); \
     LINE="export PATH=\"$ELF_BIN:\$PATH\""; \
+    echo "$LINE" >> /home/claude/.clco-env; \
+    echo "$LINE" >> /home/claude/.bashrc'
+
+# ── bindgen sysroot for the `lvgl` example (oxivgl-sys) ───────────
+# Derive the newlib sysroot from the GCC itself (version-independent) and
+# expose it to bindgen via BINDGEN_EXTRA_CLANG_ARGS. Without it, the ESP clang's
+# bundled inttypes.h `#include_next`s a libc header it can't find.
+RUN bash -c '\
+    ELF_BIN=$(cat /opt/esp_elf_bin_path); \
+    SYSROOT=$("$ELF_BIN/xtensa-esp32-elf-gcc" -print-sysroot); \
+    LINE="export BINDGEN_EXTRA_CLANG_ARGS=\"--sysroot=$SYSROOT -I$SYSROOT/include\""; \
     echo "$LINE" >> /home/claude/.clco-env; \
     echo "$LINE" >> /home/claude/.bashrc'
 

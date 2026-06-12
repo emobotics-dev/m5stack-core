@@ -51,7 +51,12 @@ impl EventHandler for PeerCollector {
                 let m = report.addr.raw();
                 rprintln!(
                     "BLE discovered {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    m[5], m[4], m[3], m[2], m[1], m[0]
+                    m[5],
+                    m[4],
+                    m[3],
+                    m[2],
+                    m[1],
+                    m[0]
                 );
                 let _ = seen.push_back(report.addr);
             }
@@ -84,11 +89,9 @@ pub async fn ble_scan_task(ble: BleRadio) {
         config.window = Duration::from_millis(400);
         match scanner.scan(&config).await {
             // Hold the session so scanning stays enabled.
-            Ok(_session) => {
-                loop {
-                    Timer::after(Duration::from_secs(2)).await;
-                }
-            }
+            Ok(_session) => loop {
+                Timer::after(Duration::from_secs(2)).await;
+            },
             Err(e) => rprintln!("BLE scan start failed: {:?}", e),
         }
     })

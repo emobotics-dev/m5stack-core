@@ -19,3 +19,10 @@ target = "xtensa-esp32-none-elf"
 
 [unstable]
 build-std = ["alloc", "core"]
+
+[env]
+# Required by the `lvgl-example` member: oxivgl-sys compiles LVGL at build time
+# and the application owns its `lv_conf.h`. Points at examples/lvgl/conf/.
+# Harmless for the other members (they don't depend on oxivgl-sys). Resolved
+# relative to this config file's directory (the workspace root).
+DEP_LV_CONFIG_PATH = { value = "examples/lvgl/conf", relative = true }
