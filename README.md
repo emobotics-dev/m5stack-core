@@ -283,6 +283,34 @@ Notes:
   needs network access, a C compiler (`xtensa-esp32-elf-gcc`) and `libclang`
   for `bindgen` — all provided by the devcontainer.
 
+## Dependencies & the esp-hal fork
+
+The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.0,
+`esp-radio` 0.18.0, `esp-sync`, `esp-alloc`) — it uses no fork-specific API
+(the 1-Wire-over-RMT driver is vendored in-tree; see `driver::onewire`).
+
+The **examples**, and all local workspace builds, are redirected to a fork —
+[`emobotics-dev/esp-hal`](https://github.com/emobotics-dev/esp-hal/tree/local) —
+via `[patch.crates-io]`. The fork is esp-hal 1.1.0 plus a small set of **ESP32
+fixes not yet upstream**, primarily **SPI-DMA correctness** that the LVGL
+display example's `SpiDmaBus` flush depends on:
+
+- `feat(spi)` — zero-copy DMA in `write_async`
+- `fix(spi-dma)` — ESP32 PDMA TX unaligned-length wedge (chained-descriptor fix)
+- `fix(spi/dma)` — recover from an RX descriptor fault instead of hanging
+- `fix(spi)` — bound the ESP32 post-DONE busy-re-wake (silent SD-card wedge)
+
+plus assorted ESP32 robustness fixes (linker stack-guard sizing, I2C NACK
+handling, `esp-println` UART critical-section bound).
+
+Both the `[patch]` and the example git dependencies are pinned to a **commit
+rev**, not a branch, so builds are reproducible. `cargo publish` ignores
+`[patch]`, so a published `m5stack-core` resolves the plain crates.io versions.
+The example UI crate's `oxivgl`/`oxivgl-sys` deps are likewise rev-pinned.
+
+**Roadmap:** upstream these patches; once they land in a released esp-hal, the
+fork and the `[patch]` are dropped.
+
 ## Design
 
 - **Chip differences** handled via `#[cfg(feature = "...")]` (e.g. RMT channel in `ds18b20`)
@@ -293,4 +321,5 @@ Notes:
 
 ## License
 
-BSD-3-Clause
+Licensed under either of **MIT** ([LICENSE-MIT](LICENSE-MIT)) or **Apache-2.0**
+([LICENSE-APACHE](LICENSE-APACHE)) at your option.
