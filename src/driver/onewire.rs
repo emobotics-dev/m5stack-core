@@ -11,7 +11,9 @@
 //! `generic_const_exprs` nightly feature) — modified from the original.
 
 use core::fmt::LowerHex;
+use embassy_futures::join::join;
 use embassy_futures::select::*;
+use embassy_time::{Duration, Timer};
 use esp_hal::rmt::{Rx, Tx};
 use esp_hal::{
     Async,
@@ -93,6 +95,11 @@ impl<'a> OneWire<'a> {
             && indata[1].length1() < 200)
     }
 
+    /// Upper bound on a single bus transaction before the RX channel is treated
+    /// as stuck. Every DS18B20 reset/slot completes well under this; the long
+    /// temperature-conversion wait is handled by the caller, not here.
+    const RX_TIMEOUT: Duration = Duration::from_millis(10);
+
     /// Transmit `data` while simultaneously sampling the bus into `indata`,
     /// returning the number of received RMT symbols.
     pub async fn send_and_receive(
@@ -100,27 +107,25 @@ impl<'a> OneWire<'a> {
         indata: &mut [PulseCode],
         data: &[PulseCode],
     ) -> Result<usize, Error> {
-        let delay = [PulseCode::new(Level::Low, 10000, Level::Low, 0)]; // timeout delay for 30ms using the RMT tx peripheral.
         if self.input.level() == Level::Low {
             Err(Error::InputNotHigh)?;
         }
-        // This relies on select polling in order to set up the rx & tx registers, which is not strictly documented behavior.
-        let res = select(self.rx.receive(indata), async {
-            let r = self.tx.transmit(data).await;
-            let _ = self.tx.transmit(&delay).await;
-            r
-        })
-        .await;
-
-        // Internal interface to cancel the TX-based timeout seems not accessible on c3.
-        // Example is running perfectly fine with slightly reduced timeout avlue.
-        // self.tx.stop_tx();
-
-        match res {
-            Either::First(Ok(r)) => Ok(r),
-            Either::First(Err(r)) => Err(Error::ReceiveError(r)),
-            Either::Second(Ok(())) => Err(Error::ReceiveTimedOut),
-            Either::Second(Err(e)) => Err(Error::SendError(e)),
+        // The master drives the bus (TX) while sampling it (RX) in the same time
+        // slots, so both must run concurrently: `join` arms RX first, then drives
+        // TX, and both complete once the line returns idle. A separate software
+        // timer bounds the wait so a stuck (never-idle) bus cannot hang forever —
+        // replacing the original TX-pulse timeout hack.
+        match select(
+            join(self.rx.receive(indata), self.tx.transmit(data)),
+            Timer::after(Self::RX_TIMEOUT),
+        )
+        .await
+        {
+            Either::First((rx_res, tx_res)) => {
+                tx_res.map_err(Error::SendError)?;
+                rx_res.map_err(Error::ReceiveError)
+            }
+            Either::Second(()) => Err(Error::ReceiveTimedOut),
         }
     }
 
