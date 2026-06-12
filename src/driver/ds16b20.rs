@@ -16,8 +16,8 @@
 //!   ESP32-S3 (cores3): TX=channel0, RX=channel4
 //!
 //! Datasheet: <https://www.analog.com/media/en/technical-documentation/data-sheets/DS18B20.pdf>
+use crate::driver::onewire::{Address, OneWire, Search};
 use esp_hal::{gpio::AnyPin, peripherals::RMT, rmt::Rmt, time::Rate};
-use esp_hal_rmt_onewire::{Address, OneWire, Search};
 use heapless::index_map::FnvIndexMap;
 use thiserror_no_std::Error;
 
@@ -30,7 +30,7 @@ pub enum Error {
     #[error("Failed to read temperature")]
     ReadTemperatureError,
     #[error("Other OneWire error")]
-    OneWireError(#[from] esp_hal_rmt_onewire::Error),
+    OneWireError(#[from] crate::driver::onewire::Error),
     #[error("Number of connected sensors larger than expected")]
     TooManySensorsConnected,
 }
