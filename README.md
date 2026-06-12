@@ -261,6 +261,28 @@ WIFI_SSID=myssid WIFI_PASSWORD=secret \
 
 GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 
+### LVGL UI (`examples/lvgl`, Fire27)
+
+A separate example crate that drives the panel with
+**[oxivgl](https://github.com/emobotics-dev/oxivgl)** (safe LVGL 9 bindings)
+instead of `embedded-graphics` — an LVGL render loop with the SPI flush running
+on a high-priority `InterruptExecutor`, so the UI animates smoothly while the
+main task keeps working. The demo shows a title, an animated spinner and a
+frame counter.
+
+```bash
+cargo +esp run --release -p lvgl-example --bin lvgl
+```
+
+Notes:
+
+- The flush uses an explicit `SpiDmaBus` (`.with_dma`/`.with_buffers`). On the
+  ESP32 PDMA path a *plain* `Spi::into_async()` flush goes "usr-stuck" after the
+  first frame; a descriptor-backed DMA bus avoids it.
+- `oxivgl-sys` downloads and compiles LVGL 9.5 at build time, so this example
+  needs network access, a C compiler (`xtensa-esp32-elf-gcc`) and `libclang`
+  for `bindgen` — all provided by the devcontainer.
+
 ## Design
 
 - **Chip differences** handled via `#[cfg(feature = "...")]` (e.g. RMT channel in `ds16b20`)
