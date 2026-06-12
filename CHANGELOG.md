@@ -38,6 +38,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced the 1-Wire RX-timeout hack (a second TX "delay pulse" plus
   undocumented select-polling) with a software-timer-bounded `join(rx, tx)`.
 
+### Examples
+
+- Replaced the monolithic kitchen-sink demos with focused per-topic example
+  bins (`display`, `i2c_scan`, `m5go`, `wifi_sta`, `coex`) for both boards,
+  behind a shared `examples/common` crate.
+- Added `examples/lvgl` — an oxivgl (LVGL) display example for Fire27.
+- Added `examples/fire27/src/bin/onewire.rs` — a DS18B20 1-Wire HIL example
+  (2× sensors on Port B / G26).
+
 ### Hardware notes
 
 - 1-Wire / DS18B20 hardening verified on Fire27 with 2× DS18B20 on Port B
