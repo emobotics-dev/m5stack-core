@@ -26,6 +26,21 @@ use esp_hal::{
         TxChannelCreator,
     },
 };
+use thiserror_no_std::Error as ThisError;
+
+// --- RMT timing -------------------------------------------------------------
+// The RMT is clocked at 80 MHz (see `Rmt::new` in the DS18B20 driver) and every
+// channel here uses a clock divider of 80, giving exactly one tick per
+// microsecond. Consequently all pulse lengths in this module are in µs.
+/// RMT clock divider: 80 MHz / 80 = 1 MHz ⇒ 1 µs per tick.
+const RMT_CLK_DIVIDER: u8 = 80;
+/// RX end-of-frame: capture stops once the bus stays idle this long (µs). Well
+/// above a single slot (~73 µs) but below the 480 µs reset, so the idle tail of
+/// each transaction terminates the capture.
+const RX_IDLE_THRESHOLD: u16 = 1000;
+/// RX glitch filter (source-clock cycles): shorter pulses are rejected as edge
+/// noise on slot transitions.
+const RX_FILTER_THRESHOLD: u8 = 10;
 
 /// Async 1-Wire bus master built on a pair of RMT TX/RX channels.
 pub struct OneWire<'a> {
@@ -43,14 +58,17 @@ impl<'a> OneWire<'a> {
         pin: P,
     ) -> Result<Self, Error> {
         let rx_config = RxChannelConfig::default()
-            .with_clk_divider(80)
-            .with_idle_threshold(1000)
-            .with_filter_threshold(10)
+            .with_clk_divider(RMT_CLK_DIVIDER)
+            .with_idle_threshold(RX_IDLE_THRESHOLD)
+            .with_filter_threshold(RX_FILTER_THRESHOLD)
             .with_carrier_modulation(false);
         let tx_config = TxChannelConfig::default()
-            .with_clk_divider(80)
+            .with_clk_divider(RMT_CLK_DIVIDER)
             .with_carrier_modulation(false);
 
+        // Open-drain with an internal pull-up: a 1-Wire master only ever drives
+        // the bus low or releases it. An external 4.7 kΩ pull-up is still
+        // required for reliable edges with multiple devices / long cabling.
         let mut pin: Flex = Flex::new(pin);
 
         pin.apply_input_config(&InputConfig::default().with_pull(Pull::Up));
@@ -63,13 +81,13 @@ impl<'a> OneWire<'a> {
         pin.set_output_enable(true);
         let (input, output) = pin.split();
 
-        let tx = txcc
-            .configure_tx(&tx_config)
-            .map_err(Error::ConfigError)?
-            .with_pin(output.with_output_inverter(true));
+        // The RMT idles its output high, which on an open-drain pad would *drive*
+        // the bus. Invert TX so an RMT `High` symbol pulls the bus LOW (an active
+        // 1-Wire drive) and a `Low` symbol releases it to the pull-up; invert RX
+        // to match, so a captured `length1` measures the bus-low duration.
+        let tx = txcc.configure_tx(&tx_config)?.with_pin(output.with_output_inverter(true));
         let rx = rxcc
-            .configure_rx(&rx_config)
-            .map_err(Error::ConfigError)?
+            .configure_rx(&rx_config)?
             .with_pin(input.clone().with_input_inverter(true));
 
         Ok(OneWire { rx, tx, input })
@@ -80,6 +98,11 @@ impl<'a> OneWire<'a> {
     /// Issue a 1-Wire reset pulse and return `true` if at least one device
     /// responded with a presence pulse.
     pub async fn reset(&mut self) -> Result<bool, Error> {
+        // Reset/presence sequence (DS18B20 datasheet "RESET PROCEDURE"). Recall
+        // the TX inverter: an RMT `Low` symbol releases the bus (pull-up high), a
+        // `High` symbol drives it low. So this is: 60 µs released lead-in, 600 µs
+        // reset low (≥480 µs required), then 600 µs released during which any
+        // present device asserts its presence pulse.
         let data = [
             PulseCode::new(Level::Low, 60, Level::High, 600),
             PulseCode::new(Level::Low, 600, Level::Low, 0),
@@ -89,6 +112,10 @@ impl<'a> OneWire<'a> {
 
         let _res = self.send_and_receive(&mut indata, &data).await?;
 
+        // A present device pulls the bus low for 60–240 µs after the reset is
+        // released. Require both edges of the first captured symbol plus a
+        // second-symbol low inside a 100–200 µs window (within the presence
+        // spec, margined against noise).
         Ok(indata[0].length1() > 0
             && indata[0].length2() > 0
             && indata[1].length1() > 100
@@ -129,8 +156,16 @@ impl<'a> OneWire<'a> {
         }
     }
 
+    /// Bus-low duration (µs) for a written '0' — a 1-Wire write-0 holds the line
+    /// low for 60–120 µs; 70 µs sits in that window.
     const ZERO_BIT_LEN: u16 = 70;
+    /// Bus-low duration (µs) for a written '1' / read slot — a brief 1–15 µs low
+    /// that opens the slot before the line is released to be sampled.
     const ONE_BIT_LEN: u16 = 3;
+    /// A read slot reads '1' when the captured bus-low is shorter than this many
+    /// µs (only the master's own opening pulse); a device signalling '0' holds
+    /// the line low well past it.
+    const READ_SAMPLE_THRESHOLD: u16 = 20;
 
     /// Encode a single 1-Wire bit as an RMT pulse code (write/read time slot).
     pub fn encode_bit(bit: bool) -> PulseCode {
@@ -153,13 +188,13 @@ impl<'a> OneWire<'a> {
 
     /// Decode a sampled RMT pulse code back into the 1-Wire bit value.
     pub fn decode_bit(code: PulseCode) -> bool {
-        let len = code.length1();
-        len < 20
+        code.length1() < Self::READ_SAMPLE_THRESHOLD
     }
 
     /// Write one byte (LSB first) and read the byte the bus returns in the
     /// same time slots.
     pub async fn exchange_byte(&mut self, byte: u8) -> Result<u8, Error> {
+        // 8 bit-slots followed by a trailing end marker; sized 10 for headroom.
         let mut data = [PulseCode::end_marker(); 10];
         let mut indata = [PulseCode::end_marker(); 10];
         for n in 0..8 {
@@ -232,20 +267,27 @@ impl<'a> OneWire<'a> {
 }
 
 /// Errors returned by 1-Wire bus operations.
-#[derive(Debug)]
+#[derive(Debug, ThisError)]
 pub enum Error {
     /// The bus was not idle-high before a transaction (missing pull-up?).
+    #[error("1-Wire bus was not idle-high before a transaction (missing pull-up?)")]
     InputNotHigh,
-    /// No presence/response was sampled before the RMT timeout elapsed.
+    /// No presence/response was sampled before the RX timeout elapsed.
+    #[error("no 1-Wire response sampled before the RX timeout")]
     ReceiveTimedOut,
     /// The RMT RX channel reported an error.
+    #[error("RMT RX channel error: {0:?}")]
     ReceiveError(esp_hal::rmt::Error),
     /// The RMT TX channel reported an error.
+    #[error("RMT TX channel error: {0:?}")]
     SendError(esp_hal::rmt::Error),
     /// An RMT channel could not be configured.
-    ConfigError(ConfigError),
+    #[error("RMT channel configuration error: {0:?}")]
+    ConfigError(#[from] ConfigError),
 }
 
+// Two variants wrap `rmt::Error` (RX vs TX), so `#[from]` would be ambiguous;
+// a bare bus error is conventionally a send-side failure.
 impl From<esp_hal::rmt::Error> for Error {
     fn from(e: esp_hal::rmt::Error) -> Error {
         Error::SendError(e)
@@ -278,24 +320,32 @@ pub fn crc8(data: &[u8]) -> u8 {
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Address(pub u64);
 
+// All three formats render the ROM byte-wise, family code first (the LSB of the
+// underlying u64), zero-padded so a leading-zero byte is never ambiguous.
 impl LowerHex for Address {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl core::fmt::Debug for Address {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
-        core::write!(f, "{:X?}", self.0.to_le_bytes())
+        for byte in self.0.to_le_bytes() {
+            core::write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 
 impl core::fmt::Display for Address {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
-        for k in self.0.to_le_bytes() {
-            core::write!(f, "{:X}", k)?;
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (i, byte) in self.0.to_le_bytes().iter().enumerate() {
+            if i > 0 {
+                core::write!(f, ":")?;
+            }
+            core::write!(f, "{:02X}", byte)?;
         }
         Ok(())
+    }
+}
+
+impl core::fmt::Debug for Address {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::write!(f, "Address({})", self)
     }
 }
 
@@ -311,24 +361,22 @@ pub struct Search {
 }
 
 /// Errors returned while iterating a ROM [`Search`].
-#[derive(Debug)]
+#[derive(Debug, ThisError)]
 pub enum SearchError {
     /// All devices have already been enumerated.
+    #[error("all devices have been enumerated")]
     SearchComplete,
     /// No device responded to the search.
+    #[error("no device responded to the search")]
     NoDevicesPresent,
     /// The enumerated ROM address failed its CRC-8 check (bus glitch). The
     /// search state has still advanced, so a subsequent [`Search::next`] call
     /// continues enumeration past the corrupt address.
+    #[error("enumerated ROM address failed its CRC-8 check")]
     CrcMismatch,
     /// An underlying bus error occurred.
-    BusError(Error),
-}
-
-impl From<Error> for SearchError {
-    fn from(e: Error) -> SearchError {
-        SearchError::BusError(e)
-    }
+    #[error("1-Wire bus error during search: {0}")]
+    BusError(#[from] Error),
 }
 
 impl Search {

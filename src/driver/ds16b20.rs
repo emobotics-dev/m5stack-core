@@ -17,6 +17,11 @@
 //!   ESP32 (fire27):   TX=channel0, RX=channel2
 //!   ESP32-S3 (cores3): TX=channel0, RX=channel4
 //!
+//! Wiring (M5Stack Grove): the 1-Wire data line goes on **Port B (black)** — the
+//! signal pin that follows VCC, i.e. **G26** on Fire27 and **G9** on CoreS3. An
+//! external 4.7 kΩ pull-up from data to 3V3 is required. (Port A / red is the
+//! I2C port and is not used here.)
+//!
 //! Datasheet: <https://www.analog.com/media/en/technical-documentation/data-sheets/DS18B20.pdf>
 use crate::driver::onewire::{Address, OneWire, Search, SearchError, crc8};
 use embassy_time::{Duration, Instant, Timer};
@@ -26,17 +31,15 @@ use thiserror_no_std::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Failed to init RMT")]
-    RmtDriverError(#[from] esp_hal::rmt::Error),
-    #[error("OneWire bus is not in idle state - pull-ups present?")]
-    HardwareError,
-    #[error("Failed to read temperature")]
-    ReadTemperatureError,
-    #[error("Temperature conversion did not complete within 750 ms")]
+    #[error("failed to configure the RMT peripheral: {0:?}")]
+    RmtConfigError(#[from] esp_hal::rmt::ConfigError),
+    #[error("temperature conversion did not complete within 750 ms")]
     ConversionTimeout,
-    #[error("Other OneWire error")]
+    #[error("DS18B20 scratchpad failed its CRC-8 check")]
+    ScratchpadCrcMismatch,
+    #[error("1-Wire bus error: {0}")]
     OneWireError(#[from] crate::driver::onewire::Error),
-    #[error("Number of connected sensors larger than expected")]
+    #[error("more sensors connected than the driver supports")]
     TooManySensorsConnected,
 }
 
@@ -49,9 +52,7 @@ pub struct Ds16b20Driver {
 impl Ds16b20Driver {
     const MAX_SENSORS: usize = 16;
     pub fn new(rmt: RMT<'static>, pin: AnyPin<'static>) -> Result<Self, Error> {
-        let rmt = Rmt::new(rmt, Rate::from_mhz(80_u32))
-            .map_err(|_| Error::HardwareError)?
-            .into_async();
+        let rmt = Rmt::new(rmt, Rate::from_mhz(80_u32))?.into_async();
         // ESP32: TX channel 0, RX channel 2
         // ESP32-S3: TX channels 0-3, RX channels 4-7
         #[cfg(feature = "fire27")]
@@ -161,15 +162,12 @@ impl Ds16b20Driver {
         self.ow.send_byte(0xBE).await?; // Read Scratchpad
         let mut scratch = [0u8; 9];
         for byte in scratch.iter_mut() {
-            *byte = self
-                .ow
-                .exchange_byte(0xFF)
-                .await
-                .map_err(|_| Error::ReadTemperatureError)?;
+            // Propagates as `OneWireError`, preserving the underlying bus error.
+            *byte = self.ow.exchange_byte(0xFF).await?;
         }
         // Byte 8 is a CRC-8 over bytes 0..8; reject a corrupt read.
         if crc8(&scratch[..8]) != scratch[8] {
-            return Err(Error::ReadTemperatureError);
+            return Err(Error::ScratchpadCrcMismatch);
         }
         Ok(fixed::types::I12F4::from_le_bytes([scratch[0], scratch[1]]).into())
     }
