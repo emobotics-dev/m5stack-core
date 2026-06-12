@@ -11,7 +11,16 @@ Provides chip-agnostic drivers, shared I2C bus, and reusable async IO task loops
 | `fire27` | `xtensa-esp32-none-elf` | ESP32 |
 | `cores3` | `xtensa-esp32s3-none-elf` | ESP32-S3 |
 
-Exactly one feature must be enabled.
+Exactly one board feature must be enabled. Orthogonal opt-ins:
+
+| Feature | Enables | Pulls in |
+|---------|---------|----------|
+| `display` | `board::display` (ILI9342C bring-up) + `board::spi2` device construction | `lcd-async`, `embassy-embedded-hal` |
+| `buttons` | `io::buttons::Buttons` — debounced Fire27 front-panel driver | `async-button` |
+| `psram` | `mem::` external-PSRAM heap (see below) | `esp-alloc` |
+| `serial-cmd` | `io::serial_cmd` HIL command endpoint | — |
+| `search-masks` | masked 1-Wire ROM search | — |
+| `ble`/`wifi`/`wifi-sta`/`coex` | radio (see the radio section) | `embassy-net` (sta) |
 
 ## Modules
 
@@ -122,6 +131,41 @@ Async task loops using `embassy_time::Ticker` with `fn(...)` callbacks for decou
 | `pps` | 500 ms | `fn(&PpsReadings)` + `fn() -> PpsSetpoint` |
 | `ow_temp` | 3 s | `fn(&[(u64, f32)])` — address/temperature pairs |
 | `shared_i2c` | — | `SharedI2cBus` async mutex for multi-task I2C access |
+
+#### Input (`io::buttons`, `io::touch_buttons`)
+
+Both input flavours emit the same `ButtonEvent { id: Left/Center/Right, action:
+Short(taps)/Long }`, so an application maps input in one place for both boards:
+
+- **Fire27** (feature `buttons`): `ButtonResources::into_buttons()` →
+  `Buttons::next_event().await` — debounced `async-button` over the physical
+  A/B/C keys (GPIO39/38/37).
+- **CoreS3**: `TouchButtons::new(i2c, TouchButtonsConfig::default())` →
+  `next_event().await` — the FT6336U bottom strip split into three zones, with
+  short/multi-tap/long-press detection.
+
+#### Watchdog (`io::watchdog`)
+
+`watchdog_feed_loop(rtc, timeout_secs, feed_every_secs)` arms the RWDT
+(hardware reset on timeout) and feeds it from the calling executor — the
+backstop for a fully wedged executor.
+
+### Board bring-up (`board::`)
+
+- `board::init()` — esp-hal at max CPU clock (heap setup stays with the app).
+- `board::fire27::Board::split(peripherals)` / `board::cores3::Board::split(...)`
+  — the boards' pin wiring as data: `spi2` (display+SD bus resources), `i2c0`
+  (hardened config; returned *blocking* so the app binds the IRQ core via
+  `into_async()`), buttons, radio, console peripherals, free M5-Bus pins, and
+  `SystemResources` (timers, SW interrupts, `CPU_CTRL`, `LPWR`).
+- `board::display` (feature `display`) — ILI9342C panel init shared by both
+  boards; `board::spi2` — the shared display+SD bus with the bring-up ordering
+  encoded (display first, bounded SD attempts, CoreS3 GPIO35 MISO/DC re-mux).
+  The SD-card *driver* (`sdspi`) stays an application dependency until it is
+  published on crates.io; see the `board::spi2` module docs for the wiring
+  pattern.
+- `board::cores3::power_display_reset` — AW9523B LCD/touch reset pulses +
+  AXP2101 backlight rail over the shared I2C bus.
 
 ### Memory (`mem::`)
 
