@@ -13,8 +13,11 @@ test = false
 bench = false
 
 [features]
-fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-hal-rmt-onewire/esp32"]
-cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-hal-rmt-onewire/esp32s3"]
+fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32"]
+cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3"]
+# Enables the masked 1-Wire ROM search (driver::onewire::Search::new_with_mask),
+# constraining enumeration to addresses matching fixed bits under a mask.
+search-masks = []
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
@@ -27,8 +30,8 @@ psram = ["dep:esp-alloc", "dep:allocator-api2"]
 # The radio is shared, so `coex` is required to run BLE and WiFi at once.
 ble      = ["esp-radio/ble"]                                  # driver::radio::ble (BleRadio → BleConnector)
 wifi     = ["esp-radio/wifi"]                                 # driver::radio::wifi (controller + scan)
-wifi-sta = ["wifi", "dep:embassy-net", "dep:embassy-futures"] # STA + DHCP embassy_net::Stack
-wifi-ap  = ["wifi", "dep:embassy-net", "dep:embassy-futures"] # reserved for AP mode (not yet implemented)
+wifi-sta = ["wifi", "dep:embassy-net"] # STA + DHCP embassy_net::Stack
+wifi-ap  = ["wifi", "dep:embassy-net"] # reserved for AP mode (not yet implemented)
 coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BLE coexistence (extra RAM)
 
 [dependencies]
@@ -37,7 +40,6 @@ esp-alloc           = { git = "https://github.com/emobotics-dev/esp-hal.git", br
 esp-hal             = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["unstable"] }
 esp-radio           = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local", features = ["esp-alloc", "unstable"] }
 esp-sync            = { git = "https://github.com/emobotics-dev/esp-hal.git", branch = "local" }
-esp-hal-rmt-onewire = { git = "https://github.com/emobotics-dev/esp-hal-rmt-onewire.git", branch = "local", default-features = false }
 
 # embedded-hal family
 embedded-hal        = "1.0.0"
@@ -45,7 +47,7 @@ embedded-io-async   = "0.7.0"
 
 # Embassy
 embassy-executor    = { version = "0.10.0", features = ["nightly"] }
-embassy-futures     = { version = "0.1", optional = true }
+embassy-futures     = "0.1"
 embassy-net         = { version = "0.8.0", optional = true, default-features = false, features = ["dhcpv4", "proto-ipv4", "medium-ethernet", "tcp", "udp", "dns"] }
 embassy-sync        = "0.8"
 embassy-time        = "0.5.0"
