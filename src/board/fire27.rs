@@ -60,6 +60,9 @@ pub struct Board {
     pub rmt: RMT<'static>,
     /// PCNT — e.g. pulse counting ([`crate::io::rpm::RpmResources`]).
     pub pcnt: PCNT<'static>,
+    /// External SPI PSRAM (~4 MB) — feed to `mem::init_psram_heap` (the heap
+    /// region; the ESP32 cannot DMA from PSRAM). [feature `psram`]
+    pub psram: esp_hal::peripherals::PSRAM<'static>,
     pub m5bus: M5Bus<'static>,
     pub system: SystemResources<'static>,
 }
@@ -122,6 +125,7 @@ impl Board {
             sk6812: AnyPin::from(peripherals.GPIO15),
             rmt: peripherals.RMT,
             pcnt: peripherals.PCNT,
+            psram: peripherals.PSRAM,
             m5bus: M5Bus {
                 gpio5: AnyPin::from(peripherals.GPIO5),
                 gpio26: AnyPin::from(peripherals.GPIO26),

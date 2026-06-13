@@ -34,9 +34,15 @@ holder).
   (hardened config: 400 kHz, `BusTimeout::BusCycles(20)`, and on the S3 a
   25 ms transaction `SoftwareTimeout` — the HIL-proven fix for the
   stuck-transaction `yield_now` spin that wedges an `InterruptExecutor`),
-  buttons, radio, UART0/USB-Serial-JTAG, free M5-Bus pins, and
-  `board::SystemResources` (timers, SW interrupts, `CPU_CTRL`, `LPWR`).
-  Plus `board::init()` (esp-hal at max CPU clock; heap stays with the app).
+  buttons, radio, UART0/USB-Serial-JTAG, the SK6812 LED pin, PSRAM, free M5-Bus
+  pins, and `board::SystemResources` (timers, SW interrupts, `CPU_CTRL`,
+  `LPWR`). Plus `board::init()` (esp-hal at max CPU clock; heap stays with the
+  app).
+- **`board::spi2::Spi2Resources::into_display_only`** (feature `display`): the
+  display on the descriptor-backed `SpiDmaBus` with **no** SD path, for DMA
+  display-only apps (the `lvgl` example). DC is a plain `Output` on both boards
+  (on CoreS3 a configured output routes GPIO35's pad, unlike `Gpio35Dc` which
+  needs `with_miso`). Returns a `DisplayBus { display, backlight (Fire27) }`.
 - **`io::buttons`**: unified `ButtonEvent`/`ButtonId`/`ButtonAction` input
   events for the whole Core family, plus (new `buttons` feature, pulls
   `async-button`) the Fire27 front-panel A/B/C driver
@@ -56,10 +62,28 @@ holder).
 
 ### Examples
 
-- All three display examples (`fire27`, `cores3`, `lvgl`) now use
-  `board::display` for the panel bring-up instead of inlining the lcd-async
-  builder; the lvgl example depends on `m5stack-core` for both boards now
-  (previously CoreS3 only).
+- **Unified the per-board example crates into one `examples/demos` crate.**
+  The board is selected by a `fire27` (default) / `cores3` cargo feature; each
+  bin (`display`, `i2c_scan`, `m5go`, `wifi_sta`, `onewire`, `lvgl`, `coex`)
+  builds for both boards from a single source, leaning on `Board::split` +
+  `board::display` + the `io` loops, with the per-board glue concentrated in
+  `examples/demos/src/board.rs`. The LVGL bin's `main` is now ~50 lines (the
+  flush glue / view / keypad indev moved to `examples/demos/src/ui/`).
+  `examples/common` (pure chip-agnostic drawing helpers) is unchanged. Build
+  per board: `cargo build -p demos --bin <name>` (Fire27, default) or add
+  `--no-default-features --features cores3 --target xtensa-esp32s3-none-elf`;
+  `lvgl`/`coex` are gated by `required-features`, `onewire` is Fire27-only.
+  Each bin keeps its panic-handler / `esp_app_desc!()` top-matter inline (no
+  macro), so it reads as a self-contained, copy-pasteable starting point. The
+  shared esp-hal-fork example deps are hoisted into `[workspace.dependencies]`.
+- The `coex` bin is gated by `required-features = ["coex"]` and built on its
+  own (`--bin coex --features coex`): esp-radio's coexist blob is a crate-global
+  link dependency that only the BLE-initialising bin can satisfy, so the `coex`
+  feature must stay off while the non-BLE bins are built (it is, for every
+  normal `cargo build` / `--workspace` / `-p demos` invocation).
+- Input is now unified across boards via the new `io::buttons::ButtonEvent`
+  (the `display` bin reads Fire27 buttons / CoreS3 touch through one loop), and
+  logging is unified on the `log` facade (CoreS3 over RTT at `Info`).
 
 ## [0.3.1]
 

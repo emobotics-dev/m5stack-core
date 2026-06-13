@@ -147,6 +147,13 @@ pub struct Board {
     pub rmt: RMT<'static>,
     /// PCNT — e.g. pulse counting ([`crate::io::rpm::RpmResources`]).
     pub pcnt: PCNT<'static>,
+    /// SK6812 LED bars data pin (M-Bus pin 23 → GPIO13 on CoreS3), driven over
+    /// RMT ([`crate::driver::sk6812::Sk6812Driver`]). The M5GO bottom's 5 V LED
+    /// rail is gated by the AW9523B — see `Aw9523bDriver::enable_bus_5v`.
+    pub sk6812: AnyPin<'static>,
+    /// External SPI PSRAM (~8 MB) — feed to `mem::init_psram_heap` (the heap
+    /// region; sizing/usage is application policy). [feature `psram`]
+    pub psram: esp_hal::peripherals::PSRAM<'static>,
     pub m5bus: M5Bus<'static>,
     pub system: SystemResources<'static>,
 }
@@ -206,6 +213,8 @@ impl Board {
             usb_device: peripherals.USB_DEVICE,
             rmt: peripherals.RMT,
             pcnt: peripherals.PCNT,
+            sk6812: AnyPin::from(peripherals.GPIO13),
+            psram: peripherals.PSRAM,
             m5bus: M5Bus {
                 gpio1: AnyPin::from(peripherals.GPIO1),
                 gpio9: AnyPin::from(peripherals.GPIO9),

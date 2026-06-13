@@ -246,79 +246,82 @@ pub async fn ow_loop(resources: OnewireResources<'static>, on_temperatures: fn(&
 
 ## Examples
 
-Each board crate is a set of small, single-topic binaries (one subsystem each)
-rather than one kitchen-sink demo, so each is copy-pasteable as a starting point.
-Chip-agnostic helpers (colour wheel, splash/status rendering, I2C scan) live in
-the shared `examples/common` crate; per-board chip bring-up lives in each crate's
-`src/lib.rs`. Select a binary with `--bin <name>`.
+All examples live in **one** crate, `examples/demos` — small, single-topic
+binaries (one subsystem each) that build for **both boards**, with the board
+selected by a cargo feature: `fire27` (default) or `cores3`. Each bin leans on
+the BSP's `Board::split` + `board::display` + `io` loops, so the board-specific
+wiring lives in the BSP and the per-board duplication is gone; the per-bin glue
+that remains is concentrated in `examples/demos/src/board.rs`. Chip-agnostic
+drawing helpers (colour wheel, splash/status rendering, I2C scan) stay in the
+shared `examples/common` crate.
 
-`WIFI_SSID`/`WIFI_PASSWORD` are read at build time; unset → WiFi is skipped and
-the display still runs. The `coex` bins need `--features coex` and must be built
-`--release` (the BLE deps trip a dev-profile xtensa codegen bug). The `m5go` bin
-needs the M5GO Battery Bottom attached to do anything visible.
-
-### Fire27 (ESP32)
+Select a board by feature and a bin with `--bin <name>`:
 
 ```bash
-cargo +esp run --release -p fire27 --bin <name>
+# Fire27 (ESP32) — the default board; default target is xtensa-esp32-none-elf
+cargo +esp run --release -p demos --bin <name>
+
+# CoreS3 (ESP32-S3)
+cargo +esp run --release -p demos --bin <name> \
+  --no-default-features --features cores3 --target xtensa-esp32s3-none-elf
 ```
 
-| bin        | what it shows                                   | needs |
-|------------|-------------------------------------------------|-------|
-| `display`  | splash + 3-button (39/38/37) readout, no radio  | — |
-| `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD     | — |
-| `m5go`     | SK6812 LEDs (G15) colour-wheel + IP5306 battery %| M5GO bottom attached |
-| `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD            | `WIFI_SSID`/`WIFI_PASSWORD` |
-| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner          | `--features coex`, `--release` |
+| bin        | what it shows                                                  | needs |
+|------------|----------------------------------------------------------------|-------|
+| `display`  | splash + unified front-panel events (Fire27 buttons / CoreS3 touch) | — |
+| `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD                     | — |
+| `m5go`     | SK6812 LED colour-wheel (M-Bus pin 23) + battery readout        | M5GO bottom attached |
+| `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                            | `WIFI_SSID`/`WIFI_PASSWORD` |
+| `onewire`  | DS18B20 1-Wire temperature read over RMT (G26)                  | **Fire27 only** |
+| `lvgl`     | LVGL (oxivgl) UI: title + animated spinner + frame counter      | `--features lvgl` |
+| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--bin coex --features coex`, `--release` |
+
+Notes on building:
+
+- `WIFI_SSID`/`WIFI_PASSWORD` are read at build time; unset → WiFi is skipped
+  and the display still runs. The `m5go` bin needs the M5GO Battery Bottom
+  attached to do anything visible.
+- `onewire` is **Fire27-only** (`required-features = ["fire27"]`); a CoreS3
+  build skips it automatically. `lvgl` and `coex` are gated by
+  `required-features` so a plain `cargo build -p demos` (and `--workspace`)
+  skips them (and the LVGL C build).
+- **Build `coex` on its own** — `cargo build -p demos --bin coex --features coex`.
+  esp-radio's WiFi/BLE coexist blob is a *crate-global* link dependency that
+  only the BLE-initialising `coex` bin can satisfy, so enabling `--features
+  coex` while building the *other* (non-BLE) bins fails to link with a cryptic
+  `btdm_rf_bb_reg_init`. Because the bin is gated by `required-features`, the
+  `coex` feature stays off for every normal build (`cargo build`,
+  `--workspace`, `-p demos`, per-bin) — only an explicit `--features coex`
+  without `--bin coex` hits it, which is why the coex bin is always built alone.
+- **Input is unified**: both boards emit the same `ButtonEvent` (Fire27 reads
+  the three buttons; CoreS3 splits the FT6336U touch strip into three zones), so
+  the `display` bin's readout loop is identical. **Logging is unified** on the
+  `log` facade: Fire27 over UART (`esp-println`), CoreS3 over **RTT at `Info`**
+  (`rtt-target`; see the LVGL note).
 
 ```bash
-WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --bin wifi_sta
-WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p fire27 --bin coex --features coex
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p demos --bin wifi_sta
+cargo +esp run --release -p demos --bin lvgl --features lvgl
+cargo +esp run --release -p demos --bin coex --features coex
+# CoreS3:
+cargo +esp run --release -p demos --bin coex \
+  --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
 ```
 
-GPIO: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37, M5GO LEDs=15, IP5306@0x75.
+GPIO — **Fire27**: I2C SDA=21/SCL=22, SPI CLK=18/MOSI=23/MISO=19, Display
+CS=14/DC=27/RST=33/BL=32, Buttons=39/38/37, M5GO LEDs=15, IP5306@0x75.
+**CoreS3**: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via
+AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 
-### CoreS3 (ESP32-S3)
+### The `lvgl` bin
 
-```bash
-cargo +esp run --release -p cores3 --bin <name> --target xtensa-esp32s3-none-elf
-```
-
-| bin        | what it shows                                              | needs |
-|------------|-----------------------------------------------------------|-------|
-| `display`  | splash + capacitive-touch readout, no radio               | — |
-| `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD               | — |
-| `m5go`     | SK6812 LEDs (G13) colour-wheel + AXP2101 battery (mV) + M-Bus 5V enable | M5GO bottom attached |
-| `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                      | `WIFI_SSID`/`WIFI_PASSWORD` |
-| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                    | `--features coex`, `--release` |
-
-The `m5go` bin enables the M-Bus 5V rail (off by default on CoreS3) via the
-AW9523 expander, guarded against shared-VBUS contention — see the M5GO Battery
-Bottom section above.
-
-```bash
-WIFI_SSID=myssid WIFI_PASSWORD=secret \
-  cargo +esp run --release -p cores3 --bin wifi_sta --target xtensa-esp32s3-none-elf
-WIFI_SSID=myssid WIFI_PASSWORD=secret \
-  cargo +esp run --release -p cores3 --bin coex --features coex --target xtensa-esp32s3-none-elf
-```
-
-GPIO: I2C SDA=12/SCL=11, SPI CLK=36/MOSI=37, Display CS=3/DC=35, RST via AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
-
-### LVGL UI (`examples/lvgl`, Fire27 + CoreS3)
-
-A separate example crate that drives the panel with
-**[oxivgl](https://github.com/emobotics-dev/oxivgl)** (safe LVGL 9 bindings)
-instead of `embedded-graphics` — an LVGL render loop with the SPI flush running
-on a high-priority `InterruptExecutor`, so the UI animates smoothly while the
-main task keeps working. The demo shows a title, an animated spinner and a
-frame counter. Builds for both boards (default `fire27`):
-
-```bash
-cargo +esp run --release -p lvgl-example --bin lvgl                                              # Fire27
-cargo +esp run --release -p lvgl-example --bin lvgl --no-default-features --features cores3 \
-  --target xtensa-esp32s3-none-elf                                                               # CoreS3
-```
+Drives the panel with **[oxivgl](https://github.com/emobotics-dev/oxivgl)**
+(safe LVGL 9 bindings) instead of `embedded-graphics` — an LVGL render loop with
+the SPI flush running on a high-priority `InterruptExecutor`, so the UI animates
+smoothly while the main task keeps working. The per-board display bring-up uses
+the BSP's `board::spi2::into_display_only` (the descriptor-backed `SpiDmaBus`,
+no SD path); the oxivgl flush glue, the demo view, and (Fire27) the keypad indev
+live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is only the wiring.
 
 Notes:
 

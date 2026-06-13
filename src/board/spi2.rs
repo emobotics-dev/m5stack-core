@@ -195,12 +195,16 @@ pub use devices::*;
 mod devices {
     use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
     use embassy_sync::mutex::Mutex;
-    use esp_hal::gpio::Output;
+    use esp_hal::{
+        dma::{DmaRxBuf, DmaTxBuf},
+        gpio::{Level, Output, OutputConfig},
+        spi::master::Spi,
+    };
     use esp_sync::RawMutex;
     use lcd_async::interface::{Interface, SpiInterface};
     use static_cell::StaticCell;
 
-    use super::{SpiBusType, Spi2Parts, display_config, sd_init_config};
+    use super::{Spi2Parts, Spi2Resources, SpiBusType, display_config, sd_init_config};
     use crate::board::display::{self, Ili9342c};
 
     /// A device on the shared bus with a plain GPIO chip-select (the display).
@@ -223,6 +227,35 @@ mod devices {
 
     pub type DisplayInitError =
         lcd_async::InitError<<DisplayInterface as Interface>::Error, core::convert::Infallible>;
+
+    /// Display-only DC pin: a plain [`Output`] on **both** boards. On CoreS3
+    /// this is GPIO35 configured as a real output (which routes the pad) — NOT
+    /// [`Gpio35Dc`](crate::board::cores3::Gpio35Dc), whose register-level mux
+    /// relies on `with_miso()` having routed the pad and would otherwise leave
+    /// it unrouted (black screen). Used by [`Spi2Resources::into_display_only`].
+    pub type DisplayOnlyInterface = SpiInterface<SpiDeviceType<'static>, Output<'static>>;
+
+    /// CoreS3 display-only panel: no GPIO reset (AW9523B pulses it).
+    #[cfg(feature = "cores3")]
+    pub type DisplayOnlyType = Ili9342c<DisplayOnlyInterface>;
+    /// Fire27 display-only panel: hardware reset pin.
+    #[cfg(feature = "fire27")]
+    pub type DisplayOnlyType = Ili9342c<DisplayOnlyInterface, Output<'static>>;
+
+    // Both boards' reset pins are infallible (`NoResetPin` / esp-hal `Output`).
+    pub type DisplayOnlyInitError =
+        lcd_async::InitError<<DisplayOnlyInterface as Interface>::Error, core::convert::Infallible>;
+
+    /// A display brought up on the shared SPI2 DMA bus with **no** SD-card path
+    /// ([`Spi2Resources::into_display_only`]). For LVGL and any DMA display-only
+    /// app that does not touch the SD slot.
+    pub struct DisplayBus {
+        pub display: DisplayOnlyType,
+        /// Backlight pin (GPIO32) — driven high by `into_display_only` once the
+        /// panel init succeeds; the caller keeps it alive.
+        #[cfg(feature = "fire27")]
+        pub backlight: Output<'static>,
+    }
 
     /// The initialised on-board display (plus, on Fire27, its backlight pin).
     pub struct DisplayDriver {
@@ -290,6 +323,74 @@ mod devices {
 
             let card_device = SpiDeviceWithConfig::new(bus, card_cs, sd_init_config());
             Ok((driver, card_device))
+        }
+    }
+
+    #[cfg(feature = "cores3")]
+    impl Spi2Resources<'static> {
+        /// Bring up the display **only** on a descriptor-backed `SpiDmaBus`, with
+        /// no SD-card path. The DMA buffers are supplied by the app (TX sized to
+        /// the display stripe; RX unused by a write-only panel). DC is a plain
+        /// `Output` on GPIO35 — a configured output routes the pad, unlike
+        /// [`Gpio35Dc`](crate::board::cores3::Gpio35Dc) which needs `with_miso`.
+        ///
+        /// The panel must already be out of reset: call
+        /// [`power_display_reset`](crate::board::cores3::power_display_reset)
+        /// first (AW9523B `LCD_RST` pulse + AXP2101 backlight).
+        pub async fn into_display_only(
+            self,
+            dma_rx_buf: DmaRxBuf,
+            dma_tx_buf: DmaTxBuf,
+        ) -> Result<DisplayBus, DisplayOnlyInitError> {
+            // No `.with_miso()`: this path never reads the SD card, so GPIO35 is
+            // free to be a plain DC output (below).
+            let spi = Spi::new(self.spi2, display_config())
+                .expect("SPI2 display config")
+                .with_sck(self.sck)
+                .with_mosi(self.mosi)
+                .with_dma(self.spi2_dma)
+                .with_buffers(dma_rx_buf, dma_tx_buf)
+                .into_async();
+            let bus = SPI_BUS.init(Mutex::new(spi));
+            let display_cs = Output::new(self.display_cs, Level::High, OutputConfig::default());
+            let dc = Output::new(self.miso_dc, Level::Low, OutputConfig::default());
+            let device = SpiDeviceWithConfig::new(bus, display_cs, display_config());
+            let di = SpiInterface::new(device, dc);
+            let display = display::init_ili9342c(di).await?;
+            Ok(DisplayBus { display })
+        }
+    }
+
+    #[cfg(feature = "fire27")]
+    impl Spi2Resources<'static> {
+        /// Bring up the display **only** on a descriptor-backed `SpiDmaBus`, with
+        /// no SD-card path. The DMA buffers are supplied by the app (TX sized to
+        /// the display stripe; RX unused by a write-only panel). The panel is
+        /// reset via its GPIO RST pin; the backlight (GPIO32) is driven high on
+        /// success and returned in [`DisplayBus`] for the caller to keep alive.
+        pub async fn into_display_only(
+            self,
+            dma_rx_buf: DmaRxBuf,
+            dma_tx_buf: DmaTxBuf,
+        ) -> Result<DisplayBus, DisplayOnlyInitError> {
+            let spi = Spi::new(self.spi2, display_config())
+                .expect("SPI2 display config")
+                .with_sck(self.sck)
+                .with_mosi(self.mosi)
+                .with_miso(self.miso)
+                .with_dma(self.spi2_dma)
+                .with_buffers(dma_rx_buf, dma_tx_buf)
+                .into_async();
+            let bus = SPI_BUS.init(Mutex::new(spi));
+            let display_cs = Output::new(self.display_cs, Level::High, OutputConfig::default());
+            let dc = Output::new(self.display_dc, Level::Low, OutputConfig::default());
+            let rst = Output::new(self.display_rst, Level::Low, OutputConfig::default());
+            let mut backlight = Output::new(self.display_bl, Level::Low, OutputConfig::default());
+            let device = SpiDeviceWithConfig::new(bus, display_cs, display_config());
+            let di = SpiInterface::new(device, dc);
+            let display = display::init_ili9342c_with_reset(di, rst).await?;
+            backlight.set_high();
+            Ok(DisplayBus { display, backlight })
         }
     }
 }
