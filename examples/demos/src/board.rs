@@ -294,39 +294,41 @@ pub fn connect_wifi(
 // --- LVGL display bus (DMA; lvgl bin only) ----------------------------------
 
 #[cfg(feature = "lvgl")]
-pub use lvgl_bus::lvgl_display;
+pub use lvgl_bus::lvgl_bringup;
 
 #[cfg(feature = "lvgl")]
 mod lvgl_bus {
-    use esp_hal::{
-        Blocking,
-        dma::{DmaRxBuf, DmaTxBuf},
-        i2c::master::I2c,
-    };
+    use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
     use m5stack_core::board::spi2::{DisplayBus, Spi2Resources};
 
-    /// Bring up the display on the descriptor-backed DMA bus (no SD). On CoreS3
-    /// this first brings up I2C and resets/powers the panel (AW9523B + AXP2101);
-    /// on Fire27 the I2C bus is unused (the panel has its own GPIO reset).
+    use super::Input;
+
+    /// Bring up the LVGL display (DMA bus, no SD) **and** the front-panel input
+    /// together, returning both. Fire27: the panel has a GPIO reset and input
+    /// comes from the three buttons. CoreS3: the one I2C bus resets/powers the
+    /// panel (AW9523B + AXP2101) **and** drives the FT6336U touch input — so it
+    /// is created once here and shared.
     #[cfg(feature = "fire27")]
-    pub async fn lvgl_display(
+    pub async fn lvgl_bringup(
         spi2: Spi2Resources<'static>,
-        _i2c0: I2c<'static, Blocking>,
+        buttons: m5stack_core::io::buttons::ButtonResources<'static>,
         dma_rx: DmaRxBuf,
         dma_tx: DmaTxBuf,
-    ) -> DisplayBus {
-        spi2.into_display_only(dma_rx, dma_tx).await.expect("display init")
+    ) -> (DisplayBus, Input) {
+        let dbus = spi2.into_display_only(dma_rx, dma_tx).await.expect("display init");
+        (dbus, Input::new(buttons))
     }
 
     #[cfg(feature = "cores3")]
-    pub async fn lvgl_display(
+    pub async fn lvgl_bringup(
         spi2: Spi2Resources<'static>,
-        i2c0: I2c<'static, Blocking>,
+        i2c0: esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>,
         dma_rx: DmaRxBuf,
         dma_tx: DmaTxBuf,
-    ) -> DisplayBus {
+    ) -> (DisplayBus, Input) {
         let i2c = super::init_i2c_shared(i2c0);
         m5stack_core::board::cores3::power_display_reset(i2c).await;
-        spi2.into_display_only(dma_rx, dma_tx).await.expect("display init")
+        let dbus = spi2.into_display_only(dma_rx, dma_tx).await.expect("display init");
+        (dbus, Input::new(i2c))
     }
 }
