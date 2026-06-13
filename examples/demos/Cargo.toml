@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "demos"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+publish = false
+
+[lib]
+name = "demos"
+path = "src/lib.rs"
+test = false
+bench = false
+
+# One focused, copy-pasteable binary per topic — unified across both boards
+# (select with `--features fire27` (default) or `--no-default-features
+# --features cores3`). `lvgl`/`coex` are gated by `required-features` so a plain
+# `cargo build -p demos` (and `--workspace`) skips them — leaving the `coex`
+# feature OFF, which matters: esp-radio's coexist blob is a crate-global link
+# dependency that only the BLE-initialising `coex` bin can satisfy, so the coex
+# bin MUST be built on its own (`--bin coex --features coex`). `onewire` is
+# ESP32-only (auto-excluded on a cores3 build).
+[[bin]]
+name = "display"
+path = "src/bin/display.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "i2c_scan"
+path = "src/bin/i2c_scan.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "m5go"
+path = "src/bin/m5go.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "wifi_sta"
+path = "src/bin/wifi_sta.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "onewire"
+path = "src/bin/onewire.rs"
+test = false
+bench = false
+required-features = ["fire27"]
+
+[[bin]]
+name = "lvgl"
+path = "src/bin/lvgl.rs"
+test = false
+bench = false
+required-features = ["lvgl"]
+
+# WiFi+BLE coexistence — gated so it's only built when explicitly requested
+# (`--bin coex --features coex`); enabling `coex` while building the other bins
+# fails to link (esp-radio coexist blob needs the BT controller).
+[[bin]]
+name = "coex"
+path = "src/bin/coex.rs"
+test = false
+bench = false
+required-features = ["coex"]
+
+[features]
+# Exactly one board feature; `default = ["fire27"]` keeps the bare
+# `cargo build -p demos` building for the Fire27 (ESP32). The chip is
+# propagated to the whole esp-hal family here so no dep hardcodes a chip.
+default = ["fire27"]
+fire27 = [
+    "esp-hal/esp32",
+    "esp-backtrace/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-println/esp32",
+    "esp-println/uart",
+    "esp-rtos/esp32",
+    "esp-sync/esp32",
+    "dep:esp-backtrace",
+    "dep:esp-println",
+    "dep:m5stack-core",
+    "m5stack-core/fire27",
+    "m5stack-core/display",
+    "m5stack-core/buttons",
+    "m5stack-core/psram",
+    "m5stack-core/wifi-sta",
+]
+cores3 = [
+    "esp-hal/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+    "esp-rtos/esp32s3",
+    "esp-rtos/log-04",
+    "esp-sync/esp32s3",
+    "esp-sync/log-04",
+    "embassy-executor/log",
+    "embassy-time/log",
+    "dep:panic-halt",
+    "dep:rtt-target",
+    "dep:m5stack-core",
+    "m5stack-core/cores3",
+    "m5stack-core/display",
+    "m5stack-core/psram",
+    "m5stack-core/wifi-sta",
+]
+# The LVGL (oxivgl) UI demo. Gated so the simple bins don't pay the LVGL C
+# build. oxivgl-sys compiles LVGL at build time (needs network + libclang and
+# the `DEP_LV_CONFIG_PATH` env in .cargo/config.toml → examples/demos/conf).
+lvgl = ["dep:oxivgl", "dep:oxivgl-sys"]
+# WiFi+BLE coexistence (the `coex` bin only). Build with `--bin coex` — see the
+# coex [[bin]] note. Pulls the BLE host stack + the radio coex feature.
+coex = ["m5stack-core/coex", "m5stack-core/ble", "dep:trouble-host", "dep:embassy-futures"]
+
+[dependencies]
+common               = { path = "../common" }
+# m5stack-core — board/display drivers + the unified IO loops. Optional +
+# default-features off; each board feature turns on its chip + the BSP features
+# the bins use (display, buttons, psram, wifi-sta).
+m5stack-core         = { path = "../../", optional = true, default-features = false }
+
+# esp-hal family (fork) — chip features supplied per board via [features].
+# esp-backtrace + esp-println are Fire27-only (UART); panic-halt + rtt-target
+# are CoreS3-only (USB-Serial-JTAG, which esp-println/esp-backtrace conflict
+# with).
+esp-alloc            = { workspace = true }
+esp-backtrace        = { workspace = true, optional = true }
+esp-bootloader-esp-idf = { workspace = true }
+esp-hal              = { workspace = true }
+esp-println          = { workspace = true, optional = true }
+esp-rtos             = { workspace = true }
+esp-sync             = { workspace = true }
+panic-halt           = { workspace = true, optional = true }
+rtt-target           = { workspace = true, optional = true }
+
+# Embassy
+embassy-embedded-hal = { workspace = true }
+embassy-executor     = { workspace = true }
+embassy-net          = { workspace = true }
+embassy-sync         = { workspace = true }
+embassy-time         = { workspace = true }
+
+# Display
+embedded-graphics    = { workspace = true }
+lcd-async            = { workspace = true }
+
+# BLE (coex bin only)
+embassy-futures      = { workspace = true, optional = true }
+trouble-host         = { workspace = true, optional = true }
+
+# misc
+embedded-hal         = { workspace = true }
+heapless             = { workspace = true }
+log                  = { workspace = true }
+static_cell          = { workspace = true }
+
+# LVGL UI (lvgl feature only)
+oxivgl               = { workspace = true, optional = true }
+oxivgl-sys           = { workspace = true, optional = true }

@@ -78,10 +78,12 @@ pub async fn ble_scan_task(ble: BleRadio) {
     let handler = PeerCollector;
 
     let _ = join(runner.run_with_handler(&handler), async {
-        let mut config = ScanConfig::default();
-        config.active = false; // passive: we only want advertiser addresses
-        config.interval = Duration::from_millis(500);
-        config.window = Duration::from_millis(400);
+        let config = ScanConfig {
+            active: false, // passive: we only want advertiser addresses
+            interval: Duration::from_millis(500),
+            window: Duration::from_millis(400),
+            ..Default::default()
+        };
         match scanner.scan(&config).await {
             Ok(_session) => loop {
                 Timer::after(Duration::from_secs(2)).await;
