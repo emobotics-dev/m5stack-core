@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Display splash + unified front-panel event readout (no radio).
+//! Unified front-panel event readout (no radio).
 //!
 //! Fire27 reads the three physical buttons; CoreS3 reads the FT6336U touch
 //! strip — both surface the same [`ButtonEvent`](demos::board::ButtonEvent),
@@ -11,7 +11,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_panel};
+use common::{STRIP_BYTES, draw_panel};
 use demos::board::{self, ButtonAction, ButtonId, INPUT_KIND, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -49,7 +49,6 @@ async fn main(_spawner: Spawner) {
     let (mut display, _i2c) = board::init_display(board.spi2, board.i2c0).await;
 
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
-    draw_demo(&mut display, &mut strip_buf[..], NAME, &[INPUT_KIND]).await;
 
     #[cfg(feature = "fire27")]
     let mut input = board::Input::new(board.buttons);

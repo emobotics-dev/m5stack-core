@@ -15,7 +15,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_panel};
+use common::{STRIP_BYTES, draw_panel};
 use demos::board::{self, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -54,7 +54,6 @@ async fn main(_spawner: Spawner) {
 
     let (mut display, _i2c) = board::init_display(board.spi2, board.i2c0).await;
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
-    draw_demo(&mut display, &mut strip_buf[..], NAME, &["1-Wire"]).await;
 
     log::info!("== DS18B20 1-Wire test — data on G26 (Port B / black) ==");
     let mut ds = match Ds18b20Driver::new(board.rmt, board.m5bus.gpio26) {
