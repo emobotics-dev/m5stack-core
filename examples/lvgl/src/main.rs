@@ -44,7 +44,6 @@
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
 use embassy_sync::mutex::Mutex;
-use embassy_time::Delay;
 // Panic handler differs per board: Fire27 uses esp-backtrace (UART console);
 // CoreS3 uses USB-Serial-JTAG, with which esp-backtrace/esp-println conflict, so
 // it uses panic-halt + RTT instead (matching examples/cores3).
@@ -72,17 +71,17 @@ use esp_hal::{
 use esp_println as _;
 use esp_rtos::embassy::InterruptExecutor;
 use esp_sync::RawMutex;
-use lcd_async::{
-    Builder, Display,
-    interface::SpiInterface,
-    models::ILI9342CRgb565,
-    options::{ColorInversion, ColorOrder},
-};
-// CoreS3 resets the panel via the AW9523B expander, so its display takes the
-// `NoResetPin` type parameter (no GPIO reset pin); Fire27 uses a GPIO reset.
-#[cfg(feature = "cores3")]
-use lcd_async::NoResetPin;
+use lcd_async::interface::SpiInterface;
 use log::info;
+// The ILI9342C bring-up (builder options, panel size) lives in the BSP; only
+// the reset wiring differs per board — CoreS3 resets the panel via the AW9523B
+// expander (the `Ili9342c` alias defaults to `NoResetPin`), Fire27 drives a
+// GPIO reset pin.
+use m5stack_core::board::display::Ili9342c;
+#[cfg(feature = "cores3")]
+use m5stack_core::board::display::init_ili9342c;
+#[cfg(feature = "fire27")]
+use m5stack_core::board::display::init_ili9342c_with_reset;
 use oxivgl::{
     display::{COLOR_BUF_LINES, LvglBuffers},
     flush_pipeline::{DisplayOutput, UiError, flush_frame_buffer},
@@ -112,8 +111,8 @@ fn custom_halt() -> ! {
     loop {}
 }
 
-const SCREEN_W: u16 = 320;
-const SCREEN_H: u16 = 240;
+const SCREEN_W: u16 = m5stack_core::board::display::SCREEN_W;
+const SCREEN_H: u16 = m5stack_core::board::display::SCREEN_H;
 
 /// LVGL render-buffer size in bytes: full width × `COLOR_BUF_LINES` lines ×
 /// 2 bytes/pixel (RGB565). Two such buffers are double-buffered by LVGL.
@@ -129,11 +128,12 @@ type SpiBusType = SpiDmaBus<'static, Async>;
 type SpiDeviceType = SpiDeviceWithConfig<'static, RawMutex, SpiBusType, Output<'static>>;
 type DisplayInterface = SpiInterface<SpiDeviceType, Output<'static>>;
 // The reset-pin type parameter differs per board: Fire27 drives a GPIO reset
-// (`Output`), CoreS3 resets via the AW9523B expander (`NoResetPin`).
+// (`Output`), CoreS3 resets via the AW9523B expander (`NoResetPin`, the
+// alias default).
 #[cfg(feature = "fire27")]
-type LcdDisplay = Display<DisplayInterface, ILI9342CRgb565, Output<'static>>;
+type LcdDisplay = Ili9342c<DisplayInterface, Output<'static>>;
 #[cfg(feature = "cores3")]
-type LcdDisplay = Display<DisplayInterface, ILI9342CRgb565, NoResetPin>;
+type LcdDisplay = Ili9342c<DisplayInterface>;
 
 static SPI_BUS: StaticCell<Mutex<RawMutex, SpiBusType>> = StaticCell::new();
 
@@ -395,13 +395,7 @@ async fn main(_low_prio_spawner: Spawner) {
         let rst = Output::new(p.GPIO33, Level::Low, OutputConfig::default());
 
         let di = SpiInterface::new(spi_device, dc);
-        let mut delay = Delay;
-        let display = Builder::new(ILI9342CRgb565, di)
-            .invert_colors(ColorInversion::Inverted)
-            .color_order(ColorOrder::Bgr)
-            .display_size(SCREEN_W, SCREEN_H)
-            .reset_pin(rst)
-            .init(&mut delay)
+        let display = init_ili9342c_with_reset(di, rst)
             .await
             .expect("Display init failed");
 
@@ -478,17 +472,10 @@ async fn main(_low_prio_spawner: Spawner) {
         let dc = Output::new(p.GPIO35, Level::Low, OutputConfig::default());
 
         let di = SpiInterface::new(spi_device, dc);
-        let mut delay = Delay;
-        // No `.reset_pin(...)`: reset was performed via the AW9523B above, so the
+        // No reset pin: reset was performed via the AW9523B above, so the
         // lcd-async builder takes the `NoResetPin` path (the cores3 `LcdDisplay`
-        // alias above carries the matching `NoResetPin` type parameter).
-        let display = Builder::new(ILI9342CRgb565, di)
-            .invert_colors(ColorInversion::Inverted)
-            .color_order(ColorOrder::Bgr)
-            .display_size(SCREEN_W, SCREEN_H)
-            .init(&mut delay)
-            .await
-            .expect("Display init failed");
+        // alias above carries the matching `NoResetPin` default).
+        let display = init_ili9342c(di).await.expect("Display init failed");
 
         info!("Display initialized (CoreS3: AXP2101 backlight on)");
 

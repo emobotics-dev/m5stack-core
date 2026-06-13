@@ -27,6 +27,18 @@ use esp_rom_sys as _;
 #[macro_use]
 mod fmt;
 
+/// Replaces embassy-executor's `Spawner::must_spawn`, dropped in 0.10: panics
+/// on pool exhaustion with call-site context. Works for `Spawner` and
+/// `SendSpawner`.
+#[macro_export]
+macro_rules! must_spawn {
+    ($spawner:expr, $task:expr) => {
+        $spawner.spawn($task.unwrap_or_else(|e| {
+            ::core::panic!(concat!("spawn ", stringify!($task), ": {:?}"), e)
+        }))
+    };
+}
+
 pub mod board;
 pub mod driver;
 pub mod io;

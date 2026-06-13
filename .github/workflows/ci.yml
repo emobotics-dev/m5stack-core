@@ -63,6 +63,12 @@ jobs:
       - name: Build lib (cores3 / ESP32-S3)
         run: cargo build --release --features cores3 --target xtensa-esp32s3-none-elf
 
+      - name: Build lib (fire27, all features)
+        run: cargo build --release --features "fire27,display,buttons,psram,serial-cmd,search-masks,coex"
+
+      - name: Build lib (cores3, all features)
+        run: cargo build --release --features "cores3,display,buttons,psram,serial-cmd,search-masks,coex" --target xtensa-esp32s3-none-elf
+
       - name: Build example fire27
         run: cargo build --release -p fire27
 

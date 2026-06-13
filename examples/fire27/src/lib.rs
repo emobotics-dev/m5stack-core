@@ -21,13 +21,9 @@ use esp_hal::{
     time::Rate,
 };
 use esp_sync::RawMutex;
-use lcd_async::{
-    Builder,
-    interface::SpiInterface,
-    models::ILI9342CRgb565,
-    options::{ColorInversion, ColorOrder},
-};
+use lcd_async::interface::SpiInterface;
 use log::info;
+use m5stack_core::board::display::{Ili9342c, init_ili9342c_with_reset};
 use m5stack_core::driver::radio::wifi::{
     self, AuthenticationMethod, IpSetup, StaCredentials, WifiControl, WifiRunner,
 };
@@ -47,12 +43,11 @@ type SharedSpi = Mutex<RawMutex, Spi<'static, esp_hal::Async>>;
 /// The concrete Fire27 display: an ILI9342C over SPI with a real hardware reset
 /// pin (the 3rd type parameter is a GPIO `Output`, unlike CoreS3 which resets
 /// the panel via its AW9523 expander).
-pub type Lcd = lcd_async::Display<
+pub type Lcd = Ili9342c<
     SpiInterface<
         SpiDeviceWithConfig<'static, RawMutex, Spi<'static, esp_hal::Async>, Output<'static>>,
         Output<'static>,
     >,
-    ILI9342CRgb565,
     Output<'static>,
 >;
 
@@ -98,13 +93,7 @@ pub async fn init_display(
         spi_config.with_frequency(Rate::from_khz(40_000)).clone(),
     );
     let di = SpiInterface::new(spi_device, dc);
-    let mut delay = embassy_time::Delay;
-    let display = Builder::new(ILI9342CRgb565, di)
-        .invert_colors(ColorInversion::Inverted)
-        .color_order(ColorOrder::Bgr)
-        .display_size(320, 240)
-        .reset_pin(rst)
-        .init(&mut delay)
+    let display = init_ili9342c_with_reset(di, rst)
         .await
         .expect("Display init failed");
 

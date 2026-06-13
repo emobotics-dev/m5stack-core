@@ -4,6 +4,63 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+BSP code absorbed from the `alternator-regulator` application (its `altreg-*`
+board crates), toward the goal of applications containing only task wiring.
+Relicensed from GPL-3.0-only to MIT OR Apache-2.0 on import (same copyright
+holder).
+
+### Added
+
+- **`board::display`** (new `display` feature, pulls `lcd-async`): ILI9342C
+  panel bring-up shared by both boards — `init_ili9342c` (CoreS3, no reset
+  pin / AW9523B + SPI SoftReset) and `init_ili9342c_with_reset` (Fire27),
+  `SCREEN_W`/`SCREEN_H`, the `Ili9342c` type alias. De-dupes the builder
+  config previously copied in every example and in the application.
+- **`board::spi2`**: the shared SPI2 display + SD-card bus. Per-board
+  `Spi2Resources` (pins + DMA channel) → `into_parts(dma_rx, dma_tx)` →
+  `Spi2Parts::finish(card_cs)` which shares the bus, initialises the display
+  (unconditionally — a dead/absent SD card must never cost the UI) and returns
+  a generic-CS SD `SpiDevice`. The SD *driver* stays with the app (`sdspi` is
+  not on crates.io); the module docs spell out the bounded-retry pre-init
+  pattern and the chip-specific display/SD join-order asymmetry.
+- **`board::cores3::Gpio35Dc` + `gpio35_disable_output`**: register-level
+  GPIO35 MISO/DC muxing (the CoreS3 shares GPIO35 between SPI2 MISO and
+  display DC). `Spi2Parts::finish` re-muxes to MISO after display init — the
+  ordering that otherwise costs an `sd_card.init()` that never completes.
+- **`board::cores3::Board` / `board::fire27::Board`** (`Board::split`): the
+  boards' pin wiring as data — SPI2/display/SD pins, the internal I2C0 bus
+  (hardened config: 400 kHz, `BusTimeout::BusCycles(20)`, and on the S3 a
+  25 ms transaction `SoftwareTimeout` — the HIL-proven fix for the
+  stuck-transaction `yield_now` spin that wedges an `InterruptExecutor`),
+  buttons, radio, UART0/USB-Serial-JTAG, free M5-Bus pins, and
+  `board::SystemResources` (timers, SW interrupts, `CPU_CTRL`, `LPWR`).
+  Plus `board::init()` (esp-hal at max CPU clock; heap stays with the app).
+- **`io::buttons`**: unified `ButtonEvent`/`ButtonId`/`ButtonAction` input
+  events for the whole Core family, plus (new `buttons` feature, pulls
+  `async-button`) the Fire27 front-panel A/B/C driver
+  (`ButtonResources::into_buttons` → `Buttons::next_event`).
+- **`io::touch_buttons`**: CoreS3 touch→button emulation over `ft6336u` —
+  three zones in the bottom strip, short/multi-tap/long-press state machine,
+  emitting the same `ButtonEvent` as the physical buttons.
+- **`io::watchdog::watchdog_feed_loop`**: RWDT hardware-reset backstop, armed
+  and fed from the executor whose wedging it guards.
+- **`must_spawn!`**: replacement for embassy-executor's `Spawner::must_spawn`
+  (dropped in 0.10), panicking with call-site context.
+
+### Changed — breaking
+
+- `board::cores3` is now gated behind the `cores3` feature (it was
+  unconditionally public; using it from a `fire27` build was meaningless).
+
+### Examples
+
+- All three display examples (`fire27`, `cores3`, `lvgl`) now use
+  `board::display` for the panel bring-up instead of inlining the lcd-async
+  builder; the lvgl example depends on `m5stack-core` for both boards now
+  (previously CoreS3 only).
+
 ## [0.3.1]
 
 ### Changed
