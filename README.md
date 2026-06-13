@@ -275,6 +275,7 @@ cargo +esp run --release -p demos --bin <name> \
 | `onewire`  | DS18B20 1-Wire temperature read over RMT (G26)                  | **Fire27 only** |
 | `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter | `--features lvgl` |
 | `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--bin coex --features coex`, `--release` |
+| `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `--features sd` |
 
 Notes on building:
 
@@ -293,6 +294,13 @@ Notes on building:
   `coex` feature stays off for every normal build (`cargo build`,
   `--workspace`, `-p demos`, per-bin) — only an explicit `--features coex`
   without `--bin coex` hits it, which is why the coex bin is always built alone.
+- **The `sd` bin** is gated by `--features sd` (it pulls the `sdspi` +
+  `embedded-fatfs` fork, which isn't on crates.io, so it's example-only). It's
+  the one demo that exercises `board::spi2::finish()` — the display + SD shared
+  bus, including the CoreS3 GPIO35 MISO/DC mux. It mounts **read-only** (never
+  writes, so it won't touch existing logs) and handles both MBR-partitioned
+  cards (mounts the first FAT partition via a `StreamSlice`) and superfloppies
+  (FAT at sector 0); a dead/absent card still lets the display come up.
 - **Input is unified**: both boards emit the same `ButtonEvent` (Fire27 reads
   the three buttons; CoreS3 splits the FT6336U touch strip into three zones), so
   the `display` bin's readout loop is identical. **Logging is unified** on the

@@ -58,6 +58,15 @@ test = false
 bench = false
 required-features = ["lvgl"]
 
+# SD card over the shared SPI2 bus (display + SD): mount the FAT filesystem and
+# list the root directory. Gated by `sd` (pulls the sdspi/embedded-fatfs fork).
+[[bin]]
+name = "sd"
+path = "src/bin/sd.rs"
+test = false
+bench = false
+required-features = ["sd"]
+
 # WiFi+BLE coexistence — gated so it's only built when explicitly requested
 # (`--bin coex --features coex`); enabling `coex` while building the other bins
 # fails to link (esp-radio coexist blob needs the BT controller).
@@ -114,6 +123,9 @@ lvgl = ["dep:oxivgl", "dep:oxivgl-sys"]
 # WiFi+BLE coexistence (the `coex` bin only). Build with `--bin coex` — see the
 # coex [[bin]] note. Pulls the BLE host stack + the radio coex feature.
 coex = ["m5stack-core/coex", "m5stack-core/ble", "dep:trouble-host", "dep:embassy-futures"]
+# SD-card demo (the `sd` bin only): the sdspi + embedded-fatfs fork over the
+# shared display+SD bus (`board::spi2::finish`).
+sd = ["dep:sdspi", "dep:embedded-fatfs", "dep:block-device-adapters", "dep:aligned", "dep:embedded-io-async", "dep:embedded-hal-async"]
 
 [dependencies]
 common               = { path = "../common" }
@@ -150,6 +162,17 @@ lcd-async            = { workspace = true }
 # BLE (coex bin only)
 embassy-futures      = { workspace = true, optional = true }
 trouble-host         = { workspace = true, optional = true }
+
+# SD card (sd bin only) — the emobotics fork of embedded-fatfs (sdspi + FAT),
+# pinned by rev like the esp-hal fork. Not on crates.io, so example-only.
+sdspi                 = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", features = ["log"], optional = true }
+embedded-fatfs        = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", default-features = false, features = ["alloc", "lfn", "log"], optional = true }
+block-device-adapters = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", optional = true }
+aligned               = { version = "0.4.2", optional = true }
+# embedded-io-async 0.6 to match the embedded-fatfs fork (the BSP uses 0.7;
+# both majors coexist). embedded-hal-async for the generic SpiDevice bound.
+embedded-io-async     = { version = "0.6", optional = true }
+embedded-hal-async    = { version = "1", optional = true }
 
 # misc
 embedded-hal         = { workspace = true }

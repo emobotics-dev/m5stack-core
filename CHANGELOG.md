@@ -102,6 +102,12 @@ holder).
   bring-up is `board::lvgl_bringup` (display + the right `Input`); on CoreS3 the
   one I2C bus resets the panel **and** drives touch. The previous raw-FFI
   Fire27-only keypad glue is replaced by this unified, both-boards path.
+- New `sd` bin (gated by `--features sd`): the one demo exercising
+  `board::spi2::finish()` — the display + SD shared bus including the CoreS3
+  GPIO35 MISO/DC mux. Mounts the FAT filesystem **read-only** and lists the root
+  dir; handles MBR-partitioned cards (mounts the first FAT partition via a
+  `StreamSlice`) and superfloppies (FAT at sector 0). Pulls the `sdspi` +
+  `embedded-fatfs` fork (not on crates.io → example-only).
 
 ## [0.3.1]
 

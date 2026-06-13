@@ -49,8 +49,9 @@ static SHARED_SPI: StaticCell<SharedSpi> = StaticCell::new();
 static I2C_BUS: StaticCell<SharedI2cBus> = StaticCell::new();
 
 /// Bring up the internal I2C bus (`into_async()` binds its IRQ to the calling
-/// core) and wrap it `'static`. Called once, by [`init_display`].
-fn init_i2c_shared(i2c0: I2c<'static, Blocking>) -> &'static SharedI2cBus {
+/// core) and wrap it `'static`. Called once per board (by `init_display`, or by
+/// a bin that needs the bus for the CoreS3 panel reset before `finish`).
+pub fn init_i2c_shared(i2c0: I2c<'static, Blocking>) -> &'static SharedI2cBus {
     I2C_BUS.init(SharedI2cBus::new(i2c0.into_async()))
 }
 
