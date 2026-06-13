@@ -25,7 +25,13 @@ use m5stack_core::board::spi2::Spi2Resources;
 use m5stack_core::io::shared_i2c::SharedI2cBus;
 
 pub use m5stack_core::board::init;
-pub use m5stack_core::io::buttons::ButtonEvent;
+pub use m5stack_core::io::buttons::{ButtonAction, ButtonEvent, ButtonId};
+
+/// How this board takes front-panel input — for demo headings.
+#[cfg(feature = "fire27")]
+pub const INPUT_KIND: &str = "Buttons";
+#[cfg(feature = "cores3")]
+pub const INPUT_KIND: &str = "Touch";
 
 /// The board's pin map (`Board::split(peripherals)`), selected by feature.
 #[cfg(feature = "fire27")]
