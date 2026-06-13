@@ -16,6 +16,16 @@ pub fn init_logger() {
     rtt_target::rtt_init_log!(log::LevelFilter::Info);
 }
 
+/// esp-println's `timestamp` feature calls this for the log prefix; back it with
+/// the embassy monotonic clock (valid once `esp_rtos::start` has run). Defined
+/// once here (Fire27 only) so every bin built with `ESP_LOG=…` links — without
+/// it the `timestamp` feature leaves the symbol undefined and the link fails.
+#[cfg(feature = "fire27")]
+#[unsafe(no_mangle)]
+extern "Rust" fn _esp_println_timestamp() -> u64 {
+    embassy_time::Instant::now().as_millis()
+}
+
 // esp-alloc's global heap holds at most 3 regions; each profile registers the
 // reclaimed-ROM region, the plain-DRAM region, and the external PSRAM region
 // (exactly 3) — do NOT add a 4th. Sizes are the HIL-proven per-bin values.
