@@ -13,7 +13,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_status, wheel};
+use common::{STRIP_BYTES, draw_demo, draw_panel, wheel};
 use demos::board::{self, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -68,13 +68,12 @@ async fn main(_spawner: Spawner) {
 
     loop {
         let mut lines: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-        lines.push(alloc::string::String::from("M5GO LED + battery"));
         lines.push(alloc::string::String::from(board::battery_line(i2c).await.as_str()));
         #[cfg(feature = "cores3")]
         lines.push(alloc::format!("5V bus: {}", if bus_5v_on { "ON" } else { "OFF" }));
         lines.push(alloc::string::String::from("LEDs cycle on M-Bus 23"));
         let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-        draw_status(&mut display, &mut strip_buf[..], &refs).await;
+        draw_panel(&mut display, &mut strip_buf[..], NAME, "M5GO", &refs).await;
 
         // Rotate a colour wheel across the 10 SK6812 LEDs on the bottom.
         if let Some(leds) = leds.as_mut() {

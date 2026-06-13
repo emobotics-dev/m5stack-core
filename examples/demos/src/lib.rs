@@ -13,6 +13,7 @@
 #![feature(type_alias_impl_trait)]
 
 pub mod board;
+pub mod net;
 pub mod shim;
 
 // BLE peer scanner, used only by the `coex` bin (gated so it doesn't pull

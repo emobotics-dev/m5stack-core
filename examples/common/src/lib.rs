@@ -184,6 +184,60 @@ pub async fn draw_status<DI, RST: OutputPin>(
     }
 }
 
+/// Render a unified status panel: a cyan header (`board` on the left, `title`
+/// right-aligned) with an underline, then the white `body` lines below. The
+/// sensor/peripheral demos all render through this so they look alike — no LVGL.
+/// Body lines that fall past the bottom of the screen are simply clipped.
+///
+/// `strip_buf` has the same internal-RAM requirement as in [`draw_demo`].
+pub async fn draw_panel<DI, RST: OutputPin>(
+    display: &mut Display<DI, lcd_async::models::ILI9342CRgb565, RST>,
+    strip_buf: &mut [u8],
+    board: &str,
+    title: &str,
+    body: &[&str],
+) where
+    DI: lcd_async::interface::Interface<Word = u8>,
+{
+    let header = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::CYAN);
+    let white = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::WHITE);
+    let rule = PrimitiveStyleBuilder::new().fill_color(Rgb565::CYAN).build();
+    // FONT_9X18_BOLD is 9 px wide; right-align the title against the panel edge.
+    let title_x = (W as i32 - title.len() as i32 * 9 - 8).max(8);
+    for strip in 0..(H / STRIP_H) {
+        let y_offset = (strip * STRIP_H) as i32;
+        {
+            let mut fb = RawFrameBuf::<Rgb565, _>::new(&mut strip_buf[..], W, STRIP_H);
+            fb.clear(Rgb565::new(0, 0, 4)).ok();
+            // Header row (board left, title right) + underline.
+            Text::new(board, Point::new(8, 18 - y_offset), header)
+                .draw(&mut fb)
+                .ok();
+            Text::new(title, Point::new(title_x, 18 - y_offset), header)
+                .draw(&mut fb)
+                .ok();
+            Rectangle::new(
+                Point::new(8, 26 - y_offset),
+                Size::new(W as u32 - 16, 1),
+            )
+            .into_styled(rule)
+            .draw(&mut fb)
+            .ok();
+            // Body lines start below the header rule.
+            for (i, line) in body.iter().enumerate() {
+                let y = 44 + i as i32 * 18;
+                Text::new(line, Point::new(8, y - y_offset), white)
+                    .draw(&mut fb)
+                    .ok();
+            }
+        }
+        display
+            .show_raw_data(0, (strip * STRIP_H) as u16, W as u16, STRIP_H as u16, strip_buf)
+            .await
+            .ok();
+    }
+}
+
 /// Probe I2C addresses `0x08..=0x77` and return the addresses that ACKed.
 ///
 /// Takes the locked bus directly (`&mut I`); the caller prints the result
