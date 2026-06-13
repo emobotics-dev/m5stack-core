@@ -11,12 +11,12 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_status};
+use common::{STRIP_BYTES, draw_demo, draw_panel};
 use demos::board::{self, NAME};
-use demos::shim;
+use demos::{net, shim};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use m5stack_core::driver::radio::wifi::{self, WifiControl};
+use m5stack_core::driver::radio::wifi;
 use static_cell::make_static;
 
 // Per-board panic handler + logger backend. Fire27: esp-backtrace over the UART
@@ -60,7 +60,7 @@ async fn main(spawner: Spawner) {
         Some((stack, control, runner)) => {
             wifi_stack = Some(stack);
             spawner.spawn(wifi::wifi_task(runner).unwrap());
-            spawner.spawn(net_demo(stack, control).unwrap());
+            spawner.spawn(net::net_demo(stack, control).unwrap());
         }
         None => log::info!("WiFi disabled (set WIFI_SSID/WIFI_PASSWORD to enable)"),
     }
@@ -72,41 +72,25 @@ async fn main(spawner: Spawner) {
 
     loop {
         let mut lines: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-        lines.push(alloc::format!("{} WiFi STA", NAME));
         match wifi_stack.and_then(|s| s.config_v4()) {
             Some(cfg) => lines.push(alloc::format!("IP {}", cfg.address)),
             None => lines.push(alloc::string::String::from(if wifi_stack.is_some() {
-                "WiFi: connecting..."
+                "connecting..."
             } else {
-                "WiFi: disabled"
+                "WiFi disabled"
             })),
         }
-        let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-        draw_status(&mut display, &mut strip_buf[..], &refs).await;
-        Timer::after(Duration::from_millis(500)).await;
-    }
-}
-
-/// Wait for a DHCP lease, log the IP, then scan for nearby APs.
-#[embassy_executor::task]
-async fn net_demo(stack: embassy_net::Stack<'static>, control: WifiControl) {
-    log::info!("WiFi: connecting + waiting for DHCP...");
-    stack.wait_config_up().await;
-    if let Some(cfg) = stack.config_v4() {
-        log::info!("WiFi: got IP {}", cfg.address);
-    }
-    match control.scan().await {
-        Ok(aps) => {
-            log::info!("WiFi scan: {} AP(s)", aps.len());
+        // Nearby networks discovered by the one-shot scan (net::net_demo).
+        let aps = net::scan_lines();
+        if !aps.is_empty() {
+            lines.push(alloc::string::String::from(""));
+            lines.push(alloc::string::String::from("Nearby APs:"));
             for ap in &aps {
-                log::info!(
-                    "  {:<32} ch{:>2} {:>4} dBm",
-                    ap.ssid.as_str(),
-                    ap.channel,
-                    ap.signal_strength
-                );
+                lines.push(alloc::string::String::from(ap.as_str()));
             }
         }
-        Err(e) => log::info!("WiFi scan failed: {:?}", e),
+        let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        draw_panel(&mut display, &mut strip_buf[..], NAME, "WiFi STA", &refs).await;
+        Timer::after(Duration::from_millis(500)).await;
     }
 }

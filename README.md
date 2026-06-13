@@ -298,6 +298,11 @@ Notes on building:
   the `display` bin's readout loop is identical. **Logging is unified** on the
   `log` facade: Fire27 over UART (`esp-println`), CoreS3 over **RTT at `Info`**
   (`rtt-target`; see the LVGL note).
+- **The sensor/peripheral demos all render through one `common::draw_panel`**
+  (a cyan board/title header + body lines) so they look alike, and each shows
+  everything it has *on screen* — not just the console (`onewire` displays the
+  sensor ROMs + °C; `wifi_sta`/`coex` show the nearby-AP scan). `display` and
+  `lvgl` keep their own rendering.
 
 ```bash
 WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p demos --bin wifi_sta

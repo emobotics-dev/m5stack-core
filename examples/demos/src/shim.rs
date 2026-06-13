@@ -43,12 +43,6 @@ pub fn init_heaps_coex(psram: PSRAM<'static>) {
     m5stack_core::mem::init_psram_heap(psram);
 }
 
-/// 1-Wire (Fire27-only) bin: a small reclaimed-ROM heap (esp-rtos needs an
-/// allocator); no PSRAM, no WiFi/BLE.
-pub fn init_heap_onewire() {
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 32 * 1024);
-}
-
 /// LVGL bin: 50 KiB reclaimed (LVGL's object/style pool); no PSRAM.
 pub fn init_heap_lvgl() {
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);

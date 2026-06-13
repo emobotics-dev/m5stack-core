@@ -7,7 +7,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_status, i2c_scan};
+use common::{STRIP_BYTES, draw_demo, draw_panel, i2c_scan};
 use demos::board::{self, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -56,12 +56,12 @@ async fn main(_spawner: Spawner) {
         }
 
         let mut lines: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-        lines.push(alloc::format!("I2C: {} device(s)", found.len()));
+        lines.push(alloc::format!("{} device(s)", found.len()));
         for addr in &found {
-            lines.push(alloc::format!("  0x{:02x}", addr));
+            lines.push(alloc::format!("0x{:02x}", addr));
         }
         let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-        draw_status(&mut display, &mut strip_buf[..], &refs).await;
+        draw_panel(&mut display, &mut strip_buf[..], NAME, "I2C scan", &refs).await;
 
         Timer::after(Duration::from_secs(2)).await;
     }

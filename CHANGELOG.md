@@ -84,6 +84,13 @@ holder).
 - Input is now unified across boards via the new `io::buttons::ButtonEvent`
   (the `display` bin reads Fire27 buttons / CoreS3 touch through one loop), and
   logging is unified on the `log` facade (CoreS3 over RTT at `Info`).
+- The sensor/peripheral demos (`i2c_scan`, `m5go`, `wifi_sta`, `coex`,
+  `onewire`) now render through one shared `common::draw_panel` (a cyan
+  board/title header + body lines) so they look alike, and each shows
+  everything it has **on screen** — not the console alone: `onewire` gained a
+  display (sensor count + per-sensor ROM + °C), and `wifi_sta`/`coex` now show
+  the nearby-AP scan (via the shared `demos::net`, which also de-dups the
+  `net_demo` task). The `display`/`lvgl` demos keep their own rendering.
 
 ## [0.3.1]
 
