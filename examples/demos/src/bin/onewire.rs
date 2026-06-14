@@ -44,13 +44,6 @@ fn custom_halt() -> ! {
     }
 }
 
-/// esp-println's `timestamp` feature calls this for the log prefix; back it with
-/// the embassy monotonic clock (valid once `esp_rtos::start` has run).
-#[unsafe(no_mangle)]
-extern "Rust" fn _esp_println_timestamp() -> u64 {
-    embassy_time::Instant::now().as_millis()
-}
-
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let p = board::init();

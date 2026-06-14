@@ -273,8 +273,9 @@ cargo +esp run --release -p demos --bin <name> \
 | `m5go`     | SK6812 LED colour-wheel (M-Bus pin 23) + battery readout        | M5GO bottom attached |
 | `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                            | `WIFI_SSID`/`WIFI_PASSWORD` |
 | `onewire`  | DS18B20 1-Wire temperature read over RMT (G26)                  | **Fire27 only** |
-| `lvgl`     | LVGL (oxivgl) UI: title + animated spinner + frame counter      | `--features lvgl` |
+| `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter | `--features lvgl` |
 | `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--bin coex --features coex`, `--release` |
+| `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `--features sd` |
 
 Notes on building:
 
@@ -293,6 +294,13 @@ Notes on building:
   `coex` feature stays off for every normal build (`cargo build`,
   `--workspace`, `-p demos`, per-bin) — only an explicit `--features coex`
   without `--bin coex` hits it, which is why the coex bin is always built alone.
+- **The `sd` bin** is gated by `--features sd` (it pulls the `sdspi` +
+  `embedded-fatfs` fork, which isn't on crates.io, so it's example-only). It's
+  the one demo that exercises `board::spi2::finish()` — the display + SD shared
+  bus, including the CoreS3 GPIO35 MISO/DC mux. It mounts **read-only** (never
+  writes, so it won't touch existing logs) and handles both MBR-partitioned
+  cards (mounts the first FAT partition via a `StreamSlice`) and superfloppies
+  (FAT at sector 0); a dead/absent card still lets the display come up.
 - **Input is unified**: both boards emit the same `ButtonEvent` (Fire27 reads
   the three buttons; CoreS3 splits the FT6336U touch strip into three zones), so
   the `display` bin's readout loop is identical. **Logging is unified** on the
@@ -321,12 +329,20 @@ AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 ### The `lvgl` bin
 
 Drives the panel with **[oxivgl](https://github.com/emobotics-dev/oxivgl)**
-(safe LVGL 9 bindings) instead of `embedded-graphics` — an LVGL render loop with
-the SPI flush running on a high-priority `InterruptExecutor`, so the UI animates
-smoothly while the main task keeps working. The per-board display bring-up uses
-the BSP's `board::spi2::into_display_only` (the descriptor-backed `SpiDmaBus`,
-no SD path); the oxivgl flush glue, the demo view, and (Fire27) the keypad indev
-live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is only the wiring.
+(safe LVGL 9 bindings) instead of `embedded-graphics`, with the SPI flush on a
+high-priority `InterruptExecutor` so the UI stays smooth while the main task
+works. It's **interactive**: three focusable buttons that you navigate from the
+front panel — `PREV`/`NEXT` move focus, `ENTER` clicks (a counter ticks up).
+
+The input path is **identical on both boards** and is the point of the demo: the
+unified `io::buttons::ButtonEvent` (Fire27 physical buttons / CoreS3 FT6336U
+touch zones) is mapped to LVGL navigation keys feeding an oxivgl `KeypadState`,
+which `run_app_nav_keypad_events` reads and routes to the view's focus group.
+Per-board bring-up is `board::lvgl_bringup` (display via
+`board::spi2::into_display_only` + the right `Input`); the flush glue, view, and
+the keypad adapter live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is
+only the wiring. (A direct-touch **pointer** indev for CoreS3 — tapping widgets
+by coordinate rather than zone-as-key — is the natural next step; see #32 I3.)
 
 Notes:
 

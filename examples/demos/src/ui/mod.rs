@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! LVGL (oxivgl) demo UI — split into submodules so the `lvgl` bin's `main`
 //! stays small. [`driver`] is the oxivgl flush glue over the BSP's DMA
-//! display, [`view`] is the demo screen, and (Fire27) [`input`] is the
-//! front-panel keypad indev.
+//! display, [`view`] is the interactive demo screen, and [`input`] maps the
+//! unified front-panel events into the LVGL keypad (both boards).
 
 pub mod driver;
-pub mod view;
-#[cfg(feature = "fire27")]
 pub mod input;
+pub mod view;
 
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::dma_buffers;
 use oxivgl::display::COLOR_BUF_LINES;
 
 pub use driver::{DisplayDriver, flush_task};
-pub use view::DemoView;
+pub use view::MenuView;
 
 pub use m5stack_core::board::display::{SCREEN_H, SCREEN_W};
 
