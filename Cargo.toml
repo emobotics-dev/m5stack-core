@@ -15,8 +15,11 @@ test = false
 bench = false
 
 [features]
-fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32"]
-cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3"]
+# The `esp-bootloader-esp-idf?/<chip>` arms only bite when the optional dep is
+# already on (via `heap`) — `init_heap`'s `#[ram(reclaimed)]` region needs the
+# esp-idf bootloader crate in the graph; a heap-free build never pulls it.
+fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-bootloader-esp-idf?/esp32"]
+cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-bootloader-esp-idf?/esp32s3"]
 # Enables the masked 1-Wire ROM search (driver::onewire::Search::new_with_mask),
 # constraining enumeration to addresses matching fixed bits under a mask.
 search-masks = []
@@ -29,10 +32,16 @@ serial-cmd = []
 # the ring, `install` can only register the backend, and `on_panic` still writes
 # the RTC breadcrumb and halts (RWDT recovers) — just with no serial surface.
 console-serial = []
-# External PSRAM heap support (the `mem` module). Enabling it activates a
-# build-time guard requiring opt-level > 0 (build.rs) and the compile-time
-# `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
-psram = ["dep:esp-alloc", "dep:allocator-api2"]
+# Global-heap ownership (the `mem` module): `mem::init_heap(profile, psram)`
+# declares the esp-alloc DRAM regions (HIL-proven per-board sizes) so a binary
+# never calls `esp_alloc::heap_allocator!` itself. PSRAM-free, so a board with
+# no external RAM (or that just doesn't want it) enables only this.
+heap = ["dep:esp-alloc", "dep:allocator-api2", "dep:esp-bootloader-esp-idf"]
+# External PSRAM heap support (the PSRAM region + the `psram_box`/`psram_vec`
+# checked allocators). Implies `heap`. Enabling it activates a build-time guard
+# requiring opt-level > 0 (build.rs) and the compile-time `PsramSafe` atomic
+# check (uses the `esp` nightly auto-trait features).
+psram = ["heap"]
 # On-board ILI9342C panel bring-up (board::display) and the display/SD-card
 # device construction on the shared SPI2 bus (board::spi2::Spi2Parts::finish).
 display = ["dep:lcd-async", "dep:embassy-embedded-hal"]
@@ -58,6 +67,12 @@ esp-alloc           = { version = "=0.10.0", optional = true }
 esp-hal             = { version = "=1.1.1", features = ["unstable"] }
 esp-radio           = { version = "=0.18.0", features = ["esp-alloc", "unstable"] }
 esp-sync            = { version = "=0.2.1" }
+# Bootloader integration — needed only by the `heap` feature: `init_heap`'s
+# `#[ram(reclaimed)]` region requires the esp-idf bootloader crate in the graph
+# (it also backs the future `app_desc!`). Stock for publish; patched to the fork
+# below for local/example builds so it unifies with the examples' copy (a
+# `links` crate must resolve to a single version).
+esp-bootloader-esp-idf = { version = "=0.5.0", optional = true }
 # Pinned (and referenced via `use esp_rom_sys as _` in lib.rs so it survives
 # `cargo package`): esp-hal 1.1.0 calls esp_rom_sys::init_syscall_table, added
 # in 0.1.4, but only constrains it to ~0.1 — without this pin a stock resolve
@@ -97,6 +112,7 @@ esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a
 esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 
 [workspace]
 members = ["examples/common", "examples/demos"]

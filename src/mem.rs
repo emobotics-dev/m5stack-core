@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! External PSRAM heap integration.
+//! Global heap ownership + external PSRAM integration.
+//!
+//! The BSP owns the global heap so a binary never spells out
+//! `esp_alloc::heap_allocator!` or the per-board region sizes itself:
+//! [`init_heap`] declares the esp-alloc DRAM regions for a [`HeapProfile`] and,
+//! optionally, registers external PSRAM. esp-alloc's global heap holds at most
+//! three regions, so each profile registers the reclaimed-ROM region, the
+//! plain-DRAM region, and (when PSRAM is supplied) the external region — never a
+//! fourth (a 4th `add_region` panics silently). The sizes are the HIL-proven
+//! per-board values previously copied into every binary.
+//!
+//! ```ignore
+//! use m5stack_core::mem::{self, HeapProfile};
+//!
+//! // After board init, before the first allocation:
+//! mem::init_heap(HeapProfile::Default, Some(board.psram)); // DRAM + PSRAM
+//! mem::init_heap(HeapProfile::Lvgl, None);                  // DRAM only
+//! ```
+//!
+//! The PSRAM-specific surface below ([`init_psram_heap`], the checked
+//! [`psram_box`] / [`psram_vec`], [`PsramSafe`]) needs the `psram` feature; the
+//! heap regions and [`dma_buffer`] need only `heap`.
 //!
 //! Both boards carry SPI PSRAM (Fire27: ~4 MB, CoreS3: ~8 MB). `esp-alloc`
 //! exposes a single global heap that can be backed by several regions;
@@ -41,14 +62,72 @@
 //!   with `opt-level = 0` fails the build (see `build.rs`). PSRAM timing
 //!   calibration is unreliable unoptimized.
 
-use core::sync::atomic::{
-    AtomicBool, AtomicI8, AtomicI16, AtomicI32, AtomicIsize, AtomicPtr, AtomicU8, AtomicU16,
-    AtomicU32, AtomicUsize,
-};
-
-use allocator_api2::{boxed::Box, vec::Vec};
+use allocator_api2::vec::Vec;
 pub use esp_alloc::{AnyMemory, ExternalMemory, InternalMemory};
 use esp_hal::peripherals::PSRAM;
+use esp_hal::ram;
+
+#[cfg(feature = "psram")]
+use allocator_api2::boxed::Box;
+
+/// Heap size profile — selects the HIL-proven per-board DRAM region sizes for a
+/// workload. The BSP owns the sizes so every binary gets the validated values;
+/// pass the matching profile to [`init_heap`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeapProfile {
+    /// Display / I2C / WiFi-STA workloads: reclaimed-ROM + plain DRAM (+ PSRAM).
+    Default,
+    /// LVGL UI: the reclaimed-ROM region only (LVGL object/style pool); no PSRAM.
+    Lvgl,
+    /// WiFi + BLE coexistence: more controller heap (+ PSRAM). Fire27 favours the
+    /// reclaimed region; CoreS3 favours plain DRAM.
+    Coex,
+}
+
+/// Register the global heap regions for `profile`, plus external PSRAM when
+/// `psram` is `Some`, using the HIL-proven per-board sizes. Call once, right
+/// after [`crate::board::init`] / `Board::split` and before any allocation.
+///
+/// This is the single place a binary sets up the heap — it never calls
+/// `esp_alloc::heap_allocator!` itself. esp-alloc's global heap holds at most
+/// three regions; each profile registers at most the reclaimed-ROM region, the
+/// plain-DRAM region and the external PSRAM region — never a fourth (a 4th
+/// `add_region` panics silently). Pass `None` for heap-only workloads
+/// (e.g. [`HeapProfile::Lvgl`], or a board with no external RAM).
+///
+/// Registering PSRAM needs the `psram` feature; without it a `Some(_)` argument
+/// is accepted but the external region is **not** added (the DRAM regions still
+/// are).
+pub fn init_heap(profile: HeapProfile, psram: Option<PSRAM<'static>>) {
+    match profile {
+        HeapProfile::Default => {
+            esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+            esp_alloc::heap_allocator!(size: 64 * 1024);
+        }
+        HeapProfile::Lvgl => {
+            esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+        }
+        HeapProfile::Coex => {
+            #[cfg(feature = "fire27")]
+            {
+                esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 96 * 1024);
+                esp_alloc::heap_allocator!(size: 24 * 1024);
+            }
+            #[cfg(feature = "cores3")]
+            {
+                esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+                esp_alloc::heap_allocator!(size: 96 * 1024);
+            }
+        }
+    }
+    if let Some(psram) = psram {
+        // `psram` feature off → the binding is consumed here without registering
+        // an external region (the PSRAM controller stays uninitialised).
+        let _ = &psram;
+        #[cfg(feature = "psram")]
+        init_psram_heap(psram);
+    }
+}
 
 /// Map the board's external PSRAM and add it to the global heap as an
 /// [`ExternalMemory`] region.
@@ -56,9 +135,11 @@ use esp_hal::peripherals::PSRAM;
 /// The size is auto-detected. Returns the amount of external (PSRAM) heap free
 /// immediately after registration, in bytes.
 ///
-/// Call once, after [`esp_hal::init`] and (optionally) the internal
-/// [`esp_alloc::heap_allocator!`]. Calling it more than once is unsound — the
-/// PSRAM controller must only be initialized a single time.
+/// Call once, after [`esp_hal::init`]. Usually invoked for you by [`init_heap`]
+/// when you pass `Some(psram)`; call it directly only if you manage the DRAM
+/// regions yourself. Calling it more than once is unsound — the PSRAM
+/// controller must only be initialized a single time.
+#[cfg(feature = "psram")]
 pub fn init_psram_heap(psram: PSRAM<'static>) -> usize {
     esp_alloc::psram_allocator!(psram, esp_hal::psram);
     let free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into());
@@ -82,34 +163,46 @@ pub fn init_psram_heap(psram: PSRAM<'static>) -> usize {
 /// # Safety
 /// Only implement (or negative-impl) this to reflect the atomic-in-PSRAM
 /// hazard; the checked allocators rely on it to keep atomics out of PSRAM.
+#[cfg(feature = "psram")]
 pub unsafe auto trait PsramSafe {}
 
-impl !PsramSafe for AtomicBool {}
-impl !PsramSafe for AtomicI8 {}
-impl !PsramSafe for AtomicU8 {}
-impl !PsramSafe for AtomicI16 {}
-impl !PsramSafe for AtomicU16 {}
-impl !PsramSafe for AtomicI32 {}
-impl !PsramSafe for AtomicU32 {}
-impl !PsramSafe for AtomicIsize {}
-impl !PsramSafe for AtomicUsize {}
-impl<T> !PsramSafe for AtomicPtr<T> {}
+#[cfg(feature = "psram")]
+mod psram_safe_impls {
+    use super::PsramSafe;
+    use core::sync::atomic::{
+        AtomicBool, AtomicI8, AtomicI16, AtomicI32, AtomicIsize, AtomicPtr, AtomicU8, AtomicU16,
+        AtomicU32, AtomicUsize,
+    };
 
-// A pointer/reference to an atomic is fine — the atomic lives elsewhere.
-// (Mirrors `unsafe impl<T: ?Sized> Send for &T` in std.)
-unsafe impl<T: ?Sized> PsramSafe for &T {}
-unsafe impl<T: ?Sized> PsramSafe for &mut T {}
-unsafe impl<T: ?Sized> PsramSafe for *const T {}
-unsafe impl<T: ?Sized> PsramSafe for *mut T {}
+    impl !PsramSafe for AtomicBool {}
+    impl !PsramSafe for AtomicI8 {}
+    impl !PsramSafe for AtomicU8 {}
+    impl !PsramSafe for AtomicI16 {}
+    impl !PsramSafe for AtomicU16 {}
+    impl !PsramSafe for AtomicI32 {}
+    impl !PsramSafe for AtomicU32 {}
+    impl !PsramSafe for AtomicIsize {}
+    impl !PsramSafe for AtomicUsize {}
+    impl<T> !PsramSafe for AtomicPtr<T> {}
+
+    // A pointer/reference to an atomic is fine — the atomic lives elsewhere.
+    // (Mirrors `unsafe impl<T: ?Sized> Send for &T` in std.)
+    unsafe impl<T: ?Sized> PsramSafe for &T {}
+    unsafe impl<T: ?Sized> PsramSafe for &mut T {}
+    unsafe impl<T: ?Sized> PsramSafe for *const T {}
+    unsafe impl<T: ?Sized> PsramSafe for *mut T {}
+}
 
 /// Allocate `value` in external PSRAM. Atomic-bearing `T` is rejected at
 /// compile time via [`PsramSafe`].
+#[cfg(feature = "psram")]
 pub fn psram_box<T: PsramSafe>(value: T) -> Box<T, ExternalMemory> {
     Box::new_in(value, ExternalMemory)
 }
 
 /// A `Vec<T>` with room for `capacity` elements reserved in external PSRAM.
 /// Atomic-bearing `T` is rejected at compile time via [`PsramSafe`].
+#[cfg(feature = "psram")]
 pub fn psram_vec<T: PsramSafe>(capacity: usize) -> Vec<T, ExternalMemory> {
     Vec::with_capacity_in(capacity, ExternalMemory)
 }
