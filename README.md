@@ -374,9 +374,13 @@ touch zones) is mapped to LVGL navigation keys feeding an oxivgl `KeypadState`,
 which `run_app_nav_keypad_events` reads and routes to the view's focus group.
 Per-board bring-up is `board::lvgl_bringup` (display via
 `board::spi2::into_display_only` + the right `Input`); the flush glue, view, and
-the keypad adapter live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is
-only the wiring. (A direct-touch **pointer** indev for CoreS3 — tapping widgets
-by coordinate rather than zone-as-key — is the natural next step; see #32 I3.)
+the input adapters live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is
+only the wiring. **CoreS3 additionally drives a direct-touch POINTER indev**
+(oxivgl 0.5 `PointerIndev`, fed by an async FT6336U poll task that bridges the
+I2C read into the indev's sync read callback), so on-screen widgets can be
+tapped by coordinate — the bottom-strip keys stay on the button API for
+focus-nav (multi-tap / long-press, `multi_tap_ms` tuned to 150 ms) *and* taps
+land anywhere on screen (#32 I3).
 
 Notes:
 
@@ -422,7 +426,8 @@ handling, `esp-println` UART critical-section bound).
 Both the `[patch]` and the example git dependencies are pinned to a **commit
 rev**, not a branch, so builds are reproducible. `cargo publish` ignores
 `[patch]`, so a published `m5stack-core` resolves the plain crates.io versions.
-The example UI crate's `oxivgl`/`oxivgl-sys` deps are likewise rev-pinned.
+The example UI crate uses the **crates.io** `oxivgl` 0.5 / `oxivgl-sys` 0.2
+releases (no git pin).
 
 **Roadmap:** upstream these patches; once they land in a released esp-hal, the
 fork and the `[patch]` are dropped.

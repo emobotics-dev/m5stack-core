@@ -9,6 +9,8 @@ repository = "https://github.com/emobotics-dev/m5stack-core"
 readme = "README.md"
 keywords = ["esp32", "m5stack", "embedded", "bsp", "embassy"]
 categories = ["embedded", "no-std", "hardware-support"]
+# Dev-only infrastructure — irrelevant to a published-crate consumer.
+exclude = [".github/", ".devcontainer/"]
 
 [lib]
 test = false

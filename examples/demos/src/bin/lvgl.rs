@@ -20,10 +20,7 @@ use embassy_executor::Spawner;
 use esp_hal::interrupt::Priority;
 use esp_rtos::embassy::InterruptExecutor;
 use oxivgl::display::LvglBuffers;
-#[cfg(feature = "fire27")]
 use oxivgl::view::run_app_nav_keypad_events;
-#[cfg(feature = "cores3")]
-use oxivgl::view::run_app;
 use static_cell::make_static;
 
 // Panic handler + log/console transport come from the BSP (the panic-handler +
@@ -43,14 +40,18 @@ async fn main(spawner: Spawner) {
     let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
     log::info!("Embassy initialized");
 
-    // Bring up the display (DMA bus, no SD) + the per-board input. Fire27 = the
-    // three buttons (→ keypad indev); CoreS3 = the FT6336U as a real touchscreen
-    // POINTER (the one I2C bus resets the panel *and* is polled for touch).
+    // Bring up the display (DMA bus, no SD) + the input. Fire27 = three buttons.
+    // CoreS3 = the FT6336U: the bottom-strip *keys* drive the keypad (BSP
+    // `TouchButtons`, multi-tap/long-press) AND on-screen taps drive a POINTER —
+    // the one I2C bus resets the panel and is shared by both.
     let (dma_rx, dma_tx) = ui::dma_bufs();
     #[cfg(feature = "fire27")]
     let (dbus, input) = board::lvgl_bringup(board.spi2, board.buttons, dma_rx, dma_tx).await;
     #[cfg(feature = "cores3")]
     let (dbus, i2c) = board::lvgl_bringup(board.spi2, board.i2c0, dma_rx, dma_tx).await;
+    // CoreS3: the bottom-strip touch buttons (keypad source), on the same bus.
+    #[cfg(feature = "cores3")]
+    let input = board::Input::new(i2c);
     let driver = DisplayDriver::new(dbus);
     log::info!("Display initialized");
 
@@ -60,10 +61,10 @@ async fn main(spawner: Spawner) {
     let hi_spawner = int_exec.start(Priority::min());
     hi_spawner.spawn(ui::flush_task(driver).expect("spawn flush task"));
 
-    // Fire27: decode buttons → LVGL keys (feeds the keypad indev).
-    #[cfg(feature = "fire27")]
+    // Both boards: decode the front-panel buttons → LVGL keys (keypad indev).
+    // On CoreS3 these are the bottom-strip keys via the BSP button API.
     spawner.spawn(ui::input::input_task(input).expect("spawn input task"));
-    // CoreS3: poll the FT6336U → the POINTER indev's `PointerState`.
+    // CoreS3 additionally: poll the FT6336U → the on-screen POINTER indev.
     #[cfg(feature = "cores3")]
     spawner.spawn(ui::input::touch_poll_task(i2c).expect("spawn touch poll task"));
 
@@ -72,9 +73,10 @@ async fn main(spawner: Spawner) {
     // render loop takes exclusive ownership of it for the rest of the program.
     let bufs = unsafe { &mut *core::ptr::addr_of_mut!(LVGL_BUFS) };
 
-    // Fire27: event-mode keypad render loop (reads the keypad the moment a key
-    // is posted, routes the view's focus group to it).
-    #[cfg(feature = "fire27")]
+    // Event-mode keypad render loop (reads the keypad the moment a key is posted,
+    // routes the view's focus group to it). On CoreS3 the POINTER indev
+    // (registered in `MenuView::create`) is also polled by LVGL during
+    // `lv_timer_handler`, so on-screen taps work alongside the bottom keys.
     run_app_nav_keypad_events(
         SCREEN_W.into(),
         SCREEN_H.into(),
@@ -83,10 +85,5 @@ async fn main(spawner: Spawner) {
         &ui::input::KEYPAD,
         ui::input::wake,
     )
-    .await;
-    // CoreS3: plain render loop — the POINTER indev (registered in
-    // `MenuView::create`) is polled by LVGL during `lv_timer_handler`, so taps
-    // reach the buttons with no focus-group wiring.
-    #[cfg(feature = "cores3")]
-    run_app(SCREEN_W.into(), SCREEN_H.into(), bufs, MenuView::default()).await;
+    .await
 }

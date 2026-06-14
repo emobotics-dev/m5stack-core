@@ -4,7 +4,7 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0]
+## [0.4.0] - 2026-06-14
 
 BSP code absorbed from the `alternator-regulator` application (its `altreg-*`
 board crates), toward the goal of applications containing only task wiring.
@@ -129,6 +129,14 @@ holder).
   bring-up is `board::lvgl_bringup` (display + the right `Input`); on CoreS3 the
   one I2C bus resets the panel **and** drives touch. The previous raw-FFI
   Fire27-only keypad glue is replaced by this unified, both-boards path.
+  **CoreS3 additionally runs a direct-touch POINTER indev** (oxivgl 0.5
+  `PointerIndev`, fed by an async FT6336U poll task bridging the I2C read into
+  the indev's sync read callback), so on-screen widgets can be tapped by
+  coordinate — the bottom-strip keys stay on the BSP **button API**
+  (`TouchButtons`, multi-tap / long-press, `multi_tap_ms` tuned to 150 ms for
+  snappy focus-nav) *and* taps land anywhere on screen (#32 I3).
+- Adopted **oxivgl 0.5** (from crates.io, no git pin) for the `lvgl` bin:
+  `KeypadIndev`/`KeypadState` + the new `PointerIndev`/`PointerState`.
 - New `sd` bin (gated by `--features sd`): the one demo exercising
   `board::spi2::finish()` — the display + SD shared bus including the CoreS3
   GPIO35 MISO/DC mux. Mounts the FAT filesystem **read-only** and lists the root

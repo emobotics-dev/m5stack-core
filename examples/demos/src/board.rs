@@ -218,10 +218,15 @@ pub struct Input(m5stack_core::io::touch_buttons::TouchButtons);
 #[cfg(feature = "cores3")]
 impl Input {
     pub fn new(i2c: &'static SharedI2cBus) -> Self {
-        Self(m5stack_core::io::touch_buttons::TouchButtons::new(
-            i2c,
-            m5stack_core::io::touch_buttons::TouchButtonsConfig::default(),
-        ))
+        // 150 ms multi-tap window (vs the 300 ms default) so focus-nav feels
+        // responsive; multi-tap/long-press still work (a deliberate double-tap
+        // is well under 150 ms). A consumer that never multi-taps can drop it
+        // lower for near-instant single taps.
+        let config = m5stack_core::io::touch_buttons::TouchButtonsConfig {
+            multi_tap_ms: 150,
+            ..Default::default()
+        };
+        Self(m5stack_core::io::touch_buttons::TouchButtons::new(i2c, config))
     }
 }
 
