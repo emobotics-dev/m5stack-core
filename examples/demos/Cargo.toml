@@ -82,22 +82,23 @@ required-features = ["coex"]
 # `cargo build -p demos` building for the Fire27 (ESP32). The chip is
 # propagated to the whole esp-hal family here so no dep hardcodes a chip.
 default = ["fire27"]
+# Logging + panic now come from the BSP console (m5stack-core/console-serial +
+# /panic-handler), so no esp-println/esp-backtrace (fire27) or panic-halt/
+# rtt-target (cores3) — the bins carry no panic boilerplate and log over the
+# chip's native transport (UART0 / USB-Serial-JTAG CDC).
 fire27 = [
     "esp-hal/esp32",
-    "esp-backtrace/esp32",
     "esp-bootloader-esp-idf/esp32",
-    "esp-println/esp32",
-    "esp-println/uart",
     "esp-rtos/esp32",
     "esp-sync/esp32",
-    "dep:esp-backtrace",
-    "dep:esp-println",
     "dep:m5stack-core",
     "m5stack-core/fire27",
     "m5stack-core/display",
     "m5stack-core/buttons",
     "m5stack-core/psram",
     "m5stack-core/wifi-sta",
+    "m5stack-core/console-serial",
+    "m5stack-core/panic-handler",
 ]
 cores3 = [
     "esp-hal/esp32s3",
@@ -108,13 +109,13 @@ cores3 = [
     "esp-sync/log-04",
     "embassy-executor/log",
     "embassy-time/log",
-    "dep:panic-halt",
-    "dep:rtt-target",
     "dep:m5stack-core",
     "m5stack-core/cores3",
     "m5stack-core/display",
     "m5stack-core/psram",
     "m5stack-core/wifi-sta",
+    "m5stack-core/console-serial",
+    "m5stack-core/panic-handler",
 ]
 # The LVGL (oxivgl) UI demo. Gated so the simple bins don't pay the LVGL C
 # build. oxivgl-sys compiles LVGL at build time (needs network + libclang and

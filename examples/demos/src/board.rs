@@ -55,6 +55,26 @@ pub fn init_i2c_shared(i2c0: I2c<'static, Blocking>) -> &'static SharedI2cBus {
     I2C_BUS.init(SharedI2cBus::new(i2c0.into_async()))
 }
 
+/// Build the BSP console's serial bundle from the board's peripherals (#31):
+/// Fire27 → UART0 + its TX/RX pins; CoreS3 → the USB-Serial-JTAG device. Hand
+/// the result to [`crate::shim::init_console`].
+#[cfg(feature = "fire27")]
+pub fn console_serial(
+    uart0: esp_hal::peripherals::UART0<'static>,
+    uart0_rx: esp_hal::gpio::AnyPin<'static>,
+    uart0_tx: esp_hal::gpio::AnyPin<'static>,
+) -> m5stack_core::io::console::SerialResources {
+    m5stack_core::io::console::SerialResources { uart: uart0, tx_pin: uart0_tx, rx_pin: uart0_rx }
+}
+
+/// See the Fire27 variant.
+#[cfg(feature = "cores3")]
+pub fn console_serial(
+    usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
+) -> m5stack_core::io::console::SerialResources {
+    m5stack_core::io::console::SerialResources { usb: usb_device }
+}
+
 fn display_spi_config() -> SpiConfig {
     SpiConfig::default()
         .with_frequency(Rate::from_khz(400))
