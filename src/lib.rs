@@ -20,6 +20,9 @@
 // in a psram-free `heap` build and would warn unless the gate is active. The
 // crate is nightly-only regardless, so enable it unconditionally.
 #![feature(auto_traits, negative_impls)]
+// `board::run_app_core`'s APP-core idle loop uses the Xtensa `waiti` instruction
+// via inline asm, which is still unstable for this architecture.
+#![cfg_attr(feature = "multicore", feature(asm_experimental_arch))]
 
 // Link-only: pins esp-rom-sys to the version esp-hal's code actually needs
 // (esp-hal 1.1.x under-constrains it to ~0.1 but calls a 0.1.4 API). Referenced

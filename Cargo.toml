@@ -18,8 +18,8 @@ bench = false
 # The `esp-bootloader-esp-idf?/<chip>` arms only bite when the optional dep is
 # already on (via `heap`) — `init_heap`'s `#[ram(reclaimed)]` region needs the
 # esp-idf bootloader crate in the graph; a heap-free build never pulls it.
-fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-bootloader-esp-idf?/esp32"]
-cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-bootloader-esp-idf?/esp32s3"]
+fire27 = ["esp-hal/esp32", "esp-radio/esp32", "esp-sync/esp32", "esp-bootloader-esp-idf?/esp32", "esp-rtos?/esp32"]
+cores3 = ["esp-hal/esp32s3", "esp-radio/esp32s3", "esp-sync/esp32s3", "esp-bootloader-esp-idf?/esp32s3", "esp-rtos?/esp32s3"]
 # Enables the masked 1-Wire ROM search (driver::onewire::Search::new_with_mask),
 # constraining enumeration to addresses matching fixed bits under a mask.
 search-masks = []
@@ -30,6 +30,10 @@ serial-cmd = []
 # — RTC breadcrumb + best-effort print + halt). Off by default so a consumer can
 # provide its own; a binary opts in instead of hand-rolling the one-line wrapper.
 panic-handler = []
+# Multicore app-core harness (board::run_app_core): parks + starts the APP core
+# on an esp-rtos InterruptExecutor with the waiti idle loop, encapsulating the
+# park_core JTAG-reset workaround. Pulls esp-rtos (its embassy InterruptExecutor).
+multicore = ["dep:esp-rtos"]
 # Console serial transport (UART0 / USB-Serial-JTAG): the TX drain + RX half +
 # `console::install`'s `Some(serial)` path + the panic transport print. With it
 # OFF (R9 production backstop) none of those symbols link: `log!` is a no-op into
@@ -77,6 +81,10 @@ esp-sync            = { version = "=0.2.1" }
 # below for local/example builds so it unifies with the examples' copy (a
 # `links` crate must resolve to a single version).
 esp-bootloader-esp-idf = { version = "=0.5.0", optional = true }
+# Multicore harness only (board::run_app_core): esp-rtos's embassy
+# InterruptExecutor. Stock for publish, patched to the fork below for local
+# builds so it unifies with the examples' copy.
+esp-rtos             = { version = "=0.3.0", optional = true, features = ["embassy"] }
 # Pinned (and referenced via `use esp_rom_sys as _` in lib.rs so it survives
 # `cargo package`): esp-hal 1.1.0 calls esp_rom_sys::init_syscall_table, added
 # in 0.1.4, but only constrains it to ~0.1 — without this pin a stock resolve
@@ -117,6 +125,7 @@ esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a
 esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 
 [workspace]
 members = ["examples/common", "examples/demos"]
