@@ -62,6 +62,25 @@ mod imp {
             .split()
     }
 
+    /// The peripheral bundle [`super::install`] needs to bring the console up:
+    /// UART0 + its TX/RX pins (Fire27 console is UART0 @ 1 Mbaud).
+    pub struct SerialResources {
+        pub uart: UART0<'static>,
+        pub tx_pin: AnyPin<'static>,
+        pub rx_pin: AnyPin<'static>,
+    }
+
+    /// Build the console, returning the RX half (for `serial_cmd`) and the async
+    /// TX sink the drain task writes. `into_async()` binds the TX-done IRQ to the
+    /// calling core, so [`super::install`] must run on the core that owns the
+    /// drain task (main / PRO).
+    pub fn install_serial(
+        res: SerialResources,
+    ) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
+        let (rx, tx) = setup(res.uart, res.tx_pin, res.rx_pin);
+        (rx, tx.into_async())
+    }
+
     // Raw UART0 TX-FIFO writer (panic only). Spins for FIFO room with a
     // bounded budget per byte: the panic message MUST get out — a dropped
     // [PANIC] line turns a clean panic into a silent "wedge" (cost a long
@@ -110,6 +129,20 @@ mod imp {
         UsbSerialJtag::new(usb).into_async().split()
     }
 
+    /// The peripheral bundle [`super::install`] needs: just the USB-Serial-JTAG
+    /// device (the CoreS3 console is the native CDC port — no probe needed, R7).
+    pub struct SerialResources {
+        pub usb: USB_DEVICE<'static>,
+    }
+
+    /// Build the console, returning the RX half (for `serial_cmd`) and the async
+    /// TX sink the drain task writes. The split TX is already async on CoreS3.
+    pub fn install_serial(
+        res: SerialResources,
+    ) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
+        setup(res.usb)
+    }
+
     // Raw SERIAL_JTAG EP1 FIFO writer (panic only). Spins for FIFO room with
     // a bounded budget per fill: the panic message MUST get out — the old
     // drop-on-full policy lost the [PANIC] line whenever the ring held more
@@ -148,8 +181,8 @@ mod imp {
     }
 }
 
-pub use imp::{ConsoleRx, ConsoleTx, ConsoleTxAsync, setup};
-use imp::boot_panic_write;
+pub use imp::{ConsoleRx, ConsoleTx, ConsoleTxAsync, SerialResources, setup};
+use imp::{boot_panic_write, install_serial};
 
 // ---- byte-level ring buffer (target-agnostic) ----
 
@@ -325,8 +358,62 @@ static LOGGER: ConsoleLogger = ConsoleLogger;
 /// pre-[`drain_task`] writes simply accumulate in the ring and are flushed
 /// once the drain runs.
 pub fn init() {
+    init_with_level(log::LevelFilter::Info);
+}
+
+/// Like [`init`] but with an explicit max level (used by [`install`]).
+fn init_with_level(level: log::LevelFilter) {
     let _ = log::set_logger(&LOGGER);
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(level);
+}
+
+/// Stable, greppable log markers that the HIL `detect_crash` contract keys on.
+/// Treat these as part of the public contract — do not reword without updating
+/// the test harness.
+pub mod markers {
+    /// Emitted by [`super::on_panic`] before halt.
+    pub const PANIC: &str = "[PANIC]";
+    /// Prefix of the drain's ring-overrun marker (` <n>B]` follows).
+    pub const CONSOLE_DROP: &str = "[CONSOLE-DROP";
+    /// Logged once at boot when a previous-run panic breadcrumb is read back.
+    pub const PREV_PANIC: &str = "[bc] previous panic";
+}
+
+/// Console install configuration. `serial: None` is the production backstop —
+/// the log backend is registered (so `log!` is a cheap no-op into the ring) but
+/// no transport is brought up and no drain task runs, leaving zero serial
+/// surface. `Some(_)` brings up the chip's native transport (UART0 on Fire27,
+/// USB-Serial-JTAG CDC on CoreS3) and spawns the drain.
+pub struct Config {
+    /// The chip's serial peripheral bundle, or `None` for a serial-free build.
+    pub serial: Option<SerialResources>,
+    /// Global `log` max level.
+    pub level: log::LevelFilter,
+}
+
+/// What [`install`] hands back: the console RX half, when a transport was
+/// brought up, to be handed to `serial_cmd` (bidirectional on one port, R7).
+pub struct Console {
+    /// `Some` iff `Config::serial` was `Some`. Hand to the serial-command reader.
+    pub rx: Option<ConsoleRx<'static>>,
+}
+
+/// One-call console bring-up: register the `log` backend at `cfg.level` and,
+/// when `cfg.serial` is `Some`, build the chip's transport + spawn the single
+/// [`drain_task`]. Replaces the hand-wired `init()` + `setup()` + drain-spawn
+/// sequence in every binary. Call once from main (the core that owns the drain;
+/// Fire27's TX `into_async()` binds the IRQ to the calling core).
+///
+/// Returns a [`Console`] whose `rx` (when present) goes to the serial-command
+/// reader so log TX and command RX share the one port (R7).
+pub fn install(spawner: embassy_executor::Spawner, cfg: Config) -> Console {
+    init_with_level(cfg.level);
+    let rx = cfg.serial.map(|res| {
+        let (rx, tx) = install_serial(res);
+        crate::must_spawn!(spawner, drain_task(tx));
+        rx
+    });
+    Console { rx }
 }
 
 /// Compatibility no-op. The prior design switched producers from a blocking
