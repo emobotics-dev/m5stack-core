@@ -13,7 +13,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_panel, wheel};
+use common::{STRIP_BYTES, draw_panel, wheel};
 use demos::board::{self, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -53,7 +53,6 @@ async fn main(_spawner: Spawner) {
     let (mut display, i2c) = board::init_display(board.spi2, board.i2c0).await;
 
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
-    draw_demo(&mut display, &mut strip_buf[..], NAME, &["M5GO bottom"]).await;
 
     // CoreS3 only: bring up the M-Bus 5 V rail that powers the LED bars.
     #[cfg(feature = "cores3")]

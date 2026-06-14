@@ -7,7 +7,7 @@
 
 extern crate alloc;
 
-use common::{STRIP_BYTES, draw_demo, draw_panel, i2c_scan};
+use common::{STRIP_BYTES, draw_panel, i2c_scan};
 use demos::board::{self, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
@@ -46,7 +46,6 @@ async fn main(_spawner: Spawner) {
     let (mut display, i2c) = board::init_display(board.spi2, board.i2c0).await;
 
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
-    draw_demo(&mut display, &mut strip_buf[..], NAME, &["I2C scan"]).await;
 
     loop {
         let found = i2c_scan(&mut *i2c.lock().await).await;

@@ -23,6 +23,12 @@ search-masks = []
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
+# Console serial transport (UART0 / USB-Serial-JTAG): the TX drain + RX half +
+# `console::install`'s `Some(serial)` path + the panic transport print. With it
+# OFF (R9 production backstop) none of those symbols link: `log!` is a no-op into
+# the ring, `install` can only register the backend, and `on_panic` still writes
+# the RTC breadcrumb and halts (RWDT recovers) — just with no serial surface.
+console-serial = []
 # External PSRAM heap support (the `mem` module). Enabling it activates a
 # build-time guard requiring opt-level > 0 (build.rs) and the compile-time
 # `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
@@ -86,11 +92,11 @@ thiserror-no-std    = "2.0.2"
 # not the floating `local` branch, so builds are reproducible. `cargo publish`
 # ignores [patch], so downstream consumers resolve the stock crates.io versions.
 [patch.crates-io]
-esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
-esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
-esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
-esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
-esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
+esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 
 [workspace]
 members = ["examples/common", "examples/demos"]
@@ -104,13 +110,13 @@ members = ["examples/common", "examples/demos"]
 # esp-println), so they declare the fork explicitly.
 [workspace.dependencies]
 # esp-hal family (emobotics fork, pinned rev)
-esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["internal-heap-stats"] }
-esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["panic-handler", "custom-halt", "colors", "println"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
-esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["unstable"] }
-esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["log-04", "colors", "timestamp"], default-features = false }
-esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6", features = ["embassy", "esp-radio"] }
-esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "3481e981dffb7405530d0425eb3f4b2fedfbc4b6" }
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0", features = ["panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0", features = ["unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0", features = ["log-04", "colors", "timestamp"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0", features = ["embassy", "esp-radio"] }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "b7a4c74a024383cb9808453cf3e34296c5e870b0" }
 # CoreS3 logging/panic (USB-Serial-JTAG)
 panic-halt           = "1.0.0"
 rtt-target           = { version = "0.6.2", features = ["log"] }

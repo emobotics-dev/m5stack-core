@@ -108,6 +108,12 @@ holder).
   dir; handles MBR-partitioned cards (mounts the first FAT partition via a
   `StreamSlice`) and superfloppies (FAT at sector 0). Pulls the `sdspi` +
   `embedded-fatfs` fork (not on crates.io → example-only).
+- Bumped the **esp-hal fork pin** (example/local builds only — the published
+  library uses stock esp-hal `=1.1.1`) to `b7a4c74a`, which scopes the I2C
+  NACK-recovery skip to ESP32 so the ESP32-S3 shared I2C bus recovers after a
+  NACK again. Without it a single NACK (e.g. probing an absent address) could
+  poison every later transaction on the S3 bus — manifesting as dead CoreS3
+  touch or a cold-boot black screen. Surfaced downstream in `alternator-regulator`.
 
 ## [0.3.1]
 
