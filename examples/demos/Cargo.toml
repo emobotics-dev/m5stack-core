@@ -177,13 +177,14 @@ trouble-host         = { workspace = true, optional = true }
 
 # SD card (sd bin only) — the emobotics fork of embedded-fatfs (sdspi + FAT),
 # pinned by rev like the esp-hal fork. Not on crates.io, so example-only.
-sdspi                 = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", features = ["log"], optional = true }
-embedded-fatfs        = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", default-features = false, features = ["alloc", "lfn", "log"], optional = true }
-block-device-adapters = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "428ad03cee555d9636f061d7bca7a62c4889cc63", optional = true }
+sdspi                 = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "eada6e7e6494577429d8799516c3fd32b7a1d9bb", features = ["log"], optional = true }
+embedded-fatfs        = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "eada6e7e6494577429d8799516c3fd32b7a1d9bb", default-features = false, features = ["alloc", "lfn", "log"], optional = true }
+block-device-adapters = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "eada6e7e6494577429d8799516c3fd32b7a1d9bb", optional = true }
 aligned               = { version = "0.4.2", optional = true }
-# embedded-io-async 0.6 to match the embedded-fatfs fork (the BSP uses 0.7;
-# both majors coexist). embedded-hal-async for the generic SpiDevice bound.
-embedded-io-async     = { version = "0.6", optional = true }
+# embedded-io-async 0.7 to match the embedded-fatfs fork's `local` rev
+# (block-device-adapters bumped 0.6 → 0.7). embedded-hal-async for the generic
+# SpiDevice bound (sdspi uses "1").
+embedded-io-async     = { version = "0.7", optional = true }
 embedded-hal-async    = { version = "1", optional = true }
 
 # misc
