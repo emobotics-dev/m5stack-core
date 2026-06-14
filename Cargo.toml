@@ -26,6 +26,10 @@ search-masks = []
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
+# Export the `#[panic_handler]` symbol from the BSP (body = io::console::on_panic
+# — RTC breadcrumb + best-effort print + halt). Off by default so a consumer can
+# provide its own; a binary opts in instead of hand-rolling the one-line wrapper.
+panic-handler = []
 # Global-heap ownership (the `mem` module): `mem::init_heap(profile, psram)`
 # declares the esp-alloc DRAM regions (HIL-proven per-board sizes) so a binary
 # never calls `esp_alloc::heap_allocator!` itself. PSRAM-free, so a board with
