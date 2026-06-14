@@ -13,6 +13,33 @@ holder).
 
 ### Added
 
+- **BSP↔binary boundary — the binary collapses to an entry shell.** New surfaces
+  so per-board boilerplate lives here, not in the application:
+  - **`mem::init_heap(HeapProfile, Option<PSRAM>)`** (new `heap` feature, implied
+    by `psram`): the BSP owns the global heap — declares the esp-alloc DRAM
+    regions for `HeapProfile::{Default,Lvgl,Coex}` (HIL-proven per-board sizes),
+    so a binary never calls `esp_alloc::heap_allocator!`. (`heap` pulls
+    `esp-bootloader-esp-idf` for the reclaimed-ROM region.)
+  - **`io::console::install(spawner, Config)`** (#31): one-call logging — register
+    the `log` backend + (when `Config::serial` is `Some`) bring up the chip
+    transport (UART0 / USB-Serial-JTAG CDC) and spawn the drain; returns
+    `Console { rx }` for `serial_cmd` (log TX + command RX on one port, no probe).
+    Plus `console::markers` (`PANIC`/`CONSOLE_DROP`/`PREV_PANIC`, a stable HIL
+    contract) and the new **`console-serial`** feature (off = R9 production
+    backstop: no serial symbols; panic still breadcrumbs + halts).
+  - **RTC panic breadcrumb** (#31 R8): `console::on_panic` records `{location,
+    reason-digest}` to RTC-fast persistent RAM before halt; `take_panic_breadcrumb()`
+    reads it once at boot — a crash survives the RWDT reset and is reported as the
+    `PREV_PANIC` line, identical on both targets.
+  - **`panic-handler` feature** + **`app_desc!` macro**: the BSP exports
+    `#[panic_handler]` (→ `on_panic`) and wraps the esp-idf app descriptor, so a
+    binary opts in instead of hand-rolling them.
+  - **`board::run_app_core`** (new `multicore` feature, pulls `esp-rtos`): parks
+    + starts the APP core on an `InterruptExecutor` (encapsulating the `park_core`
+    JTAG-reset workaround), running a caller closure with the `SendSpawner`.
+  - **`io::InputCaps` + `io::input_caps()`**: the board's input model (`Keypad`
+    vs `Pointer`), so a UI installs the matching indev without hardcoding the
+    board. `ButtonEvent` affirmed as a positional, app-vocabulary-free contract.
 - **`board::display`** (new `display` feature, pulls `lcd-async`): ILI9342C
   panel bring-up shared by both boards — `init_ili9342c` (CoreS3, no reset
   pin / AW9523B + SPI SoftReset) and `init_ili9342c_with_reset` (Fire27),

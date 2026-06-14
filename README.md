@@ -17,10 +17,20 @@ Exactly one board feature must be enabled. Orthogonal opt-ins:
 |---------|---------|----------|
 | `display` | `board::display` (ILI9342C bring-up) + `board::spi2` device construction | `lcd-async`, `embassy-embedded-hal` |
 | `buttons` | `io::buttons::Buttons` — debounced Fire27 front-panel driver | `async-button` |
-| `psram` | `mem::` external-PSRAM heap (see below) | `esp-alloc` |
+| `heap` | `mem::init_heap` — BSP owns the global heap (DRAM regions + HIL-proven per-board sizes) | `esp-alloc`, `esp-bootloader-esp-idf` |
+| `psram` | external-PSRAM region + checked `psram_box`/`psram_vec` (**implies `heap`**) | (via `heap`) |
+| `console-serial` | the `io::console` serial transport (UART0 / USB-Serial-JTAG); **off** = R9 production backstop (no serial symbols, panic still breadcrumbs + halts) | — |
+| `panic-handler` | BSP-provided `#[panic_handler]` → `io::console::on_panic` (opt in, or supply your own) | — |
+| `multicore` | `board::run_app_core` — park + start the APP core on an esp-rtos `InterruptExecutor` | `esp-rtos` |
 | `serial-cmd` | `io::serial_cmd` HIL command endpoint | — |
 | `search-masks` | masked 1-Wire ROM search | — |
 | `ble`/`wifi`/`wifi-sta`/`coex` | radio (see the radio section) | `embassy-net` (sta) |
+
+A binary built on this BSP can be a thin entry shell: `mem::init_heap` owns the
+heap, `io::console::install` owns logging + the panic breadcrumb, the
+`panic-handler` feature provides `#[panic_handler]`, `app_desc!` the descriptor,
+`board::run_app_core` the second core, and `io::input_caps()` the input model —
+so per-board boilerplate stays in the BSP, not the application.
 
 ## Modules
 
@@ -169,10 +179,23 @@ backstop for a fully wedged executor.
 
 ### Memory (`mem::`)
 
-PSRAM heap integration, behind the **`psram`** Cargo feature. Both boards have
-external SPI PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB). `mem::init_psram_heap(peripherals.PSRAM)`
-maps it and registers it as an external region of the `esp-alloc` global heap,
-returning the free PSRAM bytes. Applications can then allocate from it either
+The BSP owns the global heap (feature **`heap`**, implied by `psram`): one call,
+`mem::init_heap(profile, psram)`, declares the `esp-alloc` DRAM regions for a
+`HeapProfile` (the HIL-proven per-board sizes) and, given `Some(psram)`,
+registers external PSRAM — so a binary never spells out `esp_alloc::heap_allocator!`:
+
+```rust
+use m5stack_core::mem::{self, HeapProfile};
+
+mem::init_heap(HeapProfile::Default, Some(board.psram)); // reclaimed + DRAM + PSRAM
+mem::init_heap(HeapProfile::Lvgl, None);                 // reclaimed-ROM only, no PSRAM
+mem::init_heap(HeapProfile::Coex, Some(board.psram));    // more controller heap
+```
+
+PSRAM specifics, behind the **`psram`** feature. Both boards have external SPI
+PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB); `init_heap(_, Some(psram))` (or
+`mem::init_psram_heap(psram)` directly) maps it as an external region of the
+`esp-alloc` global heap. Applications can then allocate from it either
 implicitly (the global allocator spills into PSRAM after internal DRAM) or
 **explicitly** — preferably via the *checked* helpers:
 
@@ -205,27 +228,32 @@ itself is available under the already-enabled `unstable` feature.
 ### Serial console (`io::console`)
 
 The **complete** async logging console for the firmware — both the target-agnostic
-pipeline AND the per-target hardware. No `esp-println`/`esp-backtrace`.
+pipeline AND the per-target hardware. No `esp-println`/`esp-backtrace`/RTT.
 
-- `init()` / `enable_async()` — register the `log::Log` backend (boots blocking;
-  switches to the async drain once spawned).
-- `setup(...) -> (ConsoleRx, ConsoleTx)` — build + split the peripheral
-  (fire27: UART0 @ 1 Mbaud; cores3: USB-Serial-JTAG) into the RX half (→
-  `serial_cmd`) and the TX half (→ the drain task). The binary owns `into_async()`
-  so the IRQ binds to the calling core.
-- `drain_task(ConsoleTxAsync)` — the single console writer (`#[embassy_executor::task]`);
-  drains the cross-core queue to the async TX sink.
-- `send_line(Arguments)` — back-pressuring emit for bulk dumps (the `:cat`
-  read-back); awaits queue space instead of dropping.
-- `boot_panic_write(&[u8])` (internal) — boot/panic raw-FIFO poke, bounded (drops on
-  a full/host-less FIFO so it never wedges the radio). Bounded-spin on TX-FIFO
-  status — an anti-pattern reserved for the two contexts where the async drain
-  cannot run; do NOT call from steady-state code.
-- `on_panic(&PanicInfo) -> !` — shared message-only panic print + halt, used by
-  both binaries' `#[panic_handler]`.
+- **`install(spawner, Config) -> Console`** — the one call: register the `log`
+  backend at a level and (when `Config::serial` is `Some`) build the chip
+  transport (UART0 @ 1 Mbaud on Fire27, USB-Serial-JTAG CDC on CoreS3) + spawn
+  the drain. Returns `Console { rx }` whose RX half feeds `serial_cmd` (log TX +
+  command RX share one port — no debug probe needed). `serial: None` is the R9
+  production backstop. Replaces the old `init`/`setup`/`drain_task`/`enable_async`
+  sequence (still public for advanced use).
+- **`markers`** — `PANIC` / `CONSOLE_DROP` / `PREV_PANIC`, the **stable** strings
+  the HIL crash detector greps; treat as contract.
+- **`on_panic(&PanicInfo) -> !`** — writes an RTC-persistent breadcrumb
+  (`{file, message digest}`) *before* a best-effort transport print, then halts
+  (the RWDT recovers). Installed for you by the **`panic-handler`** feature.
+- **`take_panic_breadcrumb() -> Option<PanicCrumb>`** — call once at boot, before
+  `install`, and log the result: a previous-run panic survives reset and is
+  reported once as the `PREV_PANIC` line — the cross-transport fault contract,
+  identical on both targets.
+- **`send_line(Arguments)`** — back-pressuring bulk-dump emit (the `:cat`
+  read-back) and the **R10 injection point**: a control crate defines its own
+  `LineSink` trait and the binary forwards to `send_line`, so the trait never
+  enters the BSP.
 
-`alternator-regulator` depends on this crate (optional, esp-hal-gated) only so
-`logger::cat_line` can call `send_line`; host builds never pull it.
+With the **`console-serial`** feature off (R9), the transport compiles out
+entirely: `log!` is a no-op into the ring, `install` only registers the backend,
+and `on_panic` still breadcrumbs + halts — zero serial surface.
 
 ### Key types
 
@@ -268,7 +296,7 @@ cargo +esp run --release -p demos --bin <name> \
 
 | bin        | what it shows                                                  | needs |
 |------------|----------------------------------------------------------------|-------|
-| `display`  | splash + unified front-panel events (Fire27 buttons / CoreS3 touch) | — |
+| `display`  | unified front-panel events (Fire27 buttons / CoreS3 touch) + `input_caps()` | — |
 | `i2c_scan` | I2C bus scan (0x08..0x77), addresses on LCD                     | — |
 | `m5go`     | SK6812 LED colour-wheel (M-Bus pin 23) + battery readout        | M5GO bottom attached |
 | `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                            | `WIFI_SSID`/`WIFI_PASSWORD` |
@@ -276,6 +304,7 @@ cargo +esp run --release -p demos --bin <name> \
 | `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter | `--features lvgl` |
 | `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--bin coex --features coex`, `--release` |
 | `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `--features sd` |
+| `multicore`| runs a task on the APP core via `board::run_app_core` (interleaved PRO/APP ticks) | `--features multicore` |
 
 Notes on building:
 
@@ -303,9 +332,14 @@ Notes on building:
   (FAT at sector 0); a dead/absent card still lets the display come up.
 - **Input is unified**: both boards emit the same `ButtonEvent` (Fire27 reads
   the three buttons; CoreS3 splits the FT6336U touch strip into three zones), so
-  the `display` bin's readout loop is identical. **Logging is unified** on the
-  `log` facade: Fire27 over UART (`esp-println`), CoreS3 over **RTT at `Info`**
-  (`rtt-target`; see the LVGL note).
+  the `display` bin's readout loop is identical. The `display` bin also queries
+  `io::input_caps()` (#32) and logs the board's input model.
+- **Logging goes through the BSP console** (`io::console::install`, the
+  `console-serial` + `panic-handler` features) on both boards — Fire27 over
+  **UART0 @ 1 Mbaud**, CoreS3 over the **probe-free USB-Serial-JTAG CDC**. No
+  `esp-println`/`esp-backtrace`/RTT; the bins carry no panic boilerplate (the BSP
+  provides `#[panic_handler]` + `app_desc!`). A panic is recoverable across reset
+  via the RTC breadcrumb (logged once at next boot as `[bc] previous panic`).
 - **The sensor/peripheral demos all render through one `common::draw_panel`**
   (a cyan board/title header + body lines) so they look alike, and each shows
   everything it has *on screen* — not just the console (`onewire` displays the
@@ -351,15 +385,15 @@ Notes:
   "usr-stuck" after the first frame; a descriptor-backed DMA bus avoids it);
   CoreS3 drives SPI2 on GPIO36/37 over GDMA, with the panel reset via the AW9523
   expander and the backlight via the AXP2101 (no GPIO reset/backlight pins).
-- **Logging differs by board.** Fire27 logs over UART (`esp-println`/
-  `esp-backtrace`). CoreS3 uses **RTT** (`rtt-target` + `panic-halt`) read via
-  `probe-rs run`/`attach`, since `esp-println`/`esp-backtrace` conflict with the
-  USB-Serial-JTAG. **The RTT logger runs at `Info`, not Trace** — and this
-  matters: at Trace, oxivgl's per-frame DEBUG stream floods the RTT buffer, and
-  with no debugger draining it the channel back-pressures and **stalls the
-  render loop** (HIL-confirmed freeze). At Info the demo emits only a few startup
-  lines and runs standalone. (More generally: never emit a per-frame log stream
-  over an undrained RTT/USB-Serial-JTAG/UART channel — it will eventually block.)
+- **Logging is the BSP console on both boards** (`io::console`, no probe). Read
+  it over the serial port — Fire27 at **1 Mbaud** (e.g. `espflash monitor
+  --baud 1000000`, or `screen /dev/tty… 1000000`), CoreS3 at the default rate on
+  the USB-Serial-JTAG CDC port. Flash CoreS3 with `probe-rs download` + `reset`
+  (or `espflash`), then read the **CDC port**, not RTT. **Never emit a per-frame
+  log stream** over the console — an undrained UART/CDC back-pressures the ring
+  and can stall the render loop (HIL-confirmed at oxivgl Trace level); keep the
+  LVGL demo at `Info`. A panic is reported once at the *next* boot as the
+  `[bc] previous panic` breadcrumb line, so a crash is never silently lost.
 - `oxivgl-sys` downloads and compiles LVGL 9.5 at build time, so this example
   needs network access, the target C compiler (`xtensa-esp32{,s3}-elf-gcc`) and
   `libclang` for `bindgen` (with `BINDGEN_EXTRA_CLANG_ARGS` pointing at the
