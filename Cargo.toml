@@ -23,6 +23,12 @@ search-masks = []
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
+# Console serial transport (UART0 / USB-Serial-JTAG): the TX drain + RX half +
+# `console::install`'s `Some(serial)` path + the panic transport print. With it
+# OFF (R9 production backstop) none of those symbols link: `log!` is a no-op into
+# the ring, `install` can only register the backend, and `on_panic` still writes
+# the RTC breadcrumb and halts (RWDT recovers) — just with no serial surface.
+console-serial = []
 # External PSRAM heap support (the `mem` module). Enabling it activates a
 # build-time guard requiring opt-level > 0 (build.rs) and the compile-time
 # `PsramSafe` atomic check (uses the `esp` nightly auto-trait features).
