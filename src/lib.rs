@@ -3,14 +3,27 @@
 //! (ESP32-S3).
 //!
 //! Provides chip-agnostic peripheral drivers ([`driver`]), a shared async I2C
-//! bus and reusable `embassy`-based IO task loops ([`io`]), board bring-up
-//! helpers ([`board`]), and optional external-PSRAM heap integration ([`mem`],
-//! behind the `psram` feature).
+//! bus and reusable `embassy`-based IO task loops ([`io`]), and board bring-up
+//! helpers ([`board`]).
+//!
+//! The crate also owns the board/chip boilerplate a binary would otherwise
+//! hand-roll, so a consumer's `main` collapses to a thin entry shell:
+//!
+//! - [`mem::init_heap`] — the global heap (esp-alloc DRAM regions + HIL-proven
+//!   per-board sizes; `heap` feature, implied by `psram`).
+//! - [`io::console::install`] — one-call logging over the chip's native
+//!   transport (UART0 / USB-Serial-JTAG CDC) + an RTC panic breadcrumb
+//!   ([`io::console::take_panic_breadcrumb`]).
+//! - the `panic-handler` feature exports the `#[panic_handler]`, and
+//!   [`app_desc!`] the esp-idf app descriptor.
+//! - [`board::run_app_core`] — the second-core harness (`multicore` feature).
+//! - [`io::input_caps`] — the board's input model (keypad vs pointer), so a UI
+//!   installs the matching indev without hardcoding the board.
 //!
 //! Exactly one board feature must be enabled: `fire27` (xtensa-esp32) or
-//! `cores3` (xtensa-esp32s3). Radio support (`ble`, `wifi`, `wifi-sta`, `coex`)
-//! and `psram` are orthogonal opt-ins. See the README for the full feature
-//! matrix and usage examples.
+//! `cores3` (xtensa-esp32s3). Radio (`ble`/`wifi`/`wifi-sta`/`coex`), `heap`/
+//! `psram`, `console-serial`, `panic-handler`, and `multicore` are orthogonal
+//! opt-ins. See the README for the full feature matrix and usage examples.
 #![no_std]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(type_alias_impl_trait)]
