@@ -77,6 +77,14 @@ test = false
 bench = false
 required-features = ["coex"]
 
+# Multicore harness demo — runs a task on the APP core via board::run_app_core.
+[[bin]]
+name = "multicore"
+path = "src/bin/multicore.rs"
+test = false
+bench = false
+required-features = ["multicore"]
+
 [features]
 # Exactly one board feature; `default = ["fire27"]` keeps the bare
 # `cargo build -p demos` building for the Fire27 (ESP32). The chip is
@@ -127,6 +135,9 @@ coex = ["m5stack-core/coex", "m5stack-core/ble", "dep:trouble-host", "dep:embass
 # SD-card demo (the `sd` bin only): the sdspi + embedded-fatfs fork over the
 # shared display+SD bus (`board::spi2::finish`).
 sd = ["dep:sdspi", "dep:embedded-fatfs", "dep:block-device-adapters", "dep:aligned", "dep:embedded-io-async", "dep:embedded-hal-async"]
+# Multicore demo (the `multicore` bin only): board::run_app_core puts a task on
+# the APP core. Pulls m5stack-core/multicore (the esp-rtos InterruptExecutor).
+multicore = ["m5stack-core/multicore"]
 
 [dependencies]
 common               = { path = "../common" }
