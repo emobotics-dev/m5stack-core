@@ -19,26 +19,9 @@ use embassy_time::{Duration, Timer};
 use m5stack_core::driver::radio::wifi;
 use static_cell::make_static;
 
-// Per-board panic handler + logger backend. Fire27: esp-backtrace over the UART
-// console + esp-println. CoreS3: panic-halt (USB-Serial-JTAG, with which
-// esp-backtrace/esp-println conflict — it logs over RTT; see shim::init_logger).
-#[cfg(feature = "fire27")]
-use esp_backtrace as _;
-#[cfg(feature = "fire27")]
-use esp_println as _;
-#[cfg(feature = "cores3")]
-use panic_halt as _;
-
-esp_bootloader_esp_idf::esp_app_desc!();
-
-// esp-backtrace's `custom-halt` feature calls this after the backtrace (Fire27).
-#[cfg(feature = "fire27")]
-#[unsafe(no_mangle)]
-fn custom_halt() -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
-}
+// Panic handler + log/console transport come from the BSP (the panic-handler +
+// console-serial features); the app descriptor is the one line the binary keeps.
+m5stack_core::app_desc!();
 
 /// WiFi credentials, supplied at build time. When `WIFI_SSID` is unset the bin
 /// skips WiFi and just runs the display.
@@ -48,10 +31,14 @@ const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     let p = board::init();
-    shim::init_logger();
     let board = board::Board::split(p);
     shim::init_heaps_default(board.psram);
     esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
+    #[cfg(feature = "fire27")]
+    let _console =
+        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
+    #[cfg(feature = "cores3")]
+    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
 
     // `Stack` is `Copy`, so keep a handle for the on-screen IP readout and spawn
     // the runner + a net-demo task.

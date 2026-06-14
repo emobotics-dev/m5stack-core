@@ -1,59 +1,44 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Per-board logger/panic + heap setup, so the bins read identically.
+//! Per-board logger + heap setup, so the bins read identically. Logging now goes
+//! through the BSP console (`io::console::install`) on both boards — Fire27 over
+//! UART0, CoreS3 over the probe-free USB-Serial-JTAG CDC (#31). The BSP also
+//! provides the `#[panic_handler]` (the `panic-handler` feature) so the bins
+//! carry no panic boilerplate.
 
+use embassy_executor::Spawner;
 use esp_hal::peripherals::PSRAM;
-use esp_hal::ram;
+use m5stack_core::io::console::{self, Config, Console, SerialResources};
+use m5stack_core::mem::{self, HeapProfile};
 
-/// Register the `log` backend. Fire27 → esp-println (UART); CoreS3 → RTT at
-/// **Info** (a per-frame DEBUG flood with no debugger draining the RTT buffer
-/// back-pressures and stalls the app — HIL-confirmed). MUST be called AFTER
-/// [`crate::board::init`] (CoreS3's `rtt_init_log!` needs the RTT control block,
-/// set up by `esp_hal::init`).
-pub fn init_logger() {
-    #[cfg(feature = "fire27")]
-    esp_println::logger::init_logger_from_env();
-    #[cfg(feature = "cores3")]
-    rtt_target::rtt_init_log!(log::LevelFilter::Info);
+/// Bring the BSP console up (`log` backend + transport + drain) and report any
+/// previous-run panic breadcrumb. Replaces the old esp-println / RTT glue.
+/// Call once from main with the chip's serial bundle (see `board::console_serial`).
+pub fn init_console(spawner: Spawner, serial: SerialResources) -> Console {
+    // R8: surface a prior panic ONCE, after the backend is up so it reaches the
+    // console (and the host's `detect_crash` grep).
+    let crumb = console::take_panic_breadcrumb();
+    let console =
+        console::install(spawner, Config { serial: Some(serial), level: log::LevelFilter::Info });
+    if let Some(c) = crumb {
+        log::warn!("{} @ {} (reason {:#010x})", console::markers::PREV_PANIC, c.location, c.reason);
+    }
+    console
 }
 
-/// esp-println's `timestamp` feature calls this for the log prefix; back it with
-/// the embassy monotonic clock (valid once `esp_rtos::start` has run). Defined
-/// once here (Fire27 only) so every bin built with `ESP_LOG=…` links — without
-/// it the `timestamp` feature leaves the symbol undefined and the link fails.
-#[cfg(feature = "fire27")]
-#[unsafe(no_mangle)]
-extern "Rust" fn _esp_println_timestamp() -> u64 {
-    embassy_time::Instant::now().as_millis()
-}
+// Heap setup now lives in the BSP: `mem::init_heap(profile, psram)` owns the
+// esp-alloc regions + per-board sizes (#35 C1), so these are thin profile picks.
 
-// esp-alloc's global heap holds at most 3 regions; each profile registers the
-// reclaimed-ROM region, the plain-DRAM region, and the external PSRAM region
-// (exactly 3) — do NOT add a 4th. Sizes are the HIL-proven per-bin values.
-
-/// Display / I2C / WiFi bins: 50 KiB reclaimed + 64 KiB plain + PSRAM.
+/// Display / I2C / WiFi bins: the Default profile (reclaimed + plain DRAM) + PSRAM.
 pub fn init_heaps_default(psram: PSRAM<'static>) {
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-    esp_alloc::heap_allocator!(size: 64 * 1024);
-    m5stack_core::mem::init_psram_heap(psram);
+    mem::init_heap(HeapProfile::Default, Some(psram));
 }
 
-/// Coex (WiFi + BLE) needs more controller heap. Fire27 → 96 KiB reclaimed +
-/// 24 KiB plain; CoreS3 → 50 KiB reclaimed + 96 KiB plain. Plus PSRAM.
+/// Coex (WiFi + BLE) needs more controller heap: the Coex profile + PSRAM.
 pub fn init_heaps_coex(psram: PSRAM<'static>) {
-    #[cfg(feature = "fire27")]
-    {
-        esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 96 * 1024);
-        esp_alloc::heap_allocator!(size: 24 * 1024);
-    }
-    #[cfg(feature = "cores3")]
-    {
-        esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-        esp_alloc::heap_allocator!(size: 96 * 1024);
-    }
-    m5stack_core::mem::init_psram_heap(psram);
+    mem::init_heap(HeapProfile::Coex, Some(psram));
 }
 
-/// LVGL bin: 50 KiB reclaimed (LVGL's object/style pool); no PSRAM.
+/// LVGL bin: the Lvgl profile (reclaimed-ROM only, no PSRAM).
 pub fn init_heap_lvgl() {
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+    mem::init_heap(HeapProfile::Lvgl, None);
 }

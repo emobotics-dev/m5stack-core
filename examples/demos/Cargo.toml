@@ -77,27 +77,36 @@ test = false
 bench = false
 required-features = ["coex"]
 
+# Multicore harness demo — runs a task on the APP core via board::run_app_core.
+[[bin]]
+name = "multicore"
+path = "src/bin/multicore.rs"
+test = false
+bench = false
+required-features = ["multicore"]
+
 [features]
 # Exactly one board feature; `default = ["fire27"]` keeps the bare
 # `cargo build -p demos` building for the Fire27 (ESP32). The chip is
 # propagated to the whole esp-hal family here so no dep hardcodes a chip.
 default = ["fire27"]
+# Logging + panic now come from the BSP console (m5stack-core/console-serial +
+# /panic-handler), so no esp-println/esp-backtrace (fire27) or panic-halt/
+# rtt-target (cores3) — the bins carry no panic boilerplate and log over the
+# chip's native transport (UART0 / USB-Serial-JTAG CDC).
 fire27 = [
     "esp-hal/esp32",
-    "esp-backtrace/esp32",
     "esp-bootloader-esp-idf/esp32",
-    "esp-println/esp32",
-    "esp-println/uart",
     "esp-rtos/esp32",
     "esp-sync/esp32",
-    "dep:esp-backtrace",
-    "dep:esp-println",
     "dep:m5stack-core",
     "m5stack-core/fire27",
     "m5stack-core/display",
     "m5stack-core/buttons",
     "m5stack-core/psram",
     "m5stack-core/wifi-sta",
+    "m5stack-core/console-serial",
+    "m5stack-core/panic-handler",
 ]
 cores3 = [
     "esp-hal/esp32s3",
@@ -108,13 +117,13 @@ cores3 = [
     "esp-sync/log-04",
     "embassy-executor/log",
     "embassy-time/log",
-    "dep:panic-halt",
-    "dep:rtt-target",
     "dep:m5stack-core",
     "m5stack-core/cores3",
     "m5stack-core/display",
     "m5stack-core/psram",
     "m5stack-core/wifi-sta",
+    "m5stack-core/console-serial",
+    "m5stack-core/panic-handler",
 ]
 # The LVGL (oxivgl) UI demo. Gated so the simple bins don't pay the LVGL C
 # build. oxivgl-sys compiles LVGL at build time (needs network + libclang and
@@ -126,6 +135,9 @@ coex = ["m5stack-core/coex", "m5stack-core/ble", "dep:trouble-host", "dep:embass
 # SD-card demo (the `sd` bin only): the sdspi + embedded-fatfs fork over the
 # shared display+SD bus (`board::spi2::finish`).
 sd = ["dep:sdspi", "dep:embedded-fatfs", "dep:block-device-adapters", "dep:aligned", "dep:embedded-io-async", "dep:embedded-hal-async"]
+# Multicore demo (the `multicore` bin only): board::run_app_core puts a task on
+# the APP core. Pulls m5stack-core/multicore (the esp-rtos InterruptExecutor).
+multicore = ["m5stack-core/multicore"]
 
 [dependencies]
 common               = { path = "../common" }

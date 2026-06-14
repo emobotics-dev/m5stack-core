@@ -22,6 +22,19 @@ use esp_hal::{
     timer::AnyTimer,
 };
 
+/// On-board display resolution — a *board fact*, independent of the `display`
+/// driver feature, defined exactly once per target here. Every subsystem that
+/// needs it (the [`display`] panel builder, [`crate::io::input_caps`]) reads
+/// these rather than re-stating the numbers.
+#[cfg(feature = "cores3")]
+pub const SCREEN_W: u16 = 320;
+#[cfg(feature = "cores3")]
+pub const SCREEN_H: u16 = 240;
+#[cfg(feature = "fire27")]
+pub const SCREEN_W: u16 = 320;
+#[cfg(feature = "fire27")]
+pub const SCREEN_H: u16 = 240;
+
 /// Initialise esp-hal at max CPU clock. Heap setup stays with the app
 /// (sizing is application policy).
 pub fn init() -> Peripherals {

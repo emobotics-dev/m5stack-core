@@ -22,10 +22,9 @@ use lcd_async::{
     options::{ColorInversion, ColorOrder},
 };
 
-/// Panel width in pixels.
-pub const SCREEN_W: u16 = 320;
-/// Panel height in pixels.
-pub const SCREEN_H: u16 = 240;
+/// Panel resolution — the single per-target source in [`super`] (a board fact,
+/// not display-driver-specific); re-exported here for the display API.
+pub use super::{SCREEN_H, SCREEN_W};
 
 /// The configured panel type: ILI9342C in RGB565 over `DI`.
 pub type Ili9342c<DI, RST = NoResetPin> = Display<DI, ILI9342CRgb565, RST>;

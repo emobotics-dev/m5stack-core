@@ -27,11 +27,15 @@ use m5stack_core::io::shared_i2c::SharedI2cBus;
 pub use m5stack_core::board::init;
 pub use m5stack_core::io::buttons::{ButtonAction, ButtonEvent, ButtonId};
 
-/// How this board takes front-panel input — for demo headings.
-#[cfg(feature = "fire27")]
-pub const INPUT_KIND: &str = "Buttons";
-#[cfg(feature = "cores3")]
-pub const INPUT_KIND: &str = "Touch";
+pub use m5stack_core::io::{InputCaps, input_caps};
+
+/// How this board takes front-panel input — for demo headings. Derived from the
+/// BSP's queryable [`input_caps`] (#32 I2) rather than a hardcoded per-board
+/// const, so the demo reads the same capability a real consumer would.
+pub const INPUT_KIND: &str = match input_caps() {
+    InputCaps::Keypad { .. } => "Buttons",
+    InputCaps::Pointer { .. } => "Touch",
+};
 
 /// The board's pin map (`Board::split(peripherals)`), selected by feature.
 #[cfg(feature = "fire27")]
@@ -53,6 +57,26 @@ static I2C_BUS: StaticCell<SharedI2cBus> = StaticCell::new();
 /// a bin that needs the bus for the CoreS3 panel reset before `finish`).
 pub fn init_i2c_shared(i2c0: I2c<'static, Blocking>) -> &'static SharedI2cBus {
     I2C_BUS.init(SharedI2cBus::new(i2c0.into_async()))
+}
+
+/// Build the BSP console's serial bundle from the board's peripherals (#31):
+/// Fire27 → UART0 + its TX/RX pins; CoreS3 → the USB-Serial-JTAG device. Hand
+/// the result to [`crate::shim::init_console`].
+#[cfg(feature = "fire27")]
+pub fn console_serial(
+    uart0: esp_hal::peripherals::UART0<'static>,
+    uart0_rx: esp_hal::gpio::AnyPin<'static>,
+    uart0_tx: esp_hal::gpio::AnyPin<'static>,
+) -> m5stack_core::io::console::SerialResources {
+    m5stack_core::io::console::SerialResources { uart: uart0, tx_pin: uart0_tx, rx_pin: uart0_rx }
+}
+
+/// See the Fire27 variant.
+#[cfg(feature = "cores3")]
+pub fn console_serial(
+    usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
+) -> m5stack_core::io::console::SerialResources {
+    m5stack_core::io::console::SerialResources { usb: usb_device }
 }
 
 fn display_spi_config() -> SpiConfig {
