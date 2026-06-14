@@ -2,7 +2,7 @@
 //! Per-board logger/panic + heap setup, so the bins read identically.
 
 use esp_hal::peripherals::PSRAM;
-use esp_hal::ram;
+use m5stack_core::mem::{self, HeapProfile};
 
 /// Register the `log` backend. Fire27 → esp-println (UART); CoreS3 → RTT at
 /// **Info** (a per-frame DEBUG flood with no debugger draining the RTT buffer
@@ -26,34 +26,20 @@ extern "Rust" fn _esp_println_timestamp() -> u64 {
     embassy_time::Instant::now().as_millis()
 }
 
-// esp-alloc's global heap holds at most 3 regions; each profile registers the
-// reclaimed-ROM region, the plain-DRAM region, and the external PSRAM region
-// (exactly 3) — do NOT add a 4th. Sizes are the HIL-proven per-bin values.
+// Heap setup now lives in the BSP: `mem::init_heap(profile, psram)` owns the
+// esp-alloc regions + per-board sizes (#35 C1), so these are thin profile picks.
 
-/// Display / I2C / WiFi bins: 50 KiB reclaimed + 64 KiB plain + PSRAM.
+/// Display / I2C / WiFi bins: the Default profile (reclaimed + plain DRAM) + PSRAM.
 pub fn init_heaps_default(psram: PSRAM<'static>) {
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-    esp_alloc::heap_allocator!(size: 64 * 1024);
-    m5stack_core::mem::init_psram_heap(psram);
+    mem::init_heap(HeapProfile::Default, Some(psram));
 }
 
-/// Coex (WiFi + BLE) needs more controller heap. Fire27 → 96 KiB reclaimed +
-/// 24 KiB plain; CoreS3 → 50 KiB reclaimed + 96 KiB plain. Plus PSRAM.
+/// Coex (WiFi + BLE) needs more controller heap: the Coex profile + PSRAM.
 pub fn init_heaps_coex(psram: PSRAM<'static>) {
-    #[cfg(feature = "fire27")]
-    {
-        esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 96 * 1024);
-        esp_alloc::heap_allocator!(size: 24 * 1024);
-    }
-    #[cfg(feature = "cores3")]
-    {
-        esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-        esp_alloc::heap_allocator!(size: 96 * 1024);
-    }
-    m5stack_core::mem::init_psram_heap(psram);
+    mem::init_heap(HeapProfile::Coex, Some(psram));
 }
 
-/// LVGL bin: 50 KiB reclaimed (LVGL's object/style pool); no PSRAM.
+/// LVGL bin: the Lvgl profile (reclaimed-ROM only, no PSRAM).
 pub fn init_heap_lvgl() {
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
+    mem::init_heap(HeapProfile::Lvgl, None);
 }
