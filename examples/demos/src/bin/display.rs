@@ -35,6 +35,11 @@ async fn main(spawner: Spawner) {
 
     let (mut display, _i2c) = board::init_display(board.spi2, board.i2c0).await;
 
+    // #32 I2: a consumer queries the board's input capability rather than
+    // assuming a layout. Here we just report it; a real UI would install the
+    // matching indev (keypad vs pointer) from this.
+    log::info!("input caps: {:?}", board::input_caps());
+
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
 
     #[cfg(feature = "fire27")]

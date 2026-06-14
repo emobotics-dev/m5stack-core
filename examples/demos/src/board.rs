@@ -27,11 +27,15 @@ use m5stack_core::io::shared_i2c::SharedI2cBus;
 pub use m5stack_core::board::init;
 pub use m5stack_core::io::buttons::{ButtonAction, ButtonEvent, ButtonId};
 
-/// How this board takes front-panel input — for demo headings.
-#[cfg(feature = "fire27")]
-pub const INPUT_KIND: &str = "Buttons";
-#[cfg(feature = "cores3")]
-pub const INPUT_KIND: &str = "Touch";
+pub use m5stack_core::io::{InputCaps, input_caps};
+
+/// How this board takes front-panel input — for demo headings. Derived from the
+/// BSP's queryable [`input_caps`] (#32 I2) rather than a hardcoded per-board
+/// const, so the demo reads the same capability a real consumer would.
+pub const INPUT_KIND: &str = match input_caps() {
+    InputCaps::Keypad { .. } => "Buttons",
+    InputCaps::Pointer { .. } => "Touch",
+};
 
 /// The board's pin map (`Board::split(peripherals)`), selected by feature.
 #[cfg(feature = "fire27")]
