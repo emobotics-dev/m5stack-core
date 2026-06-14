@@ -25,6 +25,11 @@ pub enum ButtonAction {
     Long,
 }
 
+/// A generic, positional input event — the #32 I1/I6 contract: it carries only
+/// *where* (`id`) and *what kind* (`action`), never app semantics (no
+/// Inc/Dec/Ok, no nav). Both the Fire27 physical buttons and the CoreS3 touch
+/// zones emit this same type, so a consumer's input router maps it to meaning;
+/// the BSP never does. Do not add app-vocabulary variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ButtonEvent {
     pub id: ButtonId,
