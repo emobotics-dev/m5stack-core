@@ -13,6 +13,7 @@ on:
       - master
       - 'feature/**'   # cover stacked PRs whose base is another feature branch
       - 'feat/**'      # same, for the shorter `feat/` prefix
+      - 'refactor/**'  # and refactor/* bases (the BSP foundation stacks on one)
   workflow_dispatch:
 
 env:
