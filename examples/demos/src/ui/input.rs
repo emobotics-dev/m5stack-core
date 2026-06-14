@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Front-panel input → LVGL indev, chosen per the board's `io::input_caps()`:
+//! Front-panel input → LVGL indev(s).
 //!
-//! - **Fire27** (`InputCaps::Keypad`): the three buttons map to LVGL nav keys
-//!   (PREV/ENTER/NEXT) posted to a [`KeypadState`] the render loop reads — the
-//!   I4 keypad adapter fed by the unified `ButtonEvent`.
-//! - **CoreS3** (`InputCaps::Pointer`): the FT6336U is driven as a real **LVGL
-//!   POINTER** (oxivgl 0.5) — widgets are tapped by coordinate, not faked as
-//!   nav keys (#32 I3). An async poll task bridges the I2C read (which can't run
-//!   in LVGL's sync indev callback) into a lock-free [`PointerState`].
+//! - **Keypad (both boards)**: the unified [`ButtonEvent`](crate::board::ButtonEvent)
+//!   — Fire27's physical buttons or CoreS3's bottom-strip touch *keys* (the BSP
+//!   `TouchButtons`, with multi-tap / long-press) — maps to LVGL nav keys
+//!   (PREV/ENTER/NEXT). The bottom keys deliberately stay on the **button API**,
+//!   not the pointer, because the consumer app's primary input is those keys.
+//! - **Pointer (CoreS3, additionally)**: the FT6336U is *also* driven as a real
+//!   **LVGL POINTER** (oxivgl 0.5) so on-screen widgets can be tapped by
+//!   coordinate (#32 I3). An async poll task bridges the I2C read (which can't
+//!   run in LVGL's sync indev callback) into a lock-free [`PointerState`].
+//!
+//! So CoreS3 has both: tap a widget directly, or navigate with the bottom keys.
 
-// --- Fire27: keypad path -------------------------------------------------
+// --- Keypad path (both boards) -------------------------------------------
 
-#[cfg(feature = "fire27")]
 pub use keypad::{KEYPAD, input_task, wake};
 
-#[cfg(feature = "fire27")]
 mod keypad {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::signal::Signal;
