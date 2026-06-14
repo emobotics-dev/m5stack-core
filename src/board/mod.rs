@@ -9,6 +9,10 @@ pub mod cores3;
 pub mod display;
 #[cfg(feature = "fire27")]
 pub mod fire27;
+#[cfg(feature = "multicore")]
+mod multicore;
+#[cfg(feature = "multicore")]
+pub use multicore::run_app_core;
 #[cfg(any(feature = "cores3", feature = "fire27"))]
 pub mod spi2;
 
