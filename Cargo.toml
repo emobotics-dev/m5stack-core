@@ -162,7 +162,7 @@ lcd-async            = "0.1.1"
 # BLE (coex)
 trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu-255", "scan", "derive"] }
 # LVGL (lvgl feature, demos only)
-oxivgl               = { version = "0.4.0", features = ["esp-hal", "log-04"] }
+oxivgl               = { version = "0.5.0", features = ["esp-hal", "log-04"] }
 oxivgl-sys           = { version = "0.2.1", default-features = false }
 # misc
 embedded-hal         = "1.0.0"

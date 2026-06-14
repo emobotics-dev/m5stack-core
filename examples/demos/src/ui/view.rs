@@ -28,6 +28,10 @@ pub struct MenuView {
     frame: Option<Label<'static>>,
     clicks: u32,
     tick: u32,
+    /// CoreS3: the touchscreen POINTER indev, registered in `create` and kept
+    /// alive for the view's lifetime (Fire27 uses the keypad indev instead).
+    #[cfg(feature = "cores3")]
+    _pointer: Option<oxivgl::indev::PointerIndev>,
 }
 
 impl View for MenuView {
@@ -62,6 +66,14 @@ impl View for MenuView {
         self.status = Some(status);
         self.frame = Some(frame);
         self.group = Some(group);
+
+        // CoreS3: register a touchscreen POINTER indev so the buttons are
+        // tapped directly by coordinate (fed by `input::touch_poll_task`).
+        // Fire27 drives the same buttons via the keypad indev instead.
+        #[cfg(feature = "cores3")]
+        {
+            self._pointer = Some(oxivgl::indev::PointerIndev::new(&crate::ui::input::POINTER)?);
+        }
         Ok(())
     }
 
@@ -70,6 +82,7 @@ impl View for MenuView {
             if let Some(btn) = btn {
                 if event.matches(btn, EventCode::CLICKED) {
                     self.clicks = self.clicks.wrapping_add(1);
+                    log::info!("button {} clicked ({})", NAMES[i], self.clicks);
                     if let Some(status) = &self.status {
                         let mut buf = heapless::String::<32>::new();
                         let _ = core::fmt::Write::write_fmt(

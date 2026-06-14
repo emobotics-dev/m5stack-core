@@ -326,6 +326,7 @@ mod lvgl_bus {
     use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
     use m5stack_core::board::spi2::{DisplayBus, Spi2Resources};
 
+    #[cfg(feature = "fire27")]
     use super::Input;
 
     /// Bring up the LVGL display (DMA bus, no SD) **and** the front-panel input
@@ -344,16 +345,19 @@ mod lvgl_bus {
         (dbus, Input::new(buttons))
     }
 
+    /// CoreS3 returns the shared I2C bus (not an `Input`): the LVGL demo drives
+    /// touch as a real POINTER indev, so an async task polls the FT6336U over
+    /// this bus and feeds the indev's `PointerState`.
     #[cfg(feature = "cores3")]
     pub async fn lvgl_bringup(
         spi2: Spi2Resources<'static>,
         i2c0: esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>,
         dma_rx: DmaRxBuf,
         dma_tx: DmaTxBuf,
-    ) -> (DisplayBus, Input) {
+    ) -> (DisplayBus, &'static m5stack_core::io::shared_i2c::SharedI2cBus) {
         let i2c = super::init_i2c_shared(i2c0);
         m5stack_core::board::cores3::power_display_reset(i2c).await;
         let dbus = spi2.into_display_only(dma_rx, dma_tx).await.expect("display init");
-        (dbus, Input::new(i2c))
+        (dbus, i2c)
     }
 }
