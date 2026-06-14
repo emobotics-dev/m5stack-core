@@ -14,9 +14,12 @@
 #![no_std]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(type_alias_impl_trait)]
-// `PsramSafe` (mem::) is a Send/Sync-style auto trait with negative impls for
-// the atomic types — only pulled in when the PSRAM API is enabled.
-#![cfg_attr(feature = "psram", feature(auto_traits, negative_impls))]
+// `PsramSafe` (mem::, `psram` feature) is a Send/Sync-style auto trait with
+// negative impls for the atomic types. The item is `#[cfg(psram)]`, but cfg
+// stripping happens *after* parsing, so the `auto trait` syntax is parsed even
+// in a psram-free `heap` build and would warn unless the gate is active. The
+// crate is nightly-only regardless, so enable it unconditionally.
+#![feature(auto_traits, negative_impls)]
 
 // Link-only: pins esp-rom-sys to the version esp-hal's code actually needs
 // (esp-hal 1.1.x under-constrains it to ~0.1 but calls a 0.1.4 API). Referenced
@@ -42,5 +45,5 @@ macro_rules! must_spawn {
 pub mod board;
 pub mod driver;
 pub mod io;
-#[cfg(feature = "psram")]
+#[cfg(feature = "heap")]
 pub mod mem;
