@@ -91,6 +91,10 @@ holder).
   display (sensor count + per-sensor ROM + °C), and `wifi_sta`/`coex` now show
   the nearby-AP scan (via the shared `demos::net`, which also de-dups the
   `net_demo` task). The `display`/`lvgl` demos keep their own rendering.
+- The `display` bin is now a clear input-capabilities demo: a per-position
+  (Left/Center/Right) readout of the last `ButtonEvent` — `tap` / `tap x2…` /
+  `HELD (long)` — so multi-tap count and long-press are legible, identical on
+  Fire27 buttons and CoreS3 touch.
 
 ## [0.3.1]
 

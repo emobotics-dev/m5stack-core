@@ -11,10 +11,10 @@
 
 extern crate alloc;
 
-use demos::board::{self, NAME};
+use common::{STRIP_BYTES, draw_demo, draw_panel};
+use demos::board::{self, ButtonAction, ButtonId, INPUT_KIND, NAME};
 use demos::shim;
 use embassy_executor::Spawner;
-use common::{STRIP_BYTES, draw_demo, draw_status};
 use static_cell::make_static;
 
 // Per-board panic handler + logger backend. Fire27: esp-backtrace over the UART
@@ -49,29 +49,48 @@ async fn main(_spawner: Spawner) {
     let (mut display, _i2c) = board::init_display(board.spi2, board.i2c0).await;
 
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
-    draw_demo(&mut display, &mut strip_buf[..], NAME, &["display demo"]).await;
+    draw_demo(&mut display, &mut strip_buf[..], NAME, &[INPUT_KIND]).await;
 
     #[cfg(feature = "fire27")]
     let mut input = board::Input::new(board.buttons);
     #[cfg(feature = "cores3")]
     let mut input = board::Input::new(_i2c);
 
-    let title = alloc::format!("{} input", NAME);
-    draw_status(
-        &mut display,
-        &mut strip_buf[..],
-        &["m5stack-core demo", &title, "", "last event:", "(waiting)"],
-    )
-    .await;
+    // Last action seen on each of the three positions. The point of the demo is
+    // that a single tap, a multi-tap (`x2`/`x3`/…), and a long press are all
+    // distinct `ButtonEvent`s — identical on Fire27 buttons and CoreS3 touch.
+    let mut slots: [alloc::string::String; 3] =
+        core::array::from_fn(|_| alloc::string::String::from("idle"));
+    render(&mut display, &mut strip_buf[..], &slots).await;
+
     loop {
         let ev = input.next_event().await;
-        log::info!("button: {:?} {:?}", ev.id, ev.action);
-        let last = alloc::format!("{:?}: {:?}", ev.id, ev.action);
-        draw_status(
-            &mut display,
-            &mut strip_buf[..],
-            &["m5stack-core demo", &title, "", "last event:", &last],
-        )
-        .await;
+        log::info!("input: {:?} {:?}", ev.id, ev.action);
+        let action = match ev.action {
+            ButtonAction::Short(1) => alloc::string::String::from("tap"),
+            ButtonAction::Short(n) => alloc::format!("tap x{}", n),
+            ButtonAction::Long => alloc::string::String::from("HELD (long)"),
+        };
+        slots[match ev.id {
+            ButtonId::Left => 0,
+            ButtonId::Center => 1,
+            ButtonId::Right => 2,
+        }] = action;
+        render(&mut display, &mut strip_buf[..], &slots).await;
     }
+}
+
+/// Render the three-position last-action readout through the shared panel.
+async fn render(display: &mut board::Lcd, strip_buf: &mut [u8], slots: &[alloc::string::String; 3]) {
+    let l = alloc::format!("Left  : {}", slots[0]);
+    let c = alloc::format!("Center: {}", slots[1]);
+    let r = alloc::format!("Right : {}", slots[2]);
+    draw_panel(
+        display,
+        strip_buf,
+        NAME,
+        INPUT_KIND,
+        &["tap / multi-tap / hold:", "", &l, &c, &r],
+    )
+    .await;
 }
