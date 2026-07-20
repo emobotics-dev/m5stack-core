@@ -9,27 +9,24 @@
 //!
 //! # Bring-up sequence (application side)
 //!
+//! The recommended path is [`Spi2Parts::finish_sd`]: the BSP owns the ≥74-clock
+//! SD power-up idle and hands back a pre-initialised, presence-resolved
+//! [`PreparedCard`]. The app supplies only its SD driver plus retry/degrade
+//! policy — no board detail, no pre-init loop:
+//!
 //! ```ignore
 //! let (mut parts, card_cs) = board.spi2.into_parts(dma_rx_buf, dma_tx_buf)?;
-//! // Optionally wrap card_cs (e.g. a HIL "no SD card" kill-switch).
-//! let mut card_cs = card_cs;
-//! // SD pre-init: cards need >= 74 clock cycles without CS asserted. MUST be
-//! // bounded — a dead/absent card must never block the display bring-up:
-//! let mut sd_pre_ok = false;
-//! for attempt in 0..5 {
-//!     match sdspi::sd_init(&mut parts.bus, &mut card_cs).await {
-//!         Ok(_) => { sd_pre_ok = true; break; }
-//!         Err(e) => { warn!("sd_init attempt {}: {:?}", attempt, e);
-//!                     Timer::after_millis(10).await; }
-//!     }
-//! }
-//! // Display comes up UNCONDITIONALLY — it must work even with a dead card:
-//! let (display, card_device) = parts.finish(card_cs).await?;
-//! if sd_pre_ok {
-//!     let mut sd = SdSpi::new(card_device, Delay);
-//!     // bounded init retries, then raise the device clock via set_config
-//! }
+//! // Display comes up UNCONDITIONALLY (works even with a dead/absent card).
+//! // `CardPresence::ForceAbsent` reaches the SD-absent path with a card in slot.
+//! let (display, prepared) = parts.finish_sd(card_cs, CardPresence::Detect).await?;
+//! let mut sd = SdSpi::new(prepared.into_inner());
+//! // bounded init retries; on failure, degrade (SD absent). Both real-absent
+//! // and ForceAbsent fail here, on the same single degrade path.
 //! ```
+//!
+//! The lower-level [`Spi2Parts::finish`] primitive (no pre-init, plain generic
+//! `card_cs`) remains for callers that drive the exclusive `bus` themselves
+//! before sharing it.
 //!
 //! # CoreS3: GPIO35 is shared between SPI2 MISO and display DC
 //!
@@ -195,6 +192,7 @@ pub use devices::*;
 mod devices {
     use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
     use embassy_sync::mutex::Mutex;
+    use embedded_hal::digital::{ErrorType, OutputPin};
     use esp_hal::{
         dma::{DmaRxBuf, DmaTxBuf},
         gpio::{Level, Output, OutputConfig},
@@ -211,6 +209,73 @@ mod devices {
     pub type SpiDeviceType<'a> = SpiDeviceWithConfig<'a, RawMutex, SpiBusType, Output<'a>>;
     /// The SD-card device: CS is generic so the app can wrap it.
     pub type CardSpiDevice<CS> = SpiDeviceWithConfig<'static, RawMutex, SpiBusType, CS>;
+
+    /// Whether the SD slot should behave as populated or be forced to degrade.
+    ///
+    /// `ForceAbsent` is a general force-degrade capability, **not** a HIL word:
+    /// it makes the card device behave as an empty slot (chip-select never
+    /// asserts), so the app's real `SdSpi::init()` runs and fails *authentically*
+    /// — reaching the same graceful-degrade path as a physically empty slot,
+    /// with a card inserted. Any HIL arming (an RTC one-shot, a `:nosd` verb)
+    /// stays consumer-side; nothing HIL leaks into this surface.
+    #[non_exhaustive]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum CardPresence {
+        /// Drive the chip-select normally: a real card initialises; an empty
+        /// slot degrades on its own.
+        Detect,
+        /// Freeze the chip-select deasserted so the card is never selected —
+        /// `SdSpi::init()` then fails exactly like an empty slot.
+        ForceAbsent,
+    }
+
+    /// Chip-select wrapper that can freeze the card *deasserted* to force the
+    /// absent-card path (see [`CardPresence::ForceAbsent`]).
+    ///
+    /// SD chip-select is active-low, so `set_low` selects: when `frozen` it is
+    /// suppressed (the card is never selected → MISO idles `0xFF` → authentic
+    /// init failure), while `set_high` (deselect) is always honoured. It is
+    /// carried *inside* [`PreparedCard`] because the freeze only bites where the
+    /// CS is first **asserted** — downstream in the app's `SdSpi::init()` CMD0,
+    /// not the CS-deasserted 74-clock pre-init. A single runtime-flag type (not
+    /// a type-level marker) keeps [`Spi2Parts::finish_sd`] monomorphic across a
+    /// runtime [`CardPresence`].
+    pub struct PresenceCs<CS> {
+        pin: CS,
+        frozen: bool,
+    }
+
+    impl<CS: ErrorType> ErrorType for PresenceCs<CS> {
+        type Error = CS::Error;
+    }
+
+    impl<CS: OutputPin> OutputPin for PresenceCs<CS> {
+        fn set_low(&mut self) -> Result<(), Self::Error> {
+            if self.frozen {
+                Ok(()) // suppress SELECT while forced-absent
+            } else {
+                self.pin.set_low()
+            }
+        }
+
+        fn set_high(&mut self) -> Result<(), Self::Error> {
+            self.pin.set_high() // deselect is always honoured
+        }
+    }
+
+    /// A card device on the shared SPI2 bus, pre-initialised by
+    /// [`Spi2Parts::finish_sd`] (the ≥74-clock power-up idle has run) and
+    /// presence-resolved. The BSP owns everything up to here with no SD-driver
+    /// type in its graph; the app supplies only its SD driver:
+    /// `SdSpi::new(prepared.into_inner())`.
+    pub struct PreparedCard<CS>(CardSpiDevice<PresenceCs<CS>>);
+
+    impl<CS> PreparedCard<CS> {
+        /// The presence-resolved card `SpiDevice`, ready for the app's SD driver.
+        pub fn into_inner(self) -> CardSpiDevice<PresenceCs<CS>> {
+            self.0
+        }
+    }
 
     #[cfg(feature = "cores3")]
     pub type DisplayInterface =
@@ -323,6 +388,51 @@ mod devices {
 
             let card_device = SpiDeviceWithConfig::new(bus, card_cs, sd_init_config());
             Ok((driver, card_device))
+        }
+
+        /// Publish-safe full SD bring-up, layered on [`finish`].
+        ///
+        /// Runs the mandatory ≥74-clock power-up idle on the still-exclusive
+        /// bus (chip-select deasserted), brings the display up unconditionally
+        /// (see [`finish`]), and hands back a presence-resolved
+        /// [`PreparedCard`]. The app owns only the final
+        /// `SdSpi::new(prepared.into_inner()).init()` plus its retry/degrade
+        /// policy — no SD-driver type enters the BSP graph.
+        ///
+        /// [`CardPresence::ForceAbsent`] reaches the app's normal SD-absent
+        /// degrade path with a card inserted: the freeze takes effect at the
+        /// first CS assert inside `SdSpi::init()`, so real-absent and
+        /// forced-absent share one degrade path.
+        pub async fn finish_sd<CS>(
+            mut self,
+            card_cs: CS,
+            presence: CardPresence,
+        ) -> Result<(DisplayDriver, PreparedCard<CS>), DisplayInitError>
+        where
+            CS: OutputPin,
+        {
+            // ≥74 clock cycles with CS deasserted (card_cs starts High) and DI
+            // high — the SD power-up idle, per the SD-SPI spec. Done on the
+            // still-exclusive bus before `finish` shares it; presence-independent
+            // (the freeze only bites at the first CS assert, downstream). Not
+            // via `sdspi::sd_init` — that fork must not enter the BSP graph.
+            //
+            // `SpiDmaBus::write` here is the inherent BLOCKING method: it returns
+            // `Result`, not a `Future`, and drives the DMA transfer to completion
+            // (~200 µs at 400 kHz for this one-time idle). Load-bearing: if `bus`
+            // ever becomes a type whose `write` yields a future, this must be
+            // `.await`ed or the idle would silently never run. HIL-validated on
+            // both GDMA (CoreS3) and PDMA (Fire27) — the 10-byte / 80-clock write
+            // does not wedge the ESP32 PDMA TX path.
+            if let Err(e) = self.bus.write(&[0xFF; 10]) {
+                warn!("SD power-up idle clock failed: {e:?}");
+            }
+            let card_cs = PresenceCs {
+                pin: card_cs,
+                frozen: matches!(presence, CardPresence::ForceAbsent),
+            };
+            let (driver, card_device) = self.finish(card_cs).await?;
+            Ok((driver, PreparedCard(card_device)))
         }
     }
 

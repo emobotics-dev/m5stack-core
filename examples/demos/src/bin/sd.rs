@@ -30,6 +30,7 @@ use esp_hal::{
     spi::{Mode, master::Config as SpiConfig},
     time::Rate,
 };
+use m5stack_core::board::spi2::CardPresence;
 use static_cell::make_static;
 
 // Panic handler + log/console transport come from the BSP (the panic-handler +
@@ -38,6 +39,10 @@ m5stack_core::app_desc!();
 
 /// Bounded SD-init attempts — a dead/absent card must never hang the demo.
 const SD_RETRIES: u32 = 5;
+
+/// Card presence handed to `finish_sd`. Flip to `ForceAbsent` to exercise the
+/// SD-absent degrade path with a card physically inserted (HIL `:nosd`).
+const PRESENCE: CardPresence = CardPresence::Detect;
 
 /// Peek sector 0 and, if it is an MBR, return the `(start_lba, sector_count)` of
 /// the first FAT partition. Returns `None` for a card with no MBR partition
@@ -119,34 +124,23 @@ async fn main(spawner: Spawner) {
     let dma_rx = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("DMA rx");
     let dma_tx = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("DMA tx");
 
-    let (mut parts, mut card_cs) = board.spi2.into_parts(dma_rx, dma_tx).expect("SPI2 parts");
+    let (parts, card_cs) = board.spi2.into_parts(dma_rx, dma_tx).expect("SPI2 parts");
 
-    // SD pre-init: >=74 clocks with CS deasserted. Bounded — the display must
-    // come up even with no card.
-    let mut pre_ok = false;
-    for attempt in 0..SD_RETRIES {
-        match sdspi::sd_init(&mut parts.bus, &mut card_cs).await {
-            Ok(()) => {
-                pre_ok = true;
-                break;
-            }
-            Err(e) => {
-                log::warn!("sd_init attempt {}: {:?}", attempt, e);
-                Timer::after_millis(10).await;
-            }
-        }
-    }
-
-    // Display comes up unconditionally (CoreS3: GPIO35 is re-muxed to MISO here).
-    let (mut driver, card_device) = parts.finish(card_cs).await.expect("display init");
+    // The BSP owns SD bring-up: `finish_sd` runs the >=74-clock power-up idle on
+    // the exclusive bus, brings the display up unconditionally (CoreS3: GPIO35 is
+    // re-muxed to MISO here), and returns a presence-resolved card device. No
+    // manual pre-init loop; `PRESENCE` can force the absent path with a card in.
+    let (mut driver, prepared) =
+        parts.finish_sd(card_cs, PRESENCE).await.expect("display init");
 
     // Read-only `ls` into display lines (and the log). Done before any draw, so
     // GPIO35 stays MISO on CoreS3 for the whole SD I/O (no DC writes interleave).
     let mut lines: alloc::vec::Vec<String> = alloc::vec::Vec::new();
-    if !pre_ok {
-        lines.push("no card detected".to_string());
-    } else {
-        let mut sd = sdspi::SdSpi::<_, _, aligned::A1>::new(card_device, Delay);
+    {
+        // With `finish_sd`, the >=74-clock pre-init already ran in the BSP; a
+        // failed `sd.init()` is now the sole SD-absent signal (real-absent and
+        // `ForceAbsent` both land here — one degrade path).
+        let mut sd = sdspi::SdSpi::<_, _, aligned::A1>::new(prepared.into_inner(), Delay);
         let mut init_ok = false;
         for attempt in 0..SD_RETRIES {
             if sd.init().await.is_ok() {
@@ -157,7 +151,7 @@ async fn main(spawner: Spawner) {
             Timer::after_millis(5).await;
         }
         if !init_ok {
-            lines.push("card init failed".to_string());
+            lines.push("no card / init failed".to_string());
         } else {
             // Raise the device clock from the 400 kHz init rate to a safe run rate.
             sd.spi().set_config(
