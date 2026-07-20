@@ -45,6 +45,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "psram_split"
+path = "src/bin/psram_split.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "onewire"
 path = "src/bin/onewire.rs"
 test = false
