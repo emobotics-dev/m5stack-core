@@ -4,6 +4,39 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-20
+
+Additive release — new BSP surfaces for SD bring-up, private PSRAM, and heap
+introspection. No breaking changes.
+
+### Added
+
+- **`board::spi2::finish_sd` — the BSP owns full SD bring-up** (#46). One call
+  runs the mandatory ≥74-clock SD power-up idle on the still-exclusive DMA bus,
+  brings the display up unconditionally, restores the CoreS3 GPIO35 MISO/DC mux,
+  and returns a presence-resolved `PreparedCard<CS>` — the app supplies only its
+  SD driver (`SdSpi::new(prepared.into_inner())`) plus retry/degrade policy, no
+  pre-init loop. `finish` remains the lower-level primitive.
+  - **`CardPresence { Detect, ForceAbsent }`** — a general force-degrade control
+    (no HIL vocabulary on the surface). `ForceAbsent` freezes the card
+    chip-select so `SdSpi::init()` fails authentically, reaching the same
+    absent-card degrade path with a card physically inserted.
+  - **`PresenceCs<CS>`** — the runtime frozen-CS `OutputPin` wrapper it carries
+    inside `PreparedCard`. Publish-safe: the idle uses `SpiDmaBus`'s inherent
+    write, not the (git-only) `sdspi` fork.
+- **`mem::psram_split(psram, reserve)` — private PSRAM region** (#47). Split
+  *mapping* PSRAM from *registering* it globally: carve a private, exclusive,
+  contiguous region for a foreign allocator (e.g. LVGL's TLSF via
+  `lv_mem_add_pool`) and register the remainder with the global heap. Returns
+  `Result<PsramSplit, PsramSplitError>` with
+  `PsramSplit { private: &'static mut [MaybeUninit<u8>], global_free }`;
+  carve-from-base (large-aligned, no `unsafe` at the call site), `reserve: None`
+  = all-private. `PsramSplitError::{NotMapped, TooSmall { available }}`.
+  `init_psram_heap` is unchanged and kept alongside.
+- **`mem::internal_free()` / `mem::external_free()`** (#49) — `O(1)`
+  heap-headroom readouts (global internal-DRAM / external-PSRAM free bytes)
+  without a binary spelling out `esp_alloc`.
+
 ## [0.4.0] - 2026-06-14
 
 BSP code absorbed from the `alternator-regulator` application (its `altreg-*`
