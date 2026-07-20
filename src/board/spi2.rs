@@ -416,9 +416,17 @@ mod devices {
             // still-exclusive bus before `finish` shares it; presence-independent
             // (the freeze only bites at the first CS assert, downstream). Not
             // via `sdspi::sd_init` — that fork must not enter the BSP graph.
-            // `SpiDmaBus`'s inherent blocking write drives the DMA transfer to
-            // completion; ~200 µs at 400 kHz for a one-time bring-up idle.
-            let _ = self.bus.write(&[0xFF; 10]);
+            //
+            // `SpiDmaBus::write` here is the inherent BLOCKING method: it returns
+            // `Result`, not a `Future`, and drives the DMA transfer to completion
+            // (~200 µs at 400 kHz for this one-time idle). Load-bearing: if `bus`
+            // ever becomes a type whose `write` yields a future, this must be
+            // `.await`ed or the idle would silently never run. HIL-validated on
+            // both GDMA (CoreS3) and PDMA (Fire27) — the 10-byte / 80-clock write
+            // does not wedge the ESP32 PDMA TX path.
+            if let Err(e) = self.bus.write(&[0xFF; 10]) {
+                warn!("SD power-up idle clock failed: {e:?}");
+            }
             let card_cs = PresenceCs {
                 pin: card_cs,
                 frozen: matches!(presence, CardPresence::ForceAbsent),
