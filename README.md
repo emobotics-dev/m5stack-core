@@ -171,9 +171,17 @@ backstop for a fully wedged executor.
 - `board::display` (feature `display`) — ILI9342C panel init shared by both
   boards; `board::spi2` — the shared display+SD bus with the bring-up ordering
   encoded (display first, bounded SD attempts, CoreS3 GPIO35 MISO/DC re-mux).
-  The SD-card *driver* (`sdspi`) stays an application dependency until it is
-  published on crates.io; see the `board::spi2` module docs for the wiring
-  pattern.
+  - `Spi2Parts::finish_sd(card_cs, presence)` is the one-call SD bring-up: it
+    runs the mandatory ≥74-clock SD power-up idle on the still-exclusive bus,
+    brings the display up unconditionally, and returns a presence-resolved
+    `PreparedCard<CS>` — the app supplies only its SD driver
+    (`SdSpi::new(prepared.into_inner())`) plus retry/degrade policy. `finish`
+    remains the lower-level primitive. `CardPresence::{Detect, ForceAbsent}`
+    forces the absent-card degrade path with a card physically inserted (HIL),
+    via the `PresenceCs<CS>` frozen chip-select carried inside `PreparedCard`.
+  - The SD-card *driver* (`sdspi`) stays an application dependency until it is
+    published on crates.io; see the `board::spi2` module docs for the wiring
+    pattern.
 - `board::cores3::power_display_reset` — AW9523B LCD/touch reset pulses +
   AXP2101 backlight rail over the shared I2C bus.
 
@@ -211,6 +219,27 @@ let dma = mem::dma_buffer(4 * 1024);             // in internal DRAM; DMA-safe
 The raw markers `ExternalMemory` / `InternalMemory` are still re-exported for
 direct `allocator_api2` use, but they skip the atomic check — use them only when
 you know what's going into PSRAM.
+
+For a **private** PSRAM region — one to hand to a *foreign* allocator (e.g.
+LVGL's built-in TLSF via `lv_mem_add_pool`) rather than the shared global heap —
+use `mem::psram_split`, which splits *mapping* from *registering*:
+
+```rust
+use m5stack_core::mem;
+
+// Carve 512 KiB private off the base; register the remainder with the global heap.
+let split = mem::psram_split(peripherals.PSRAM, Some(512 * 1024))?;
+// `split.private: &'static mut [MaybeUninit<u8>]` — no unsafe at the call site,
+// base is large-aligned. `split.global_free` = external bytes now in the heap.
+```
+
+`reserve: None` makes the whole region private (nothing global); it returns
+`Result<PsramSplit, PsramSplitError>` (`NotMapped`, or `TooSmall { available }`).
+`init_psram_heap` (map + register all-global) is unchanged and kept alongside.
+
+For headroom checks, `mem::internal_free()` / `mem::external_free()` return the
+global heap's free internal-DRAM / external-PSRAM bytes (`O(1)`) without a binary
+touching `esp_alloc`.
 
 The three hardware caveats are now mostly **enforced** rather than just
 documented:
@@ -325,7 +354,7 @@ Notes on building:
   without `--bin coex` hits it, which is why the coex bin is always built alone.
 - **The `sd` bin** is gated by `--features sd` (it pulls the `sdspi` +
   `embedded-fatfs` fork, which isn't on crates.io, so it's example-only). It's
-  the one demo that exercises `board::spi2::finish()` — the display + SD shared
+  the one demo that exercises `board::spi2::finish_sd` — the display + SD shared
   bus, including the CoreS3 GPIO35 MISO/DC mux. It mounts **read-only** (never
   writes, so it won't touch existing logs) and handles both MBR-partitioned
   cards (mounts the first FAT partition via a `StreamSlice`) and superfloppies
