@@ -44,6 +44,14 @@ const SD_RETRIES: u32 = 5;
 /// SD-absent degrade path with a card physically inserted (HIL `:nosd`).
 const PRESENCE: CardPresence = CardPresence::Detect;
 
+/// Show the FAT free-space line (`free X / Y KiB`). **Off by default:** on a card
+/// whose FSInfo free-cluster hint is absent/invalid, `fs.stats()` falls back to
+/// `recalc_free_clusters` — a full-FAT scan, O(card size). On a 16 GB card over
+/// SPI that is tens of seconds to minutes (it *looks* like a mount hang; see
+/// #50). Mounting and listing the root do **not** pay this cost; only the
+/// free-space count does. Turn on only when you accept the scan time.
+const SHOW_FREE_SPACE: bool = false;
+
 /// Peek sector 0 and, if it is an MBR, return the `(start_lba, sector_count)` of
 /// the first FAT partition. Returns `None` for a card with no MBR partition
 /// table (a "superfloppy" with the FAT volume at sector 0), which the caller
@@ -182,6 +190,9 @@ async fn main(spawner: Spawner) {
             };
             // `StreamSlice::new` seeks the inner stream to `start`, which also
             // rewinds the position we moved while peeking sector 0.
+            // Per-step logs (the console timestamps each line) show where the time
+            // goes — mount vs the optional free-space scan vs the root listing.
+            log::info!("[sd] mounting FAT volume...");
             match block_device_adapters::StreamSlice::new(bs, start, end).await {
                 Ok(slice) => match embedded_fatfs::FileSystem::new(
                     slice,
@@ -190,15 +201,25 @@ async fn main(spawner: Spawner) {
                 .await
                 {
                     Ok(fs) => {
-                        if let Ok(stats) = fs.stats().await {
-                            let kib = |c: u32| (c as u64 * stats.cluster_size() as u64) / 1024;
-                            lines.push(format!(
-                                "free {} / {} KiB",
-                                kib(stats.free_clusters()),
-                                kib(stats.total_clusters())
-                            ));
+                        log::info!("[sd] mounted");
+                        // Gated: `fs.stats()` may trigger a full-FAT scan on a big
+                        // card (see SHOW_FREE_SPACE / #50). Mount + root listing
+                        // below are cheap regardless.
+                        if SHOW_FREE_SPACE {
+                            log::info!("[sd] counting free clusters (may scan the whole FAT)...");
+                            if let Ok(stats) = fs.stats().await {
+                                let kib =
+                                    |c: u32| (c as u64 * stats.cluster_size() as u64) / 1024;
+                                lines.push(format!(
+                                    "free {} / {} KiB",
+                                    kib(stats.free_clusters()),
+                                    kib(stats.total_clusters())
+                                ));
+                                log::info!("[sd] free-cluster count done");
+                            }
                         }
                         lines.push("root:".to_string());
+                        log::info!("[sd] listing root...");
                         // Scope the dir iterator (it borrows `fs`) so it is dropped
                         // before `fs.unmount()` moves `fs`.
                         {
