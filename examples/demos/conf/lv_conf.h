@@ -124,7 +124,12 @@
 #define LV_USE_ASSERT_OBJ           0
 
 #define LV_ASSERT_HANDLER_INCLUDE <stdint.h>
-#define LV_ASSERT_HANDLER while(1);   /*Halt by default*/
+/* Route assertions through the Rust panic handler (a loud [PANIC] — esp-backtrace
+ * + halt, RWDT recovers) instead of the default silent `while(1);` spin. See #57.
+ * The symbol is defined in the lvgl demo bin (demos_lv_assert_handler); oxivgl
+ * 0.5.0 provides no assert handler of its own. */
+void demos_lv_assert_handler(void);
+#define LV_ASSERT_HANDLER demos_lv_assert_handler();
 
 /*-------------
  * Debug

@@ -28,6 +28,21 @@ use static_cell::make_static;
 // console-serial features); the app descriptor is the one line the binary keeps.
 m5stack_core::app_desc!();
 
+/// Route an LVGL assertion (a failed `lv_malloc`, a NULL object, a corrupt style)
+/// through the Rust `#[panic_handler]` — a loud `[PANIC]` (esp-backtrace + halt,
+/// RWDT recovers) instead of LVGL's default `LV_ASSERT_HANDLER while(1);`, which
+/// spins the LVGL task forever with no message, no backtrace and no reset (#57).
+/// LVGL emits `LV_LOG_ERROR` with the failing expression/file/line immediately
+/// before calling this, so the diagnosis lands directly above the panic.
+///
+/// `lv_conf.h` declares the prototype and points `LV_ASSERT_HANDLER` here. oxivgl
+/// 0.5.0 provides no such symbol, so the demo defines its own (name-spaced to
+/// avoid the unprefixed `lv_assert_handler` that other consumers export).
+#[unsafe(no_mangle)]
+pub extern "C" fn demos_lv_assert_handler() {
+    panic!("LVGL assertion failed — see the LV_LOG_ERROR line above (expr/file/line)");
+}
+
 /// Log internal-DRAM free once at start, then every 10 s with the delta from the
 /// first reading (drift). See #49.
 #[embassy_executor::task]

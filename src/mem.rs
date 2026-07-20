@@ -18,9 +18,9 @@
 //! mem::init_heap(HeapProfile::Lvgl, None);                  // DRAM only
 //! ```
 //!
-//! The PSRAM-specific surface below ([`init_psram_heap`], the checked
-//! [`psram_box`] / [`psram_vec`], [`PsramSafe`]) needs the `psram` feature; the
-//! heap regions and [`dma_buffer`] need only `heap`.
+//! The PSRAM-specific surface below ([`init_psram_heap`], [`psram_split`], the
+//! checked [`psram_box`] / [`psram_vec`], [`PsramSafe`]) needs the `psram`
+//! feature; the heap regions and [`dma_buffer`] need only `heap`.
 //!
 //! Both boards carry SPI PSRAM (Fire27: ~4 MB, CoreS3: ~8 MB). `esp-alloc`
 //! exposes a single global heap that can be backed by several regions;
@@ -33,6 +33,10 @@
 //! 2. **Explicitly** — pick the region per allocation. Prefer the *checked*
 //!    helpers [`psram_box`] / [`psram_vec`], which reject atomic-bearing types
 //!    at compile time (see [`PsramSafe`]):
+//!
+//! For a *private* region handed to a foreign allocator (not the global heap at
+//! all) — e.g. LVGL's TLSF — use [`psram_split`] instead, which carves a private
+//! slice off the base and registers only the remainder globally.
 //!
 //! ```ignore
 //! use m5stack_core::mem;
