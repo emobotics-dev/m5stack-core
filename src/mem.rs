@@ -170,6 +170,20 @@ pub struct PsramSplit {
     pub global_free: usize,
 }
 
+// `private` is a `&'static mut` to uninit memory, so `PsramSplit` cannot derive
+// `Debug`; a manual impl prints the base/len/free a consumer wants when bringing
+// this up on a new board (`log::info!("{:?}", split)`).
+#[cfg(feature = "psram")]
+impl core::fmt::Debug for PsramSplit {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PsramSplit")
+            .field("private_base", &self.private.as_ptr())
+            .field("private_len", &self.private.len())
+            .field("global_free", &self.global_free)
+            .finish()
+    }
+}
+
 /// Why [`psram_split`] could not satisfy the request.
 #[cfg(feature = "psram")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,9 +209,19 @@ pub enum PsramSplitError {
 /// - `reserve: Some(n)` carves `n` bytes private from the base and registers the
 ///   remainder globally. `reserve: None` makes the whole region private (nothing
 ///   is added to the global heap; [`PsramSplit::global_free`] is `0`).
+///   `reserve: Some(0)` is the mirror image: an empty [`PsramSplit::private`]
+///   slice and *all* PSRAM registered globally — i.e. it degenerates to what
+///   [`init_psram_heap`] does. Sound (a zero-length slice grants access to
+///   nothing) but rarely what you want.
 /// - The private region is carved **from the base**, so [`PsramSplit::private`]
 ///   starts at the (large-aligned) PSRAM mapping base — aligned for LVGL's TLSF
 ///   with no math; esp-alloc aligns the remainder's base internally.
+/// - This primitive controls *placement* (the private/global split). The PSRAM
+///   **hardware** mapping uses the default [`esp_hal::psram`] config, which
+///   auto-detects size — the board-correct choice for both boards. A
+///   `psram_split_with(config)` variant is a non-breaking addition if a consumer
+///   ever needs a custom `PsramConfig` (a fixed `PsramSize`, say); no current
+///   one does.
 ///
 /// Call once, after [`esp_hal::init`], **instead of** passing `Some(psram)` to
 /// [`init_heap`] or calling [`init_psram_heap`]: taking `PSRAM<'static>` by value
@@ -241,7 +265,10 @@ pub fn psram_split(
     // SAFETY: `base` is the exclusively-owned, `'static` PSRAM mapping (once-only,
     // guaranteed by consuming `PSRAM<'static>` by value). This sub-range is handed
     // out privately and is never registered with the global heap, so no aliasing.
-    // `MaybeUninit<u8>` has align 1, and `reserve <= total <= isize::MAX`.
+    // `MaybeUninit<u8>` has align 1, and `reserve <= total <= isize::MAX`. When
+    // `reserve == 0` the slice is empty: its base pointer lies inside the region
+    // that *is* registered globally below, but a zero-length slice dereferences
+    // nothing, so it still aliases nothing.
     let private =
         unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, reserve) };
 
