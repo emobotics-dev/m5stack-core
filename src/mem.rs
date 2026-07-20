@@ -356,6 +356,20 @@ pub fn psram_vec<T: PsramSafe>(capacity: usize) -> Vec<T, ExternalMemory> {
     Vec::with_capacity_in(capacity, ExternalMemory)
 }
 
+/// Free bytes in the global heap's **internal** DRAM regions (reclaimed-ROM +
+/// plain-DRAM), right now. The tight resource on both boards; use it to measure
+/// headroom (e.g. before/after moving a subsystem's heap to PSRAM).
+pub fn internal_free() -> usize {
+    esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into())
+}
+
+/// Free bytes in the global heap's **external** (PSRAM) region, right now — `0`
+/// unless PSRAM was registered globally (via [`init_heap`] with `Some(psram)` /
+/// [`init_psram_heap`]; a private [`psram_split`] region is *not* counted here).
+pub fn external_free() -> usize {
+    esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into())
+}
+
 /// A zeroed byte buffer in internal DRAM, suitable as a DMA buffer.
 ///
 /// Convenience for the common "I need a DMA-capable scratch buffer" case so the

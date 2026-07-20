@@ -17,6 +17,7 @@ use demos::board;
 use demos::shim;
 use demos::ui::{self, DisplayDriver, LVGL_BUF_BYTES, MenuView, SCREEN_H, SCREEN_W};
 use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
 use esp_hal::interrupt::Priority;
 use esp_rtos::embassy::InterruptExecutor;
 use oxivgl::display::LvglBuffers;
@@ -26,6 +27,26 @@ use static_cell::make_static;
 // Panic handler + log/console transport come from the BSP (the panic-handler +
 // console-serial features); the app descriptor is the one line the binary keeps.
 m5stack_core::app_desc!();
+
+/// Log internal-DRAM free once at start, then every 10 s with the delta from the
+/// first reading (drift). See #49.
+#[embassy_executor::task]
+async fn heap_stats_task() {
+    let base = m5stack_core::mem::internal_free();
+    log::info!("[heap] internal free baseline: {} B", base);
+    let mut n = 0u32;
+    loop {
+        Timer::after(Duration::from_secs(10)).await;
+        n += 1;
+        let now = m5stack_core::mem::internal_free();
+        log::info!(
+            "[heap] t={}s internal free: {} B (drift {} B)",
+            n * 10,
+            now,
+            now as i32 - base as i32,
+        );
+    }
+}
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -60,6 +81,12 @@ async fn main(spawner: Spawner) {
     let int_exec = make_static!(InterruptExecutor::new(board.system.sw_int.software_interrupt1));
     let hi_spawner = int_exec.start(Priority::min());
     hi_spawner.spawn(ui::flush_task(driver).expect("spawn flush task"));
+
+    // #49 instrumentation: log internal-DRAM free periodically so the
+    // LVGL-on-internal-DRAM baseline (and its steady-state drift) can be read off
+    // HIL. This is the "before" half of the psram_split A/B; the "after" needs
+    // oxivgl `reserve_pool` to move LVGL's heap off internal DRAM.
+    spawner.spawn(heap_stats_task().expect("spawn heap stats task"));
 
     // Both boards: decode the front-panel buttons → LVGL keys (keypad indev).
     // On CoreS3 these are the bottom-strip keys via the BSP button API.
