@@ -69,6 +69,8 @@ use esp_hal::ram;
 
 #[cfg(feature = "psram")]
 use allocator_api2::boxed::Box;
+#[cfg(feature = "psram")]
+use core::mem::MaybeUninit;
 
 /// Heap size profile — selects the HIL-proven per-board DRAM region sizes for a
 /// workload. The BSP owns the sizes so every binary gets the validated values;
@@ -145,6 +147,126 @@ pub fn init_psram_heap(psram: PSRAM<'static>) -> usize {
     let free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into());
     info!("PSRAM heap registered: {} KiB external free", free / 1024);
     free
+}
+
+/// A private PSRAM region carved off the global heap, plus the external bytes
+/// registered with the global heap. Returned by [`psram_split`].
+#[cfg(feature = "psram")]
+pub struct PsramSplit {
+    /// A private, exclusive, contiguous PSRAM region for a *foreign* allocator
+    /// (e.g. LVGL's built-in TLSF via `lv_mem_add_pool`). It is **not** part of
+    /// the global heap, so the global allocator never hands it to `Box` / `Vec`
+    /// / DMA. Its base is the PSRAM mapping base, so it is large-aligned (≥ any
+    /// reasonable `ALIGN_SIZE`) — the caller needs no alignment math and no
+    /// `unsafe`.
+    ///
+    /// `'static` is sound because esp-hal's `Psram` has no `Drop`: the mapping is
+    /// a hardware side effect recorded in esp-hal's range statics and is *not*
+    /// undone when the `Psram` value drops.
+    pub private: &'static mut [MaybeUninit<u8>],
+    /// External (PSRAM) heap free immediately after registering the remainder
+    /// with the global heap, in bytes. `0` when `reserve` was `None` (all
+    /// private, nothing registered).
+    pub global_free: usize,
+}
+
+/// Why [`psram_split`] could not satisfy the request.
+#[cfg(feature = "psram")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsramSplitError {
+    /// PSRAM did not map — `esp_hal::psram::init_psram` failed, or the board has
+    /// none. Nothing was registered with the global heap.
+    NotMapped,
+    /// PSRAM mapped, but smaller than the requested `reserve`. `available` is the
+    /// total mapped size, so the caller can retry with a smaller pool without
+    /// re-querying — the `PSRAM` peripheral was consumed by value.
+    TooSmall { available: usize },
+}
+
+/// Map the board's external PSRAM, carve a **private** region off the base, and
+/// register the remainder with the global heap.
+///
+/// The split-out counterpart of [`init_psram_heap`] (which maps *and* registers
+/// the whole region globally in one step). Reach for `psram_split` when a
+/// consumer needs a private, exclusive, contiguous PSRAM region to hand to a
+/// *foreign* allocator — LVGL's built-in TLSF via `lv_mem_add_pool` — rather than
+/// routing those allocations through the shared global allocator.
+///
+/// - `reserve: Some(n)` carves `n` bytes private from the base and registers the
+///   remainder globally. `reserve: None` makes the whole region private (nothing
+///   is added to the global heap; [`PsramSplit::global_free`] is `0`).
+/// - The private region is carved **from the base**, so [`PsramSplit::private`]
+///   starts at the (large-aligned) PSRAM mapping base — aligned for LVGL's TLSF
+///   with no math; esp-alloc aligns the remainder's base internally.
+///
+/// Call once, after [`esp_hal::init`], **instead of** passing `Some(psram)` to
+/// [`init_heap`] or calling [`init_psram_heap`]: taking `PSRAM<'static>` by value
+/// makes the once-only mapping a type-level guarantee, so the two cannot both run.
+///
+/// # Caveats handed back to the caller
+/// - **No atomics in the private region.** The checked [`psram_box`] /
+///   [`psram_vec`] cannot guard a foreign allocator, so keeping `Atomic*` out of
+///   whatever is placed here is the caller's responsibility (holds for LVGL while
+///   `LV_USE_OS` is `LV_OS_NONE`). See [`PsramSafe`].
+/// - **DMA.** The ESP32 (Fire27) cannot DMA to/from PSRAM at all; the ESP32-S3
+///   can but slowly. A foreign allocator must not place DMA'd buffers here. See
+///   [`assert_dma_capable`] / [`dma_buffer`].
+///
+/// # Errors
+/// [`PsramSplitError::NotMapped`] if PSRAM does not map; [`PsramSplitError::TooSmall`]
+/// if it maps smaller than `reserve`.
+#[cfg(feature = "psram")]
+pub fn psram_split(
+    psram: PSRAM<'static>,
+    reserve: Option<usize>,
+) -> Result<PsramSplit, PsramSplitError> {
+    // `Psram` has no `Drop`: the mapping is recorded in esp-hal's range statics
+    // and survives the value dropping (see `PsramSplit::private`), so a local is
+    // fine — nothing unmaps at the end of this block.
+    let psram = esp_hal::psram::Psram::new(psram, Default::default());
+    let (base, total) = psram.raw_parts();
+
+    // `Psram::new` maps only if `init_psram` succeeded; on failure the range
+    // statics stay unset and `raw_parts` reports a zero-size region.
+    if total == 0 {
+        return Err(PsramSplitError::NotMapped);
+    }
+
+    let reserve = reserve.unwrap_or(total);
+    if reserve > total {
+        return Err(PsramSplitError::TooSmall { available: total });
+    }
+
+    // Carve `[base, base + reserve)` private.
+    // SAFETY: `base` is the exclusively-owned, `'static` PSRAM mapping (once-only,
+    // guaranteed by consuming `PSRAM<'static>` by value). This sub-range is handed
+    // out privately and is never registered with the global heap, so no aliasing.
+    // `MaybeUninit<u8>` has align 1, and `reserve <= total <= isize::MAX`.
+    let private =
+        unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, reserve) };
+
+    // Register the remainder `[base + reserve, base + total)` with the global heap.
+    let global_free = if reserve < total {
+        // SAFETY: disjoint from `private`, `'static`, exclusively the heap's, and
+        // `total - reserve > 0` here (so esp-alloc's `size > 0` precondition holds).
+        unsafe {
+            esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+                base.add(reserve),
+                total - reserve,
+                esp_alloc::MemoryCapability::External.into(),
+            ));
+        }
+        esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into())
+    } else {
+        0
+    };
+
+    info!(
+        "PSRAM split: {} KiB private, {} KiB external free (global)",
+        reserve / 1024,
+        global_free / 1024
+    );
+    Ok(PsramSplit { private, global_free })
 }
 
 /// Marker for types safe to store in PSRAM: nothing holding an *inline* atomic.
