@@ -30,6 +30,18 @@ No breaking changes.
     counterpart; `TouchButtons::new(i2c, TouchButtonsConfig::default())` and all
     existing config fields are unchanged.
 
+### Changed
+
+- **Dependencies tracked to latest** (only esp-hal 1.1.1 and its stack are
+  pinned): embassy-time 0.5.1, embassy-net 0.9.1, heapless 0.9.3,
+  embedded-graphics 0.8.2, lcd-async 0.1.3; examples' oxivgl → **0.6.1** /
+  oxivgl-sys → **0.2.4** (exact-pinned as a matched pair — 0.2.3+ adds
+  `oxivgl_render_scratch_*` C hooks whose Rust side is in oxivgl 0.6.x, so a
+  floating `^` drifts them apart and the lvgl example fails to link). Held back
+  by the esp stack: allocator-api2 0.3 (esp-alloc's `Allocator` impl),
+  trouble-host 0.6 (esp-radio bt-hci 0.8), and fixed 1.29 (embedded-graphics
+  `az ~1.2`).
+
 ## [0.4.1] - 2026-07-20
 
 Additive release — new BSP surfaces for SD bring-up, private PSRAM, and heap
