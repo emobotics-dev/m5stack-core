@@ -12,7 +12,7 @@
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::driver::ft6336u;
-use crate::io::buttons::{ButtonAction, ButtonEvent, ButtonId};
+use crate::io::buttons::{ButtonAction, ButtonEvent, ButtonId, ButtonTiming};
 use crate::io::shared_i2c::SharedI2cBus;
 
 pub struct TouchButtonsConfig {
@@ -20,7 +20,12 @@ pub struct TouchButtonsConfig {
     pub poll_ms: u64,
     /// Hold time before a press becomes [`ButtonAction::Long`].
     pub long_press_ms: u64,
-    /// Max gap between taps that still counts as a multi-tap.
+    /// Max gap between taps that still counts as a multi-tap. Set to `0` to
+    /// disable multi-tap counting entirely: each tap emits `Short(1)` on the next
+    /// poll after release (~`poll_ms`), with no counting delay — for
+    /// latency-sensitive input like an encoder (#58). See
+    /// [`with_timing`](Self::with_timing) /
+    /// [`ButtonTiming::immediate_single_press`] for the cross-driver preset.
     pub multi_tap_ms: u64,
     /// Zone strip: touches above this Y are ignored.
     pub zone_y_min: u16,
@@ -45,6 +50,21 @@ impl Default for TouchButtonsConfig {
     }
 }
 
+impl TouchButtonsConfig {
+    /// [`Default`] geometry/poll, but with the press-decoding timings taken from
+    /// the cross-driver [`ButtonTiming`] — the same type and presets the Fire27
+    /// physical buttons take (`ButtonResources::into_buttons_with_timing`, feature
+    /// `buttons`). Use [`ButtonTiming::immediate_single_press`] for instant
+    /// single-press input (an encoder).
+    pub fn with_timing(timing: ButtonTiming) -> Self {
+        Self {
+            long_press_ms: timing.long_press_ms,
+            multi_tap_ms: timing.multi_tap_ms,
+            ..Self::default()
+        }
+    }
+}
+
 /// The emulated three-button strip. Construct once, then await
 /// [`next_event`](Self::next_event) in a loop.
 pub struct TouchButtons {
@@ -63,6 +83,14 @@ pub struct TouchButtons {
 }
 
 impl TouchButtons {
+    /// Construct with the cross-driver [`ButtonTiming`] (default geometry/poll) —
+    /// the touch-side counterpart of `ButtonResources::into_buttons_with_timing`
+    /// (feature `buttons`). Shorthand for
+    /// `new(i2c, TouchButtonsConfig::with_timing(timing))`.
+    pub fn with_timing(i2c: &'static SharedI2cBus, timing: ButtonTiming) -> Self {
+        Self::new(i2c, TouchButtonsConfig::with_timing(timing))
+    }
+
     pub fn new(i2c: &'static SharedI2cBus, config: TouchButtonsConfig) -> Self {
         Self {
             i2c,

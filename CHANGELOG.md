@@ -4,6 +4,32 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Additive — one unified, cross-driver button-timing API so latency-sensitive
+input (encoders) can opt out of the multi-tap counting delay on either board.
+No breaking changes.
+
+### Added
+
+- **`io::buttons::ButtonTiming { long_press_ms, multi_tap_ms }`** (#58) — a
+  cross-driver press-decoding timing shared by both front-panel drivers, with
+  presets `ButtonTiming::multi_tap()` (count consecutive taps) and
+  `ButtonTiming::immediate_single_press()` (`multi_tap_ms: 0` → each press emits
+  `ButtonAction::Short(1)` the instant it debounces, no counting delay). Both
+  drivers count taps by default, adding the multi-tap window (~350 ms Fire27 /
+  300 ms CoreS3) to *every* single press — unusable for an encoder, where a
+  downstream accumulator sums immediate single presses into multi-step.
+  - **`ButtonResources::into_buttons_with_timing(timing)` (Fire27, feature
+    `buttons`)** — applies a `ButtonTiming`; the button timings were previously
+    hardcoded (`into_buttons()` remains, keeping async-button's defaults). `mode`
+    is forced to `PullUp` — the BSP owns the active-low wiring, the caller owns
+    only timings.
+  - **`TouchButtons::with_timing(i2c, timing)` /
+    `TouchButtonsConfig::with_timing(timing)` (CoreS3)** — the touch-side
+    counterpart; `TouchButtons::new(i2c, TouchButtonsConfig::default())` and all
+    existing config fields are unchanged.
+
 ## [0.4.1] - 2026-07-20
 
 Additive release — new BSP surfaces for SD bring-up, private PSRAM, and heap

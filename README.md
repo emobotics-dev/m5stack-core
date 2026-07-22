@@ -154,6 +154,22 @@ Short(taps)/Long }`, so an application maps input in one place for both boards:
   `next_event().await` — the FT6336U bottom strip split into three zones, with
   short/multi-tap/long-press detection.
 
+Both drivers count consecutive taps, which delays every single press by the
+multi-tap window (~350 ms Fire27 / 300 ms CoreS3). Latency-sensitive input (an
+encoder turn/click) wants each press *immediately*. The choice is one unified,
+cross-driver type — `io::buttons::ButtonTiming { long_press_ms, multi_tap_ms }`
+(`multi_tap_ms: 0` disables counting) — applied to either board the same way:
+
+- **Fire27**: `ButtonResources::into_buttons_with_timing(timing)`
+- **CoreS3**: `TouchButtons::with_timing(i2c, timing)` (or
+  `TouchButtonsConfig::with_timing(timing)`)
+
+with presets `ButtonTiming::multi_tap()` (count taps) and
+`ButtonTiming::immediate_single_press()` (instant). The legacy `into_buttons()`
+and `TouchButtons::new(i2c, TouchButtonsConfig::default())` keep each board's
+original timings. Counting still works downstream: an accumulator that sums
+immediate `Short(1)` events preserves "double-tap = 2 steps" without the delay.
+
 #### Watchdog (`io::watchdog`)
 
 `watchdog_feed_loop(rtc, timeout_secs, feed_every_secs)` arms the RWDT
