@@ -11,8 +11,8 @@ path = "src/lib.rs"
 
 # Chip-agnostic example helpers: no chip feature, no m5stack-core / esp-hal dep.
 [dependencies]
-embedded-graphics    = "0.8.1"
+embedded-graphics    = "0.8.2"
 embedded-hal         = "1.0.0"
 embedded-hal-async   = "1.0.0"
-heapless             = "0.9.1"
-lcd-async            = "0.1.1"
+heapless             = "0.9.3"
+lcd-async            = "0.1.3"
