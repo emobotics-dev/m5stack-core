@@ -5,7 +5,9 @@
 FROM ghcr.io/emobotics-dev/altreg-ci:latest AS esp-toolchain
 
 # Stage 2: claude-code base + flashing tools.
-FROM ghcr.io/emobotics-dev/claude-code:latest
+# registry:3000 is where CI publishes this image since the Forgejo migration;
+# the ghcr.io copy is frozen and would pin us to an old Claude Code.
+FROM registry:3000/emobotics/claude-code:latest
 
 USER root
 
