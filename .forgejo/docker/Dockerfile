@@ -14,6 +14,10 @@
 #   - cmake + libclang + pypng/lz4 for the `lvgl` example: oxivgl-sys runs bindgen
 #     and LVGL's LVGLImage.py (imports the `png`/`lz4` modules) to convert a
 #     bundled image asset.
+#   - python3-dev + libffi-dev: generic native-extension build headers so a
+#     consumer's `pip`/`poetry` can compile from-source Python packages (e.g.
+#     cffi/cryptography) when no prebuilt wheel matches — same completeness class
+#     as the pypng/lz4 tooling, not app-specific (see #5).
 #   - no Josev/JRE/poetry runtime — that is oxicharge-app-specific; a consumer
 #     needing it builds a thin layer FROM this image rather than bloating it here.
 #
@@ -29,7 +33,7 @@ RUN apt-get update -q && \
         git curl ca-certificates \
         build-essential pkg-config cmake \
         libclang-dev llvm \
-        python3 python3-venv python3-pip && \
+        python3 python3-venv python3-pip python3-dev libffi-dev && \
     pip3 install --break-system-packages --no-cache-dir pypng lz4 && \
     rm -rf /var/lib/apt/lists/*
 
