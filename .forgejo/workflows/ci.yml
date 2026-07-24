@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
 #
-# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v1 — this
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v2 — this
 # repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
 # from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
 # toolchain (esp32 + esp32s3) and exposes the /opt/esp_*_path markers the step
@@ -45,7 +45,7 @@ jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v1
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v2
 
     steps:
       - name: Checkout
