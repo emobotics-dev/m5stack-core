@@ -2,10 +2,17 @@
 
 # Stage 1: pull the prebuilt ESP Rust toolchain out of the CI image (same image
 # m5stack-core CI runs in), so we don't spend 10-30 min on `espup install`.
-FROM ghcr.io/emobotics-dev/altreg-ci:latest AS esp-toolchain
+# Keep the `:v1` tag in lockstep with .forgejo/workflows/{ci,build-ci-image}.yml.
+FROM registry:3000/emobotics/m5stack-core/m5stack-core-ci:v1 AS esp-toolchain
 
-# Stage 2: claude-code base + flashing tools.
-FROM ghcr.io/emobotics-dev/claude-code:latest
+# Stage 2: the clco base container + flashing tools.
+# Despite the image name, this is NOT a Claude Code redistribution — it's the clco
+# dev environment (source: emobotics/claude-container): fj/fj-ex, RTK, gh and the
+# clco conventions, with Claude Code installed via the official installer
+# (claude.ai/install.sh). Built + published to registry:3000, rebuilt weekly;
+# org-internal tooling with no upstream image, so it lives here like the other
+# clco/CI images. Same base every clco repo's devcontainer uses.
+FROM registry:3000/emobotics/claude-code:latest
 
 USER root
 

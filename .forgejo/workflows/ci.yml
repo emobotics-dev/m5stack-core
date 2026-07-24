@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
+#
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v1 — this
+# repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
+# from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
+# toolchain (esp32 + esp32s3) and exposes the /opt/esp_*_path markers the step
+# below reads. Tags are immutable and the runner fleet shares one podman store,
+# so bump the `:vN` tag here + in build-ci-image.yml + .devcontainer/Dockerfile
+# in lockstep whenever the image is rebuilt (see forgejo-instance docs/runners.md).
+#
+# Self-hosted `rust`/`esp32` runners (runners 4–7 on wsdev2). The image is
+# pulled anonymously from the Forgejo registry, so no credentials block is
+# needed. The esp-hal / embedded-fatfs git deps are public GitHub forks and
+# fetch anonymously; nothing needs a token.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches:
+      - master
+      - 'feature/**'   # cover stacked PRs whose base is another feature branch
+      - 'feat/**'      # same, for the shorter `feat/` prefix
+      - 'refactor/**'  # and refactor/* bases (the BSP foundation stacks on one)
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_HOME: /opt/rustup
+  CARGO_HOME: /opt/cargo
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  GIT_TERMINAL_PROMPT: "0"
+
+jobs:
+  build:
+    name: Build (ESP32 + ESP32-S3)
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set ESP libclang + sysroot + PATH for firmware bindgen
+        # oxicharge-ci (FROM espressif/idf-rust) doesn't ship the /opt/esp_*_path
+        # helper files the old altreg-ci image did, so derive the ESP clang,
+        # newlib sysroot and xtensa-gcc dir from $RUSTUP_HOME — preferring the
+        # /opt fast-path file when a future image (altreg-ci) provides it.
+        # `find -print -quit` (not `find | head`) is safe under the runner's
+        # `bash -e -o pipefail`. Recipe: forgejo-instance docs/runners.md.
+        run: |
+          esp="$RUSTUP_HOME/toolchains/esp"
+
+          LIBCLANG_PATH=$(cat /opt/esp_libclang_path 2>/dev/null || true)
+          if [ -z "$LIBCLANG_PATH" ]; then
+            f=$(find "$esp" -maxdepth 8 \( -name 'libclang.so' -o -name 'libclang.so.*' \) -print -quit 2>/dev/null || true)
+            if [ -n "$f" ]; then LIBCLANG_PATH=$(dirname "$f"); fi
+          fi
+          if [ -n "$LIBCLANG_PATH" ]; then echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"; fi
+
+          SYSROOT=$(cat /opt/esp_sysroot_path 2>/dev/null || true)
+          if [ -z "$SYSROOT" ]; then
+            f=$(find "$esp/xtensa-esp-elf" -maxdepth 8 -path '*/include/string.h' -not -path '*/ssp/*' -not -path '*/sys/*' -print -quit 2>/dev/null || true)
+            if [ -n "$f" ]; then SYSROOT=$(dirname "$(dirname "$f")"); fi
+          fi
+          if [ -n "$SYSROOT" ]; then echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$SYSROOT" >> "$GITHUB_ENV"; fi
+
+          ELF_BIN=$(cat /opt/esp_elf_bin_path 2>/dev/null || true)
+          if [ -z "$ELF_BIN" ]; then
+            f=$(find "$esp/xtensa-esp-elf" -maxdepth 4 -name 'xtensa-esp32-elf-gcc' -print -quit 2>/dev/null || true)
+            if [ -n "$f" ]; then ELF_BIN=$(dirname "$f"); fi
+          fi
+          if [ -n "$ELF_BIN" ]; then echo "$ELF_BIN" >> "$GITHUB_PATH"; fi
+
+      - name: Build lib (fire27 / ESP32)
+        run: cargo build --release --features fire27
+
+      - name: Build lib (cores3 / ESP32-S3)
+        run: cargo build --release --features cores3 --target xtensa-esp32s3-none-elf
+
+      - name: Build lib (fire27, all features)
+        run: cargo build --release --features "fire27,display,buttons,psram,serial-cmd,search-masks,coex"
+
+      - name: Build lib (cores3, all features)
+        run: cargo build --release --features "cores3,display,buttons,psram,serial-cmd,search-masks,coex" --target xtensa-esp32s3-none-elf
+
+      # `coex` is built on its own (`--bin coex --features coex`): esp-radio's
+      # coexist blob can't link into the non-BLE bins, so the coex feature must
+      # not be enabled while building them. `lvgl` is gated (skips the LVGL C
+      # build otherwise); `onewire` is auto-excluded on CoreS3.
+      - name: Build examples (fire27 / ESP32)
+        run: |
+          cargo build --release -p demos --features lvgl
+          cargo build --release -p demos --bin coex --features coex
+
+      - name: Build examples (cores3 / ESP32-S3)
+        run: |
+          cargo build --release -p demos --no-default-features --features cores3,lvgl --target xtensa-esp32s3-none-elf
+          cargo build --release -p demos --bin coex --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
