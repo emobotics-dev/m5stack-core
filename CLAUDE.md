@@ -55,7 +55,14 @@ Pre-1.0 semver as Cargo interprets it: **breaking → bump minor (`0.x`), additi
 1. Bump `version` in `Cargo.toml`; add a `CHANGELOG.md` section (Keep a Changelog).
 2. Build both boards with full features; run the publish-gate check above.
 3. Commit `chore(release): prepare m5stack-core <ver>`, tag `v<ver>`.
-4. `cargo publish --no-verify` — `--no-verify` because the crate needs an explicit
+4. **Sync the GitHub mirror — required before publishing.** Development lives on
+   Forgejo (LAN-only); crates.io's `repository` link points at the public GitHub
+   mirror, so a published version whose commit/tag isn't on GitHub leaves that
+   link dangling. Push the release commit + tag to `origin` (GitHub) so the
+   mirror matches what you publish: `git push origin master --tags`. (GitHub
+   master is force-synced from Forgejo — see Layout; a `master` ruleset may need
+   lifting for a force-push if history was rewritten.)
+5. `cargo publish --no-verify` — `--no-verify` because the crate needs an explicit
    board feature + xtensa target, so cargo's default host verify-build can't run
    (dual-board builds + `cargo package` are the manual substitute).
    Note: the `coex` feature has a known xtensa codegen issue; it is not a default
