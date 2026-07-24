@@ -1,5 +1,40 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! M5Stack CoreS3 board-level bring-up sequences and pin wiring.
+//!
+//! # Internal I²C bus (`I2C_SYS`)
+//!
+//! One shared bus on **GPIO12 (SDA) / GPIO11 (SCL)** carries seven devices; the
+//! BSP drives the first three, the rest are listed for completeness:
+//!
+//! | Device   | Addr | Role                        | BSP driver          |
+//! |----------|------|-----------------------------|---------------------|
+//! | AXP2101  | 0x34 | PMIC / power rails / battery | [`Axp2101Driver`]   |
+//! | AW9523B  | 0x58 | IO expander (LCD/touch reset)| [`Aw9523bDriver`]   |
+//! | FT6336U  | 0x38 | capacitive touch            | `driver::ft6336u`   |
+//! | BMI270   | 0x69 | 6-axis IMU                  | —                   |
+//! | BM8563   | 0x51 | RTC                         | —                   |
+//! | ES7210   | 0x40 | audio ADC (mic)             | —                   |
+//! | AW88298  | 0x36 | speaker amp                 | —                   |
+//!
+//! # AXP2101 power rails (from `Sch_M5_CoreS3_v1.0`)
+//!
+//! | AXP2101 out | Net           | Spec        | Powers                                  |
+//! |-------------|---------------|-------------|-----------------------------------------|
+//! | DCDC1       | `VDD_3V3`     | 3.3 V / 2 A | **Core VDD** — ESP32-S3, **AW9523B**, **FT6336U touch**, LCD logic |
+//! | DCDC3       | `VCC_3V3`     | 3.3 V / 2 A | Peripherals VDD                         |
+//! | DLDO1       | `VCC_BL`      | 3.3 V       | LCD **backlight** (see [`BACKLIGHT_MV`]) |
+//! | ALDO1       | `VDD_1V8`     | 1.8 V/300 mA| AW88298 PA DVDD                         |
+//! | ALDO2       | `VDDA_3V3`    | 3.3 V/300 mA| ES7210 codec VDDP                       |
+//! | ALDO3       | `VDDCAM_3V3`  | 3.3 V/300 mA| camera / codec VDDA                     |
+//! | ALDO4       | `VDD_3V3_SD`  | 3.3 V/300 mA| microSD card VDD                        |
+//! | BLDO1       | `AVDD`        | 2.8 V/300 mA| sensor VDDA                             |
+//! | BLDO2       | `DVDD`        | 1.2 V/300 mA| sensor VDD                              |
+//!
+//! **Reset gating (important):** the **AW9523B `RSTN` is wired to `AXP_PG`**
+//! (AXP2101 power-good) and has an internal ~100 kΩ pull-*low* — so the expander
+//! is held in reset until the AXP asserts power-good. It in turn drives
+//! `LCD_RST` / `TOUCH_RST`, so panel + touch bring-up all chain off it. See
+//! [`power_display_reset`] for the cold-boot readiness handling.
 
 use embedded_hal::digital::{ErrorType, OutputPin};
 use esp_hal::{
@@ -14,6 +49,8 @@ use esp_hal::{
     timer::{AnyTimer, timg::TimerGroup},
 };
 
+use embassy_time::{Duration, Timer};
+
 use crate::board::SystemResources;
 use crate::board::spi2::Spi2Resources;
 use crate::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
@@ -25,8 +62,44 @@ const AXP2101_ADDR: u8 = 0x34;
 /// Display backlight rail: AXP2101 DLDO1 @ 3.3 V.
 const BACKLIGHT_MV: u16 = 3300;
 
+/// AW9523B post-power-on I²C-ready time — the datasheet's "minimal wait time for
+/// I2C communication is 5 ms".
+const AW9523B_POR_MS: u64 = 5;
+/// Deterministic settle before the first AW9523B access: 200% of the POR time.
+/// On CoreS3 the expander's `RSTN` has an internal ~100 kΩ pull-*low* and is
+/// wired to `AXP_PG` (AXP2101 power-good), so it is held in reset until the AXP
+/// asserts power-good; at cold power-on `VDD_3V3` is already up (it powers the
+/// running ESP32) but `AXP_PG` may lag, leaving the expander briefly in reset.
+/// Waiting first — rather than poking the bus and retrying — avoids the premature
+/// `AcknowledgeCheckFailed(Address)`, each of which fires one chip-wide I2C clock
+/// reset.
+const AW9523B_SETTLE_MS: u64 = 2 * AW9523B_POR_MS;
+/// Fallback if the expander is still not ready after the settle. This should not
+/// happen in normal operation, so each attempt logs a warning; bounded, with a
+/// final failure logged as an error (best-effort — bring-up continues).
+const AW9523B_FALLBACK_TRIES: u32 = 5;
+const AW9523B_FALLBACK_DELAY_MS: u64 = 5;
+
+/// Fault-injection predicate for the `test-fault-inject` feature: reports the
+/// AW9523B "not ready" for the first `M5_TEST_AW_NACK` post-settle attempts (a
+/// build-time env var), so the cold-boot fallback retry can be regression-tested
+/// on the bench without a real power cycle. Absent from production builds.
+#[cfg(feature = "test-fault-inject")]
+fn aw_fault_inject_active(tries: u32) -> bool {
+    match option_env!("M5_TEST_AW_NACK") {
+        Some(s) => tries < s.parse::<u32>().unwrap_or(0),
+        None => false,
+    }
+}
+
 /// Power + display bring-up over the shared I2C bus: AW9523B IO-expander
 /// (`LCD_RST` + touch reset) then AXP2101 PMIC backlight (DLDO1 @ 3.3 V).
+///
+/// A [`AW9523B_SETTLE_MS`] wait precedes the first AW9523B access so the expander
+/// is out of reset (its `RSTN` follows `AXP_PG`) before we touch the bus — this
+/// removes the intermittent cold-boot `AcknowledgeCheckFailed(Address)` that
+/// otherwise fired one chip-wide I2C clock reset at every power-on. A bounded
+/// warn-on-failure retry backs it up in case the settle was not enough.
 ///
 /// Best-effort — each sub-step logs and continues on error, so a flaky chip
 /// can't block the display/control loop from coming up. Caller-driven so the
@@ -36,8 +109,52 @@ const BACKLIGHT_MV: u16 = 3300;
 /// (`LCD_RST` must precede display init).
 pub async fn power_display_reset(i2c: &'static SharedI2cBus) {
     let mut aw = Aw9523bDriver::new(Aw9523bResources { i2c });
-    if let Err(e) = aw.init().await {
-        error!("AW9523B init failed: {:?}", e);
+    // Deterministic settle for the cold-boot reset-release window (RSTN = AXP_PG)
+    // before the first bus access — see AW9523B_SETTLE_MS.
+    Timer::after(Duration::from_millis(AW9523B_SETTLE_MS)).await;
+    let mut tries = 0u32;
+    loop {
+        // Test hook (feature `test-fault-inject`, absent in production builds):
+        // simulate the AW9523B still being not-ready for the first
+        // `M5_TEST_AW_NACK` post-settle attempts, so the fallback retry is
+        // exercisable on the bench without a power cycle (which the rig can't do).
+        #[cfg(feature = "test-fault-inject")]
+        if aw_fault_inject_active(tries) {
+            tries += 1;
+            if tries > AW9523B_FALLBACK_TRIES {
+                error!("AW9523B not ready (fault-inject) after {} retries", AW9523B_FALLBACK_TRIES);
+                break;
+            }
+            warn!(
+                "[test-fault-inject] AW9523B not-ready simulated; retry {}/{}",
+                tries, AW9523B_FALLBACK_TRIES
+            );
+            Timer::after(Duration::from_millis(AW9523B_FALLBACK_DELAY_MS)).await;
+            continue;
+        }
+        match aw.init().await {
+            Ok(()) => {
+                if tries > 0 {
+                    info!("AW9523B ready after settle + {} retries", tries);
+                }
+                break;
+            }
+            Err(e) => {
+                tries += 1;
+                if tries > AW9523B_FALLBACK_TRIES {
+                    error!(
+                        "AW9523B not ready after {} ms settle + {} retries: {:?}",
+                        AW9523B_SETTLE_MS, AW9523B_FALLBACK_TRIES, e
+                    );
+                    break;
+                }
+                warn!(
+                    "AW9523B not ready after settle; retry {}/{}: {:?}",
+                    tries, AW9523B_FALLBACK_TRIES, e
+                );
+                Timer::after(Duration::from_millis(AW9523B_FALLBACK_DELAY_MS)).await;
+            }
+        }
     }
     if let Err(e) = aw.lcd_rst_pulse().await {
         error!("AW9523B LCD RST failed: {:?}", e);

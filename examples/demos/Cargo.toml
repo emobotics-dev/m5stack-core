@@ -144,6 +144,11 @@ sd = ["dep:sdspi", "dep:embedded-fatfs", "dep:block-device-adapters", "dep:align
 # Multicore demo (the `multicore` bin only): board::run_app_core puts a task on
 # the APP core. Pulls m5stack-core/multicore (the esp-rtos InterruptExecutor).
 multicore = ["m5stack-core/multicore"]
+# Bench regression: enable the BSP's AW9523B cold-boot fault injection. Build any
+# cores3 demo (e.g. `display`) with this feature + `M5_TEST_AW_NACK=N` and watch
+# for "AW9523B ready after N retries" — verifies the cold-boot retry recovery
+# without a power cycle (the rig can't switch USB VBUS).
+test-fault-inject = ["m5stack-core/test-fault-inject"]
 
 [dependencies]
 common               = { path = "../common" }
