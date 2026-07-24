@@ -27,6 +27,13 @@ on:
       - 'refactor/**'  # and refactor/* bases (the BSP foundation stacks on one)
   workflow_dispatch:
 
+# Cancel an in-flight run when a newer commit supersedes it (grouped per PR /
+# branch ref). The self-hosted runner fleet is small (runners 4–7), so don't
+# spend it building stale commits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTUP_HOME: /opt/rustup
