@@ -28,6 +28,12 @@ search-masks = []
 # HIL serial-cmd driver — exposes a Read endpoint over UART0 (fire27) or
 # USB-Serial-JTAG (cores3). Paired with `alternator-regulator/serial-cmd`.
 serial-cmd = []
+# Bench regression only: injects `M5_TEST_AW_NACK` simulated AW9523B "not ready"
+# results into `board::cores3::power_display_reset`, so the cold-boot retry
+# recovery (issue #3 companion) is testable without a power cycle (the rig can't
+# switch USB VBUS). No effect unless the env var is set at build time; never
+# enable in production.
+test-fault-inject = []
 # Export the `#[panic_handler]` symbol from the BSP (body = io::console::on_panic
 # — RTC breadcrumb + best-effort print + halt). Off by default so a consumer can
 # provide its own; a binary opts in instead of hand-rolling the one-line wrapper.
