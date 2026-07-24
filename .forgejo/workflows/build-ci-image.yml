@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Builds (and on `master`: pushes) registry:3000/emobotics/m5stack-core/m5stack-core-ci:vN
+# from .forgejo/docker/Dockerfile when that Dockerfile changes. PRs get a
+# build-only run to catch errors before merge.
+#
+# Tagged by IMAGE_VERSION below, never `:latest` — the runner fleet shares one
+# podman image store across all 8 runners with forcePull=false, so a mutable tag
+# silently goes stale the moment any runner has pulled it once. Bump IMAGE_VERSION
+# and update the tag in ci.yml + .devcontainer/Dockerfile together, in the same
+# commit, whenever this Dockerfile changes; never move an existing tag. (Same
+# reasoning as the org's ubuntu-ci / oxicharge-ci images — see
+# emobotics/forgejo-instance docs/runners.md.)
+#
+# Runs on the `docker` label with buildah (vfs storage driver) — the runner fleet
+# allows no privileged or docker-in-docker containers, so there is no docker
+# daemon to build against.
+name: m5stack-core CI image
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .forgejo/docker/Dockerfile
+      - .forgejo/workflows/build-ci-image.yml
+  pull_request:
+    paths:
+      - .forgejo/docker/Dockerfile
+      - .forgejo/workflows/build-ci-image.yml
+  workflow_dispatch:
+
+env:
+  IMAGE: registry:3000/emobotics/m5stack-core/m5stack-core-ci
+  IMAGE_VERSION: v1
+
+jobs:
+  build-push:
+    name: Build & push m5stack-core-ci
+    runs-on: docker
+    container:
+      image: quay.io/buildah/stable
+
+    steps:
+      # No Node in quay.io/buildah/stable, so actions/checkout@v4 can't run here —
+      # plain clone instead.
+      - name: Checkout
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+
+      - name: Build
+        run: |
+          buildah bud --storage-driver vfs \
+            -t "$IMAGE:$IMAGE_VERSION" \
+            .forgejo/docker
+
+      - name: Log in and push
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          # Plain HTTP registry (no TLS, by deliberate org decision) —
+          # --tls-verify=false is required on both calls or buildah defaults to
+          # HTTPS and fails to even reach it.
+          echo "$REGISTRY_TOKEN" | buildah login --storage-driver vfs --tls-verify=false \
+            -u emobotics --password-stdin registry:3000
+          buildah push --storage-driver vfs --tls-verify=false \
+            "$IMAGE:$IMAGE_VERSION" \
+            "docker://$IMAGE:$IMAGE_VERSION"

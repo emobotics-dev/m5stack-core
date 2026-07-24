@@ -67,5 +67,12 @@ Pre-1.0 semver as Cargo interprets it: **breaking → bump minor (`0.x`), additi
   `display`). `src/io/` — console, buttons, watchdog, sensor loops. `src/mem/` —
   global heap + PSRAM. `src/driver/` — onewire, radio, etc.
 - `examples/demos/` — one crate, one bin per subsystem, board via cargo feature.
-- Git author for pushes must be the GitHub noreply email (email-privacy push
-  protection rejects real-email commits).
+- Development is hosted on the self-hosted **Forgejo** instance
+  (`http://forgejo:3000/emobotics/m5stack-core`, SSH `ssh://git@forgejo:222`);
+  the public `github.com/emobotics-dev/m5stack-core` is the outward mirror
+  (Forgejo is LAN-only) and stays the crate's `repository`/README/crates.io
+  link. Commits are authored as *Holger Steinhaus* using the noreply email the
+  history already uses (`3057137+hsteinhaus@users.noreply.github.com`);
+  PR/issue/merge actions go through the `agent` bot account. See
+  `emobotics/forgejo-instance` (`docs/agent-contributing.md`) for the CLI/CI
+  conventions — CI lives in `.forgejo/workflows/`.
