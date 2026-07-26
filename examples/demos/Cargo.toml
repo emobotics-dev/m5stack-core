@@ -93,6 +93,17 @@ path = "src/bin/spi_cmd_probe.rs"
 test = false
 bench = false
 
+# GDMA IN_SUC_EOF-vs-TRANS_DONE timing probe (#16): is IN_SUC_EOF already set
+# when SPI_TRANS_DONE fires for a DMA read? ESP32-S3 only — its GDMA register
+# path is chip-specific. Build: `--bin gdma_eof_probe --no-default-features
+# --features cores3`.
+[[bin]]
+name = "gdma_eof_probe"
+path = "src/bin/gdma_eof_probe.rs"
+test = false
+bench = false
+required-features = ["cores3"]
+
 # GDMA clear_all() completeness probe (#19): latches a FIFO overflow bit that
 # DmaRxInterrupt/DmaTxInterrupt cannot name, runs a Mem2Mem transfer (which
 # calls clear_all() internally) and reports what survived. CoreS3 only — GDMA.
