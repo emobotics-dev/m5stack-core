@@ -21,9 +21,12 @@
 #   - no Josev/JRE/poetry runtime — that is oxicharge-app-specific; a consumer
 #     needing it builds a thin layer FROM this image rather than bloating it here.
 #
-# Exposes the same /opt marker files altreg-ci / oxicharge-ci did, which
-# ci.yml's "ESP libclang + sysroot + PATH" step reads:
+# Exposes the same /opt marker files altreg-ci / oxicharge-ci did (kept for
+# backward-compat):
 #   /opt/esp_libclang_path  /opt/esp_sysroot_path  /opt/esp_elf_bin_path
+# AND — as of v3 — exports the full ESP cross-build environment (PATH,
+# LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS) so a consuming workflow needs no
+# toolchain-plumbing step at all; see the ENV block at the end (#11).
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -71,6 +74,24 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         | head -1 | xargs -I{} sh -c 'dirname $(dirname "{}")' > /opt/esp_sysroot_path && \
     find "$RUSTUP_HOME/toolchains/esp/xtensa-esp-elf" -maxdepth 4 -name "xtensa-esp32-elf-gcc" \
         | head -1 | xargs -I{} dirname {} > /opt/esp_elf_bin_path && \
-    test -s /opt/esp_elf_bin_path || (echo "xtensa-esp32-elf-gcc not found under $RUSTUP_HOME/toolchains/esp" >&2 && exit 1)
+    test -s /opt/esp_elf_bin_path || (echo "xtensa-esp32-elf-gcc not found under $RUSTUP_HOME/toolchains/esp" >&2 && exit 1) && \
+    ELF_BIN="$(cat /opt/esp_elf_bin_path)" && \
+    ln -sfn "$ELF_BIN" /opt/esp-bin && \
+    ln -sfn "$(cat /opt/esp_libclang_path)" /opt/esp-libclang && \
+    ln -sfn "$(realpath "$("$ELF_BIN/xtensa-esp32-elf-gcc" -print-sysroot)")" /opt/esp-sysroot && \
+    test -e /opt/esp-sysroot/include/inttypes.h || \
+        (echo "esp newlib sysroot at /opt/esp-sysroot lacks include/inttypes.h" >&2 && exit 1)
+
+# Export the ESP cross-build environment so consuming CI jobs need ZERO toolchain
+# plumbing (matches what the clco devcontainer wires into .bashrc). The stable
+# /opt/esp-* symlinks above pin version-independent paths so these ENV values are
+# static. Without this, every consumer re-derives them by hand and gets the
+# sysroot subtly wrong: ESP clang's own inttypes.h does an `#include_next`, which
+# only resolves inside the *doubled* xtensa-esp-elf newlib sysroot (`-print-sysroot`)
+# — the single-level dir looks right but has no include/inttypes.h (see #11). The
+# explicit `-I…/include` makes bindgen resolve it regardless of clang search order.
+ENV PATH="/opt/esp-bin:${PATH}" \
+    LIBCLANG_PATH="/opt/esp-libclang" \
+    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/opt/esp-sysroot -I/opt/esp-sysroot/include"
 
 WORKDIR /workspace
