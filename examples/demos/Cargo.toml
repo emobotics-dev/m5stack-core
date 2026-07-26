@@ -104,6 +104,19 @@ test = false
 bench = false
 required-features = ["cores3"]
 
+# I2C-NACK / IRQ-core-contention repro harness (#3 / #10 investigation): async
+# I2C completion-IRQ flood on an absent address + BLE scanner + WiFi STA, all on
+# the PRO core, to probe the I2C-completion-IRQ vs RWBLE same-core level-1
+# contention theory. #10 closed as not reproducible on the current stack (real
+# cause lives in esp-rtos/esp-radio, not esp-hal) — kept as a reusable harness
+# for #3's still-open field-verification gap. Build: `--bin nack_repro --features coex`.
+[[bin]]
+name = "nack_repro"
+path = "src/bin/nack_repro.rs"
+test = false
+bench = false
+required-features = ["coex"]
+
 # Multicore harness demo — runs a task on the APP core via board::run_app_core.
 [[bin]]
 name = "multicore"
