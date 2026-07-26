@@ -235,10 +235,26 @@ pub fn gpio35_disable_output() {
 /// hangs off them (1-Wire sensors, RPM pickups, ...) is application wiring.
 /// Not exhaustive — extend as needed.
 pub struct M5Bus<'a> {
-    /// M5-Bus pin 5 → GPIO1.
+    /// M5-Bus pin 20 (`BUS_PA_SCL`) → GPIO1.
     pub gpio1: AnyPin<'a>,
-    /// M5-Bus pin 10 → GPIO9.
+    /// M5-Bus pin 10 (`BUS_PB_OUT`) → GPIO9.
     pub gpio9: AnyPin<'a>,
+    /// M5-Bus pin 2 (`BUS_ADC1`) → GPIO10.
+    pub gpio10: AnyPin<'a>,
+    /// M5-Bus pin 8 (`BUS_G5`) → GPIO5.
+    pub gpio5: AnyPin<'a>,
+    /// M5-Bus pin 21 (`BUS_G6`) → GPIO6.
+    pub gpio6: AnyPin<'a>,
+    /// M5-Bus pin 22 (`BUS_G7`) → GPIO7.
+    pub gpio7: AnyPin<'a>,
+    /// M5-Bus pin 13 (`BUS_U0RXD`) → GPIO44 — the ROM console's RX pin,
+    /// unused on CoreS3 (console is USB-Serial-JTAG). Assign as an input:
+    /// a ROM boot-log burst on the TX side (`gpio43`) can then never
+    /// contend with a driven line here.
+    pub gpio44: AnyPin<'a>,
+    /// M5-Bus pin 14 (`BUS_U0TXD`) → GPIO43 — the ROM console's TX pin,
+    /// unused on CoreS3. Assign as an output; see [`Self::gpio44`].
+    pub gpio43: AnyPin<'a>,
 }
 
 /// The CoreS3's peripherals, split into board-fact groups. See
@@ -335,6 +351,12 @@ impl Board {
             m5bus: M5Bus {
                 gpio1: AnyPin::from(peripherals.GPIO1),
                 gpio9: AnyPin::from(peripherals.GPIO9),
+                gpio10: AnyPin::from(peripherals.GPIO10),
+                gpio5: AnyPin::from(peripherals.GPIO5),
+                gpio6: AnyPin::from(peripherals.GPIO6),
+                gpio7: AnyPin::from(peripherals.GPIO7),
+                gpio44: AnyPin::from(peripherals.GPIO44),
+                gpio43: AnyPin::from(peripherals.GPIO43),
             },
             system,
         }
