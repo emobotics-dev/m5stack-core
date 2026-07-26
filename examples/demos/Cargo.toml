@@ -83,6 +83,27 @@ test = false
 bench = false
 required-features = ["coex"]
 
+# SPI command-phase wire probe (#18): SPI2 master -> three free M-Bus pads ->
+# SPI3 DMA slave, looped through the GPIO matrix, so the slave captures the
+# literal bits the master emits — command phase included. No wiring, no
+# analyzer. Build: `--bin spi_cmd_probe`.
+[[bin]]
+name = "spi_cmd_probe"
+path = "src/bin/spi_cmd_probe.rs"
+test = false
+bench = false
+
+# GDMA clear_all() completeness probe (#19): latches a FIFO overflow bit that
+# DmaRxInterrupt/DmaTxInterrupt cannot name, runs a Mem2Mem transfer (which
+# calls clear_all() internally) and reports what survived. CoreS3 only — GDMA.
+# Build: `--bin dma_int_probe --no-default-features --features cores3`.
+[[bin]]
+name = "dma_int_probe"
+path = "src/bin/dma_int_probe.rs"
+test = false
+bench = false
+required-features = ["cores3"]
+
 # Multicore harness demo — runs a task on the APP core via board::run_app_core.
 [[bin]]
 name = "multicore"
