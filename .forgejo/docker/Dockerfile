@@ -24,7 +24,8 @@
 # Exposes the same /opt marker files altreg-ci / oxicharge-ci did (kept for
 # backward-compat):
 #   /opt/esp_libclang_path  /opt/esp_sysroot_path  /opt/esp_elf_bin_path
-# AND — as of v3 — exports the full ESP cross-build environment (PATH,
+# AND — as of v3 (libclang path corrected in v4) — exports the full ESP
+# cross-build environment (PATH,
 # LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS) so a consuming workflow needs no
 # toolchain-plumbing step at all; see the ENV block at the end (#11).
 FROM debian:bookworm-slim
@@ -77,21 +78,29 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     test -s /opt/esp_elf_bin_path || (echo "xtensa-esp32-elf-gcc not found under $RUSTUP_HOME/toolchains/esp" >&2 && exit 1) && \
     ELF_BIN="$(cat /opt/esp_elf_bin_path)" && \
     ln -sfn "$ELF_BIN" /opt/esp-bin && \
-    ln -sfn "$(cat /opt/esp_libclang_path)" /opt/esp-libclang && \
+    ln -sfn "$(dirname "$(cat /opt/esp_libclang_path)")" /opt/esp-clang && \
     ln -sfn "$(realpath "$("$ELF_BIN/xtensa-esp32-elf-gcc" -print-sysroot)")" /opt/esp-sysroot && \
     test -e /opt/esp-sysroot/include/inttypes.h || \
-        (echo "esp newlib sysroot at /opt/esp-sysroot lacks include/inttypes.h" >&2 && exit 1)
+        (echo "esp newlib sysroot at /opt/esp-sysroot lacks include/inttypes.h" >&2 && exit 1) && \
+    ls /opt/esp-clang/lib/clang/*/include/stddef.h >/dev/null 2>&1 || \
+        (echo "esp clang resource dir under /opt/esp-clang/lib lacks clang/*/include/stddef.h" >&2 && exit 1)
 
 # Export the ESP cross-build environment so consuming CI jobs need ZERO toolchain
 # plumbing (matches what the clco devcontainer wires into .bashrc). The stable
 # /opt/esp-* symlinks above pin version-independent paths so these ENV values are
-# static. Without this, every consumer re-derives them by hand and gets the
-# sysroot subtly wrong: ESP clang's own inttypes.h does an `#include_next`, which
-# only resolves inside the *doubled* xtensa-esp-elf newlib sysroot (`-print-sysroot`)
-# — the single-level dir looks right but has no include/inttypes.h (see #11). The
-# explicit `-I…/include` makes bindgen resolve it regardless of clang search order.
+# static. Without this, every consumer re-derives them by hand and gets them
+# subtly wrong two ways:
+#   1. Sysroot: ESP clang's own inttypes.h does an `#include_next` that only
+#      resolves inside the *doubled* xtensa-esp-elf newlib sysroot (`-print-sysroot`);
+#      the single-level dir looks right but has no include/inttypes.h (see #11).
+#      The explicit `-I…/include` makes bindgen resolve it regardless of search order.
+#   2. libclang: LIBCLANG_PATH must point at `<clang-prefix>/lib` — clang derives
+#      its resource dir (the builtin stddef.h/stdarg.h) as `dirname(LIBCLANG_PATH)`.
+#      So the symlink is to the clang *prefix* (/opt/esp-clang) and the value is
+#      /opt/esp-clang/lib; a symlink straight to the lib dir would make the prefix
+#      resolve to /opt and clang would fail with `stddef.h file not found`.
 ENV PATH="/opt/esp-bin:${PATH}" \
-    LIBCLANG_PATH="/opt/esp-libclang" \
+    LIBCLANG_PATH="/opt/esp-clang/lib" \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/opt/esp-sysroot -I/opt/esp-sysroot/include"
 
 WORKDIR /workspace

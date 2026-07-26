@@ -2,8 +2,8 @@
 
 # Stage 1: pull the prebuilt ESP Rust toolchain out of the CI image (same image
 # m5stack-core CI runs in), so we don't spend 10-30 min on `espup install`.
-# Keep the `:v3` tag in lockstep with .forgejo/workflows/{ci,build-ci-image}.yml.
-FROM registry:3000/emobotics/m5stack-core/m5stack-core-ci:v3 AS esp-toolchain
+# Keep the `:v4` tag in lockstep with .forgejo/workflows/{ci,build-ci-image}.yml.
+FROM registry:3000/emobotics/m5stack-core/m5stack-core-ci:v4 AS esp-toolchain
 
 # Stage 2: the clco base container + flashing tools.
 # Despite the image name, this is NOT a Claude Code redistribution — it's the clco
