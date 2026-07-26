@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
 #
-# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v2 — this
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v4 — this
 # repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
 # from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
-# toolchain (esp32 + esp32s3) and exposes the /opt/esp_*_path markers the step
-# below reads. Tags are immutable and the runner fleet shares one podman store,
-# so bump the `:vN` tag here + in build-ci-image.yml + .devcontainer/Dockerfile
-# in lockstep whenever the image is rebuilt (see forgejo-instance docs/runners.md).
+# toolchain (esp32 + esp32s3) and — as of v3 — exports the full ESP cross-build
+# environment (PATH, LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS) directly, so this
+# workflow needs no toolchain-plumbing step at all (see #11). Tags are immutable
+# and the runner fleet shares one podman store, so bump the `:vN` tag here +
+# in build-ci-image.yml + .devcontainer/Dockerfile in lockstep whenever the image
+# is rebuilt (see forgejo-instance docs/runners.md).
 #
 # Self-hosted `rust`/`esp32` runners (runners 4–7 on wsdev2). The image is
 # pulled anonymously from the Forgejo registry, so no credentials block is
@@ -45,42 +47,17 @@ jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v2
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v4
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set ESP libclang + sysroot + PATH for firmware bindgen
-        # oxicharge-ci (FROM espressif/idf-rust) doesn't ship the /opt/esp_*_path
-        # helper files the old altreg-ci image did, so derive the ESP clang,
-        # newlib sysroot and xtensa-gcc dir from $RUSTUP_HOME — preferring the
-        # /opt fast-path file when a future image (altreg-ci) provides it.
-        # `find -print -quit` (not `find | head`) is safe under the runner's
-        # `bash -e -o pipefail`. Recipe: forgejo-instance docs/runners.md.
-        run: |
-          esp="$RUSTUP_HOME/toolchains/esp"
-
-          LIBCLANG_PATH=$(cat /opt/esp_libclang_path 2>/dev/null || true)
-          if [ -z "$LIBCLANG_PATH" ]; then
-            f=$(find "$esp" -maxdepth 8 \( -name 'libclang.so' -o -name 'libclang.so.*' \) -print -quit 2>/dev/null || true)
-            if [ -n "$f" ]; then LIBCLANG_PATH=$(dirname "$f"); fi
-          fi
-          if [ -n "$LIBCLANG_PATH" ]; then echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"; fi
-
-          SYSROOT=$(cat /opt/esp_sysroot_path 2>/dev/null || true)
-          if [ -z "$SYSROOT" ]; then
-            f=$(find "$esp/xtensa-esp-elf" -maxdepth 8 -path '*/include/string.h' -not -path '*/ssp/*' -not -path '*/sys/*' -print -quit 2>/dev/null || true)
-            if [ -n "$f" ]; then SYSROOT=$(dirname "$(dirname "$f")"); fi
-          fi
-          if [ -n "$SYSROOT" ]; then echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$SYSROOT" >> "$GITHUB_ENV"; fi
-
-          ELF_BIN=$(cat /opt/esp_elf_bin_path 2>/dev/null || true)
-          if [ -z "$ELF_BIN" ]; then
-            f=$(find "$esp/xtensa-esp-elf" -maxdepth 4 -name 'xtensa-esp32-elf-gcc' -print -quit 2>/dev/null || true)
-            if [ -n "$f" ]; then ELF_BIN=$(dirname "$f"); fi
-          fi
-          if [ -n "$ELF_BIN" ]; then echo "$ELF_BIN" >> "$GITHUB_PATH"; fi
+      # No toolchain-plumbing step: the m5stack-core-ci:v4 image exports PATH
+      # (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself. This
+      # green build IS the regression test that the image's exported env is
+      # complete — if it weren't, the fire27/cores3 builds below would fail with
+      # `linker not found` or bindgen `inttypes.h not found` (see #11).
 
       - name: Build lib (fire27 / ESP32)
         run: cargo build --release --features fire27
