@@ -104,6 +104,17 @@ test = false
 bench = false
 required-features = ["cores3"]
 
+# SPI2/GDMA fault-termination probe (#17): induces a TX underrun mid-transfer
+# (GDMA_OUT_LINK.OUTLINK_STOP) and characterises whether SPI_USR wedges with
+# no interrupt, then works through a 3-rung recovery ladder. ESP32-S3 only.
+# Build: `--bin spi2_gdma_fault_probe --no-default-features --features cores3`.
+[[bin]]
+name = "spi2_gdma_fault_probe"
+path = "src/bin/spi2_gdma_fault_probe.rs"
+test = false
+bench = false
+required-features = ["cores3"]
+
 # GDMA clear_all() completeness probe (#19): latches a FIFO overflow bit that
 # DmaRxInterrupt/DmaTxInterrupt cannot name, runs a Mem2Mem transfer (which
 # calls clear_all() internally) and reports what survived. CoreS3 only — GDMA.
