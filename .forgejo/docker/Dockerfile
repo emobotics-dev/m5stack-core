@@ -28,6 +28,10 @@
 # cross-build environment (PATH,
 # LIBCLANG_PATH, BINDGEN_EXTRA_CLANG_ARGS) so a consuming workflow needs no
 # toolchain-plumbing step at all; see the ENV block at the end (#11).
+# As of v5: also carries llvm-cov/llvm-profdata (version-matched to the `esp`
+# toolchain's embedded LLVM, not rustup-installable for it) + cargo-llvm-cov,
+# so a consuming workflow can run coverage without its own toolchain-plumbing
+# step either — see the coverage-tooling RUN block near the end (#30).
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -102,5 +106,30 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 ENV PATH="/opt/esp-bin:${PATH}" \
     LIBCLANG_PATH="/opt/esp-clang/lib" \
     BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/opt/esp-sysroot -I/opt/esp-sysroot/include"
+
+# Coverage tooling (#30): `cargo llvm-cov` needs llvm-cov/llvm-profdata, but
+# `rustup component add llvm-tools-preview` cannot target the `esp` toolchain
+# — it's an espup-installed custom toolchain (not one rustup distributes), so
+# rustup has no component manifest for it, and Espressif's own toolchain
+# releases (esp-rs/rust-build) ship no llvm-tools counterpart either. The
+# coverage raw-profile format is tied to the LLVM version rustc embeds for
+# codegen (`rustc +esp -vV` reports LLVM 21.1.3 as of this toolchain-version
+# pin), so the tools must be version-matched, not just any llvm-cov found on
+# the system. apt.llvm.org's llvm-21 packages track the same LLVM 21 major
+# series — confirmed compatible with a real round trip (`rustc +esp -C
+# instrument-coverage`, run, `llvm-profdata merge`, `llvm-cov report`), not
+# just a version-number assumption. Installed to the esp toolchain's own
+# sysroot bin dir — exactly where `llvm-tools-preview` would place them for a
+# rustup-managed toolchain, and where `cargo llvm-cov` looks regardless of
+# whether rustup thinks the component is present.
+RUN apt-get update -q && \
+    apt-get install -y --no-install-recommends lsb-release software-properties-common gnupg wget && \
+    curl -fsSL https://apt.llvm.org/llvm.sh | bash -s -- 21 && \
+    apt-get install -y --no-install-recommends llvm-21 && \
+    rm -rf /var/lib/apt/lists/* && \
+    ESP_SYSROOT_BIN="$RUSTUP_HOME/toolchains/esp/lib/rustlib/x86_64-unknown-linux-gnu/bin" && \
+    install -m 0755 /usr/lib/llvm-21/bin/llvm-cov "$ESP_SYSROOT_BIN/llvm-cov" && \
+    install -m 0755 /usr/lib/llvm-21/bin/llvm-profdata "$ESP_SYSROOT_BIN/llvm-profdata" && \
+    cargo install cargo-llvm-cov --locked
 
 WORKDIR /workspace
