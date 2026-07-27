@@ -60,6 +60,17 @@ pub struct Board {
     pub rmt: RMT<'static>,
     /// PCNT — e.g. pulse counting ([`crate::io::rpm::RpmResources`]).
     pub pcnt: PCNT<'static>,
+    /// Spare SPI3 unit — the BSP does not drive it, listed for the app to
+    /// claim (same idea as [`Self::rmt`]/[`Self::pcnt`]). Wiring (which
+    /// [`Self::m5bus`] pin is SCK/MOSI/MISO/CS) and the interrupt priority /
+    /// core allocation are application knowledge. Attach the CS pin as the
+    /// peripheral's **hardware** chip-select (`with_cs`), not a
+    /// software-toggled [`esp_hal::gpio::Output`] — some designs depend on a
+    /// sub-microsecond CS gap that software toggling cannot hold. See #27.
+    pub spi3: AnySpi<'static>,
+    /// PDMA channel for [`Self::spi3`] — SPI3's own dedicated PDMA unit, not
+    /// shared with `spi2` (`DMA_SPI2`).
+    pub spi3_dma: AnySpiDmaChannel<'static>,
     /// External SPI PSRAM (~4 MB) — feed to `mem::init_psram_heap` (the heap
     /// region; the ESP32 cannot DMA from PSRAM). [feature `psram`]
     pub psram: esp_hal::peripherals::PSRAM<'static>,
@@ -125,6 +136,8 @@ impl Board {
             sk6812: AnyPin::from(peripherals.GPIO15),
             rmt: peripherals.RMT,
             pcnt: peripherals.PCNT,
+            spi3: AnySpi::from(peripherals.SPI3),
+            spi3_dma: AnySpiDmaChannel::from(peripherals.DMA_SPI3),
             psram: peripherals.PSRAM,
             m5bus: M5Bus {
                 gpio5: AnyPin::from(peripherals.GPIO5),

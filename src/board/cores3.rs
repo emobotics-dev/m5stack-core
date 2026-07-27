@@ -39,7 +39,7 @@
 use embedded_hal::digital::{ErrorType, OutputPin};
 use esp_hal::{
     Blocking,
-    dma::DmaChannelConvert,
+    dma::{AnyGdmaChannel, DmaChannelConvert},
     gpio::AnyPin,
     i2c::master::{BusTimeout, Config as I2cConfig, I2c, SoftwareTimeout},
     interrupt::software::SoftwareInterruptControl,
@@ -280,6 +280,17 @@ pub struct Board {
     pub rmt: RMT<'static>,
     /// PCNT — e.g. pulse counting ([`crate::io::rpm::RpmResources`]).
     pub pcnt: PCNT<'static>,
+    /// Spare SPI3 unit — the BSP does not drive it, listed for the app to
+    /// claim (same idea as [`Self::rmt`]/[`Self::pcnt`]). Wiring (which
+    /// [`Self::m5bus`] pin is SCK/MOSI/MISO/CS) and the interrupt priority /
+    /// core allocation are application knowledge. Attach the CS pin as the
+    /// peripheral's **hardware** chip-select (`with_cs`), not a
+    /// software-toggled [`esp_hal::gpio::Output`] — some designs depend on a
+    /// sub-microsecond CS gap that software toggling cannot hold. See #27.
+    pub spi3: AnySpi<'static>,
+    /// GDMA channel for [`Self::spi3`] — any free channel works, this is just
+    /// not the one `spi2` already owns (`DMA_CH0`).
+    pub spi3_dma: AnyGdmaChannel<'static>,
     /// SK6812 LED bars data pin (M-Bus pin 23 → GPIO13 on CoreS3), driven over
     /// RMT ([`crate::driver::sk6812::Sk6812Driver`]). The M5GO bottom's 5 V LED
     /// rail is gated by the AW9523B — see `Aw9523bDriver::enable_bus_5v`.
@@ -346,6 +357,8 @@ impl Board {
             usb_device: peripherals.USB_DEVICE,
             rmt: peripherals.RMT,
             pcnt: peripherals.PCNT,
+            spi3: AnySpi::from(peripherals.SPI3),
+            spi3_dma: peripherals.DMA_CH1.degrade(),
             sk6812: AnyPin::from(peripherals.GPIO13),
             psram: peripherals.PSRAM,
             m5bus: M5Bus {
