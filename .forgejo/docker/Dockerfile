@@ -31,7 +31,11 @@
 # As of v5: also carries llvm-cov/llvm-profdata (version-matched to the `esp`
 # toolchain's embedded LLVM, not rustup-installable for it) + cargo-llvm-cov,
 # so a consuming workflow can run coverage without its own toolchain-plumbing
-# step either — see the coverage-tooling RUN block near the end (#30).
+# step either — see the coverage-tooling RUN block near the end (#30). As of
+# v6: the system-wide `llvm-cov`/`llvm-profdata` (unversioned, on PATH) also
+# point at that same v21 copy instead of the libclang/bindgen `llvm` install's
+# default LLVM 14 — a bare `llvm-cov --version` sanity check used to look like
+# the fix hadn't landed.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -122,6 +126,15 @@ ENV PATH="/opt/esp-bin:${PATH}" \
 # sysroot bin dir — exactly where `llvm-tools-preview` would place them for a
 # rustup-managed toolchain, and where `cargo llvm-cov` looks regardless of
 # whether rustup thinks the component is present.
+#
+# Also repoints the system-wide `llvm-cov`/`llvm-profdata` (the earlier
+# `apt-get install ... llvm` above ships these as plain symlinks to Debian's
+# default LLVM 14, for libclang/bindgen's sake — nothing here needed the
+# unversioned names before). Left alone, that's a landmine: `cargo llvm-cov`
+# ignores it and correctly uses the sysroot copy above, but a bare `llvm-cov
+# --version` sanity check finds LLVM 14 and looks like this fix didn't work
+# (mistaken for real, cost real investigation time). Repointing both onto the
+# v21 copy means there is exactly one answer in the image, not two.
 RUN apt-get update -q && \
     apt-get install -y --no-install-recommends lsb-release software-properties-common gnupg wget && \
     curl -fsSL https://apt.llvm.org/llvm.sh | bash -s -- 21 && \
@@ -130,6 +143,8 @@ RUN apt-get update -q && \
     ESP_SYSROOT_BIN="$RUSTUP_HOME/toolchains/esp/lib/rustlib/x86_64-unknown-linux-gnu/bin" && \
     install -m 0755 /usr/lib/llvm-21/bin/llvm-cov "$ESP_SYSROOT_BIN/llvm-cov" && \
     install -m 0755 /usr/lib/llvm-21/bin/llvm-profdata "$ESP_SYSROOT_BIN/llvm-profdata" && \
+    ln -sf /usr/lib/llvm-21/bin/llvm-cov /usr/bin/llvm-cov && \
+    ln -sf /usr/lib/llvm-21/bin/llvm-profdata /usr/bin/llvm-profdata && \
     cargo install cargo-llvm-cov --locked
 
 WORKDIR /workspace
