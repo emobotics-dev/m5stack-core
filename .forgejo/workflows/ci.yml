@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
 #
-# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v4 — this
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v5 — this
 # repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
 # from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
 # toolchain (esp32 + esp32s3) and — as of v3 — exports the full ESP cross-build
@@ -47,13 +47,13 @@ jobs:
   build:
     name: Build (ESP32 + ESP32-S3)
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v4
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v5
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # No toolchain-plumbing step: the m5stack-core-ci:v4 image exports PATH
+      # No toolchain-plumbing step: the m5stack-core-ci:v5 image exports PATH
       # (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself. This
       # green build IS the regression test that the image's exported env is
       # complete — if it weren't, the fire27/cores3 builds below would fail with
