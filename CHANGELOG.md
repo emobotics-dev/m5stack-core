@@ -12,6 +12,14 @@ No breaking changes.
 
 ### Added
 
+- **`Board::spi3` / `Board::spi3_dma`** (#27) — the spare SPI3 unit + its DMA
+  channel, previously moved into `Board::split` and dropped with no way for
+  an app to claim them. Listed the same way as `Board::rmt`/`Board::pcnt`: the
+  BSP does not drive it, wiring/IRQ-priority/core-allocation stays with the
+  app. `spi3_dma` is `AnyGdmaChannel` on CoreS3 (`DMA_CH1`, GDMA channels are
+  interchangeable) and `AnySpiDmaChannel` on Fire27 (`DMA_SPI3`, its own
+  dedicated PDMA unit). No CS field — take a pin from `Board::m5bus` and
+  attach it as the peripheral's hardware chip-select.
 - **`io::buttons::ButtonTiming { long_press_ms, multi_tap_ms }`** (#58) — a
   cross-driver press-decoding timing shared by both front-panel drivers, with
   presets `ButtonTiming::multi_tap()` (count consecutive taps) and
