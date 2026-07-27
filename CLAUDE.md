@@ -54,7 +54,8 @@ Pre-1.0 semver as Cargo interprets it: **breaking → bump minor (`0.x`), additi
 
 1. Bump `version` in `Cargo.toml`; add a `CHANGELOG.md` section (Keep a Changelog).
 2. Build both boards with full features; run the publish-gate check above.
-3. Commit `chore(release): prepare m5stack-core <ver>`, tag `v<ver>`.
+3. Commit the version bump (commit-message convention: see Layout below),
+   tag `v<ver>`.
 4. **Sync the GitHub mirror — required before publishing.** Development lives on
    Forgejo (LAN-only); crates.io's `repository` link points at the public GitHub
    mirror, so a published version whose commit/tag isn't on GitHub leaves that
@@ -80,6 +81,8 @@ Pre-1.0 semver as Cargo interprets it: **breaking → bump minor (`0.x`), additi
   (Forgejo is LAN-only) and stays the crate's `repository`/README/crates.io
   link. Commits are authored as *Holger Steinhaus* using the noreply email the
   history already uses (`3057137+hsteinhaus@users.noreply.github.com`);
-  PR/issue/merge actions go through the `agent` bot account. See
-  `emobotics/forgejo-instance` (`docs/agent-contributing.md`) for the CLI/CI
-  conventions — CI lives in `.forgejo/workflows/`.
+  PR/issue/merge actions go through the `agent` bot account. Commit-message
+  style, CLI usage and CI conventions all live in `emobotics/forgejo-instance`
+  (`docs/agent-contributing.md`) — that doc is the source of truth and gets
+  revised independently of this file, so don't restate its rules here; CI
+  lives in `.forgejo/workflows/`.
