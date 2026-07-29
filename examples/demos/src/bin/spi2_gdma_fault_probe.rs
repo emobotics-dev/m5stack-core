@@ -145,7 +145,7 @@ async fn main(_spawner: Spawner) {
 
     let tg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
-    mem::init_heap(HeapProfile::Default, Some(p.PSRAM));
+    mem::init_heap(HeapProfile::Default);
     esp_rtos::start(AnyTimer::from(tg0.timer0), sw_int.software_interrupt0);
     let _console = shim::init_console(_spawner, board::console_serial(p.USB_DEVICE));
 

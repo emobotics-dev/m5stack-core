@@ -6,7 +6,6 @@
 //! carry no panic boilerplate.
 
 use embassy_executor::Spawner;
-use esp_hal::peripherals::PSRAM;
 use m5stack_core::io::console::{self, Config, Console, SerialResources};
 use m5stack_core::mem::{self, HeapProfile};
 
@@ -25,20 +24,23 @@ pub fn init_console(spawner: Spawner, serial: SerialResources) -> Console {
     console
 }
 
-// Heap setup now lives in the BSP: `mem::init_heap(profile, psram)` owns the
-// esp-alloc regions + per-board sizes (#35 C1), so these are thin profile picks.
+// Heap setup now lives in the BSP: `mem::init_heap(profile)` owns the esp-alloc
+// DRAM regions + per-board sizes (#35 C1), so these are thin profile picks. None
+// of these demos put PSRAM in front of the global allocator — it never touches
+// the plain Vec<String>/String allocations these bins actually do (see #41);
+// a bin that wants PSRAM calls `mem::psram_map` / `mem::psram_split` itself.
 
-/// Display / I2C / WiFi bins: the Default profile (reclaimed + plain DRAM) + PSRAM.
-pub fn init_heaps_default(psram: PSRAM<'static>) {
-    mem::init_heap(HeapProfile::Default, Some(psram));
+/// Display / I2C / WiFi bins: the Default profile (reclaimed + plain DRAM).
+pub fn init_heaps_default() {
+    mem::init_heap(HeapProfile::Default);
 }
 
-/// Coex (WiFi + BLE) needs more controller heap: the Coex profile + PSRAM.
-pub fn init_heaps_coex(psram: PSRAM<'static>) {
-    mem::init_heap(HeapProfile::Coex, Some(psram));
+/// Coex (WiFi + BLE) needs more controller heap: the Coex profile.
+pub fn init_heaps_coex() {
+    mem::init_heap(HeapProfile::Coex);
 }
 
-/// LVGL bin: the Lvgl profile (reclaimed-ROM only, no PSRAM).
+/// LVGL bin: the Lvgl profile (reclaimed-ROM only).
 pub fn init_heap_lvgl() {
-    mem::init_heap(HeapProfile::Lvgl, None);
+    mem::init_heap(HeapProfile::Lvgl);
 }
