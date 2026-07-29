@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-29
+
 Additive — one unified, cross-driver button-timing API so latency-sensitive
 input (encoders) can opt out of the multi-tap counting delay on either board.
 No breaking changes.
