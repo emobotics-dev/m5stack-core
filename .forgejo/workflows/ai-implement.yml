@@ -16,7 +16,7 @@ jobs:
     if: >
       github.event.issue.pull_request == null &&
       startsWith(github.event.comment.body, '/implement') &&
-      contains('emobotics', github.event.comment.user.login)
+      contains('emobotics,agent', github.event.comment.user.login)
     runs-on: docker
     container:
       image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1
