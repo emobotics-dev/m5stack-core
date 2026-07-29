@@ -1,0 +1,35 @@
+# Caller stub for a target repo. Copy to .forgejo/workflows/ai-revise.yml
+# in the target repo and adjust the allowlist in the "if:" below.
+#
+# The "uses:" must be a fully-qualified URL, not a bare owner/repo path -
+# bare paths resolve against DEFAULT_ACTIONS_URL (data.forgejo.org) even
+# for same-instance repos, not against this instance. Confirmed by testing
+# directly (see docs/ai-automation.md).
+#
+# github.event.review.state/.user.login is GitHub's shape, not Forgejo's -
+# Forgejo sends review.type, and the actor is sender.login, not nested
+# under review at all (confirmed live via a raw event-JSON dump on an
+# approved review, see docs/ai-automation.md). "pull_request_review_rejected"
+# for changes-requested is inferred from Forgejo/Gitea's own hook-type
+# naming convention (approved/rejected/comment), not yet independently
+# confirmed the same way - diag-pr-review.yml is still in place to verify
+# on the next real changes-requested review.
+name: ai-revise
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  revise:
+    if: >
+      github.event.review.type == 'pull_request_review_rejected' &&
+      contains('emobotics', github.event.sender.login)
+    runs-on: docker
+    container:
+      image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1
+    steps:
+      - uses: http://forgejo:3000/emobotics/forgejo-instance/.forgejo/actions/ai-revise@master
+        with:
+          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          bot_token: ${{ secrets.BOT_TOKEN }}

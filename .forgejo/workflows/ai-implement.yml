@@ -1,0 +1,27 @@
+# Caller stub for a target repo. Copy to .forgejo/workflows/ai-implement.yml
+# in the target repo and adjust the allowlist in the "if:" below.
+#
+# The "uses:" must be a fully-qualified URL, not a bare owner/repo path -
+# bare paths resolve against DEFAULT_ACTIONS_URL (data.forgejo.org) even
+# for same-instance repos, not against this instance. Confirmed by testing
+# directly (see docs/ai-automation.md).
+name: ai-implement
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  implement:
+    if: >
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, '/implement') &&
+      contains('emobotics', github.event.comment.user.login)
+    runs-on: docker
+    container:
+      image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1
+    steps:
+      - uses: http://forgejo:3000/emobotics/forgejo-instance/.forgejo/actions/ai-implement@master
+        with:
+          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          bot_token: ${{ secrets.BOT_TOKEN }}

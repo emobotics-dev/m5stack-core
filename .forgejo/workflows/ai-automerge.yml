@@ -1,0 +1,34 @@
+# Caller stub for a target repo. Copy to .forgejo/workflows/ai-automerge.yml
+# in the target repo and adjust the allowlist in the "if:" below.
+#
+# The "uses:" must be a fully-qualified URL, not a bare owner/repo path -
+# bare paths resolve against DEFAULT_ACTIONS_URL (data.forgejo.org) even
+# for same-instance repos, not against this instance. Confirmed by testing
+# directly (see docs/ai-automation.md).
+#
+# github.event.review.state/.user.login is GitHub's shape, not Forgejo's -
+# Forgejo sends review.type ("pull_request_review_approved", not
+# "approved") and the actor is sender.login, not nested under review at
+# all. Confirmed live via a raw event-JSON dump (see docs/ai-automation.md).
+#
+# merge_style is "merge", not "squash" - git-workflow.md section 6 mandates
+# "always Create a merge commit, never squash or rebase-merge" org-wide.
+name: ai-automerge
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  check-and-merge:
+    if: >
+      github.event.review.type == 'pull_request_review_approved' &&
+      contains('emobotics', github.event.sender.login)
+    runs-on: docker
+    container:
+      image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1
+    steps:
+      - uses: http://forgejo:3000/emobotics/forgejo-instance/.forgejo/actions/ai-automerge@master
+        with:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          merge_style: "merge"
