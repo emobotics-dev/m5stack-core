@@ -22,11 +22,11 @@ on:
 jobs:
   analyse:
     if: >
-      (github.event_name == 'issues' && contains('emobotics', github.event.issue.user.login)) ||
+      (github.event_name == 'issues' && contains('emobotics,agent', github.event.issue.user.login)) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request == null &&
        !startsWith(github.event.comment.body, '/implement') &&
-       contains('emobotics', github.event.comment.user.login))
+       contains('emobotics,agent', github.event.comment.user.login))
     runs-on: docker
     container:
       image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1

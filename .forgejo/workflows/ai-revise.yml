@@ -24,7 +24,7 @@ jobs:
   revise:
     if: >
       github.event.review.type == 'pull_request_review_rejected' &&
-      contains('emobotics', github.event.sender.login)
+      contains('emobotics,agent', github.event.sender.login)
     runs-on: docker
     container:
       image: registry:3000/emobotics/forgejo-instance/ai-actions-ci:1
