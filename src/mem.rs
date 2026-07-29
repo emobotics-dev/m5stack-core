@@ -232,13 +232,11 @@ pub enum PsramSplitError {
 /// *foreign* allocator — LVGL's built-in TLSF via `lv_mem_add_pool` — rather than
 /// routing those allocations through the shared global allocator.
 ///
-/// - `reserve: Some(n)` carves `n` bytes private from the base and registers the
-///   remainder globally. `reserve: None` makes the whole region private (nothing
-///   is added to the global heap; [`PsramSplit::global_free`] is `0`).
-///   `reserve: Some(0)` is the mirror image: an empty [`PsramSplit::private`]
-///   slice and *all* PSRAM registered globally — i.e. it degenerates to what
-///   [`init_psram_heap`] does. Sound (a zero-length slice grants access to
-///   nothing) but rarely what you want.
+/// - `reserve` carves that many bytes private from the base and registers the
+///   remainder globally. `reserve == 0` is the maximal-exposure case: an empty
+///   [`PsramSplit::private`] slice and *all* PSRAM registered globally. Sound (a
+///   zero-length slice grants access to nothing) but rarely what you want —
+///   prefer [`psram_map`] if you don't need any global exposure at all.
 /// - The private region is carved **from the base**, so [`PsramSplit::private`]
 ///   starts at the (large-aligned) PSRAM mapping base — aligned for LVGL's TLSF
 ///   with no math; esp-alloc aligns the remainder's base internally.
@@ -266,10 +264,7 @@ pub enum PsramSplitError {
 /// [`PsramSplitError::NotMapped`] if PSRAM does not map; [`PsramSplitError::TooSmall`]
 /// if it maps smaller than `reserve`.
 #[cfg(feature = "psram")]
-pub fn psram_split(
-    psram: PSRAM<'static>,
-    reserve: Option<usize>,
-) -> Result<PsramSplit, PsramSplitError> {
+pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> Result<PsramSplit, PsramSplitError> {
     // `Psram` has no `Drop`: the mapping is recorded in esp-hal's range statics
     // and survives the value dropping (see `PsramSplit::private`), so a local is
     // fine — nothing unmaps at the end of this block.
@@ -282,7 +277,6 @@ pub fn psram_split(
         return Err(PsramSplitError::NotMapped);
     }
 
-    let reserve = reserve.unwrap_or(total);
     if reserve > total {
         return Err(PsramSplitError::TooSmall { available: total });
     }
