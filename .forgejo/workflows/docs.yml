@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Docs: build the rustdoc for both boards and publish it to GitHub Pages.
+#
+# docs.rs has never built this crate and never will (#36). Two independent
+# reasons, the second unfixable: `cargo doc` on the default feature set trips
+# the "exactly one board feature" gate one layer down (esp-rom-sys / esp-sync
+# build scripts abort), and — even with the feature picked — both supported
+# boards are Xtensa (ESP32 / ESP32-S3), a target that exists only in
+# Espressif's rustc/LLVM fork. docs.rs runs stock rust-lang, so it has no
+# backend for either target. esp-hal escapes this by pointing its
+# `default-target` at one of its RISC-V chips; this crate has no RISC-V board
+# to fall back to. So we self-host the rustdoc the way esp-idf-hal does and
+# leave the docs.rs listing red.
+#
+# Runs on the same image and runners as ci.yml (see its header for the `:vN`
+# lockstep-bump rule) — the `esp` toolchain baked in there is what makes
+# `cargo doc` for an Xtensa target possible in the first place.
+#
+# Publishing target is the public GitHub mirror, emobotics-dev/m5stack-core:
+# Forgejo is LAN-only, and the mirror is what crates.io's `documentation` link
+# points at. That push needs a credential — see the publish step below.
+
+name: docs
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_HOME: /opt/rustup
+  CARGO_HOME: /opt/cargo
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  GIT_TERMINAL_PROMPT: "0"
+  # Board-independent features, documented for both boards so the published
+  # site covers every optional module. `coex` implies `wifi` + `ble`, `psram`
+  # implies `heap`. Deliberately absent: `test-fault-inject` (bench-only fault
+  # injection, never for a consumer) and `wifi-ap` (reserved, unimplemented).
+  DOC_FEATURES: "display,buttons,psram,serial-cmd,search-masks,console-serial,panic-handler,multicore,wifi-sta,coex"
+  # The site is assembled outside the checkout: the publish step turns it into
+  # a throwaway git repo, which must not nest inside the workspace one.
+  SITE_DIR: /tmp/m5stack-core-doc-site
+
+jobs:
+  docs:
+    name: rustdoc (ESP32 + ESP32-S3)
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `--no-deps`: document this crate only. Documenting the dependency graph
+      # as well drags in the whole esp-hal family and would push a
+      # several-hundred-MB tree to the mirror on every commit (GitHub Pages
+      # caps a site at 1 GB). The cost is that links to items from other crates
+      # do not resolve — rustdoc has nowhere local to point them.
+      - name: Build rustdoc (fire27 / ESP32)
+        run: cargo doc --no-deps --features "fire27,$DOC_FEATURES"
+
+      - name: Build rustdoc (cores3 / ESP32-S3)
+        run: cargo doc --no-deps --features "cores3,$DOC_FEATURES" --target xtensa-esp32s3-none-elf
+
+      # One site, one subtree per board: the two board features are mutually
+      # exclusive, so neither build alone documents the whole crate.
+      - name: Assemble the site
+        run: |
+          set -eux
+          rm -rf "$SITE_DIR"
+          mkdir -p "$SITE_DIR"
+          cp -r target/xtensa-esp32-none-elf/doc   "$SITE_DIR/fire27"
+          cp -r target/xtensa-esp32s3-none-elf/doc "$SITE_DIR/cores3"
+          cp .forgejo/pages/index.html "$SITE_DIR/index.html"
+          # Serve the tree verbatim instead of running it through Jekyll.
+          touch "$SITE_DIR/.nojekyll"
+
+      # Forgejo Actions has no equivalent of GitHub Actions' automatic
+      # GITHUB_TOKEN, and the target repo lives on a different host anyway, so
+      # the push needs a credential provisioned once by a human. Until it
+      # exists the job still builds the docs and only skips the push, so the
+      # build stays a gate from day one.
+      #
+      # ---- one-time setup: obtaining and installing GH_PAGES_TOKEN ----------
+      #
+      # 1. Mint a fine-grained GitHub PAT (as a human on github.com — the
+      #    Forgejo `agent` account has no GitHub identity):
+      #    https://github.com/settings/personal-access-tokens/new
+      #      Token name       m5stack-core docs push (or anything recognisable)
+      #      Resource owner   emobotics-dev  ← the org, NOT a personal account;
+      #                       pick the personal one and the mirror repo is not
+      #                       offered under "Repository access" at all.
+      #      Repository access
+      #                       Only select repositories → emobotics-dev/m5stack-core
+      #      Permissions → Repository permissions
+      #                       Contents: Read and write   ← the only one needed
+      #                       (Metadata: Read-only is added implicitly. Pages
+      #                       serves from a branch here, so no Pages permission
+      #                       — the token only force-pushes `gh-pages`.)
+      #      Expiration       max 366 days; when it lapses this step fails loud
+      #                       (git push 403) rather than silently — re-mint the
+      #                       same way and replace the secret.
+      #    Reference: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token
+      #
+      # 2. If the org requires approval for fine-grained tokens, the token is
+      #    created but 403s on every call until an org owner approves it at
+      #    https://github.com/organizations/emobotics-dev/settings/personal-access-token-requests
+      #    (policy: .../settings/personal-access-tokens-onboarding; docs:
+      #    https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/managing-requests-for-personal-access-tokens-in-your-organization)
+      #
+      # 3. The value is shown exactly once (`github_pat_…`). Paste it straight
+      #    into Forgejo — never into a file, a git URL or a shell argument:
+      #    http://forgejo:3000/emobotics/m5stack-core/settings/actions/secrets
+      #    → "Add Secret", name `GH_PAGES_TOKEN`, value = the token. The web UI
+      #    is the route: `fj actions secrets create` 403s for the repo-scoped
+      #    `agent` token, and this is a human's step anyway.
+      #
+      # 4. Re-run this workflow (push to master, or "Run workflow" —
+      #    `workflow_dispatch` is enabled above) so the push creates the
+      #    `gh-pages` branch. GitHub's Pages branch selector only lists
+      #    branches that already exist, so this has to happen before step 5.
+      #
+      # 5. Point Pages at it:
+      #    https://github.com/emobotics-dev/m5stack-core/settings/pages
+      #      Source  Deploy from a branch
+      #      Branch  gh-pages   /(root)
+      #    The site goes live at https://emobotics-dev.github.io/m5stack-core
+      #    (docs: https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+      #
+      # ----------------------------------------------------------------------
+      - name: Publish to the GitHub Pages mirror
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_PAGES_TOKEN: ${{ secrets.GH_PAGES_TOKEN }}
+        run: |
+          set -eu
+          if [ -z "${GH_PAGES_TOKEN:-}" ]; then
+            echo "GH_PAGES_TOKEN is not set — docs built, push skipped."
+            echo "One-time setup: see the comment above this step in .forgejo/workflows/docs.yml."
+            exit 0
+          fi
+          cd "$SITE_DIR"
+          # A fresh repo per run, force-pushed: gh-pages carries exactly one
+          # commit, so the mirror never accumulates generated history.
+          git init -q -b gh-pages
+          git config user.name  'Holger Steinhaus'
+          git config user.email '3057137+hsteinhaus@users.noreply.github.com'
+          git add .
+          git commit -q -m "rustdoc for ${GITHUB_SHA}"
+          # The token is read from the environment by a per-invocation
+          # credential helper — never written into a URL, a git config or the
+          # published tree.
+          git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_PAGES_TOKEN"; }; f' \
+              push --force https://github.com/emobotics-dev/m5stack-core.git gh-pages
