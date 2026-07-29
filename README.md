@@ -214,54 +214,60 @@ backstop for a fully wedged executor.
 ### Memory (`mem::`)
 
 The BSP owns the global heap (feature **`heap`**, implied by `psram`): one call,
-`mem::init_heap(profile, psram)`, declares the `esp-alloc` DRAM regions for a
-`HeapProfile` (the HIL-proven per-board sizes) and, given `Some(psram)`,
-registers external PSRAM — so a binary never spells out `esp_alloc::heap_allocator!`:
+`mem::init_heap(profile)`, declares the `esp-alloc` DRAM regions for a
+`HeapProfile` (the HIL-proven per-board sizes) — so a binary never spells out
+`esp_alloc::heap_allocator!`. **`init_heap` never touches PSRAM** — that's a
+separate, deliberate decision, made below:
 
 ```rust
 use m5stack_core::mem::{self, HeapProfile};
 
-mem::init_heap(HeapProfile::Default, Some(board.psram)); // reclaimed + DRAM + PSRAM
-mem::init_heap(HeapProfile::Lvgl, None);                 // reclaimed-ROM only, no PSRAM
-mem::init_heap(HeapProfile::Coex, Some(board.psram));    // more controller heap
+mem::init_heap(HeapProfile::Default); // reclaimed + plain DRAM
+mem::init_heap(HeapProfile::Lvgl);    // reclaimed-ROM only
+mem::init_heap(HeapProfile::Coex);    // more controller heap
 ```
 
 PSRAM specifics, behind the **`psram`** feature. Both boards have external SPI
-PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB); `init_heap(_, Some(psram))` (or
-`mem::init_psram_heap(psram)` directly) maps it as an external region of the
-`esp-alloc` global heap. Applications can then allocate from it either
-implicitly (the global allocator spills into PSRAM after internal DRAM) or
-**explicitly** — preferably via the *checked* helpers:
+PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB). Getting PSRAM into the global heap is
+opt-in and explicit — no function does it as a side effect of anything else,
+because once a region carries external capability, *every* plain
+`alloc::vec!` / `Box` / `String` in the whole crate graph (not just your own
+code) becomes eligible to silently spill into it once internal DRAM runs out.
 
 ```rust
 use m5stack_core::mem;
 
-let psram_free = mem::init_psram_heap(peripherals.PSRAM);
-let mut big = mem::psram_vec::<u8>(512 * 1024);  // in PSRAM; atomics rejected at compile time
-let scratch = mem::psram_box([0u32; 1024]);      // in PSRAM
-let dma = mem::dma_buffer(4 * 1024);             // in internal DRAM; DMA-safe
+// The default: maps PSRAM as one private region. Never touches the global
+// heap — nothing here is ever reachable by a plain allocation.
+let psram = mem::psram_map(peripherals.PSRAM);
 ```
 
-The raw markers `ExternalMemory` / `InternalMemory` are still re-exported for
-direct `allocator_api2` use, but they skip the atomic check — use them only when
-you know what's going into PSRAM.
-
-For a **private** PSRAM region — one to hand to a *foreign* allocator (e.g.
-LVGL's built-in TLSF via `lv_mem_add_pool`) rather than the shared global heap —
-use `mem::psram_split`, which splits *mapping* from *registering*:
+For **deliberate** global exposure — so the checked `psram_box` / `psram_vec`
+helpers (atomic-bearing types rejected at compile time) can reach part of
+PSRAM — use `mem::psram_split` instead, which splits *mapping* from
+*registering*:
 
 ```rust
 use m5stack_core::mem;
 
 // Carve 512 KiB private off the base; register the remainder with the global heap.
-let split = mem::psram_split(peripherals.PSRAM, Some(512 * 1024))?;
+let split = mem::psram_split(peripherals.PSRAM, 512 * 1024)?;
 // `split.private: &'static mut [MaybeUninit<u8>]` — no unsafe at the call site,
 // base is large-aligned. `split.global_free` = external bytes now in the heap.
+
+let mut big = mem::psram_vec::<u8>(512 * 1024);  // in PSRAM; atomics rejected at compile time
+let scratch = mem::psram_box([0u32; 1024]);      // in PSRAM
+let dma = mem::dma_buffer(4 * 1024);             // in internal DRAM; DMA-safe
 ```
 
-`reserve: None` makes the whole region private (nothing global); it returns
+`reserve: 0` is the maximal-exposure case — an empty private slice, all PSRAM
+global — sound but rarely what you want; reach for `psram_map` if you don't
+need any global exposure at all. `psram_split` returns
 `Result<PsramSplit, PsramSplitError>` (`NotMapped`, or `TooSmall { available }`).
-`init_psram_heap` (map + register all-global) is unchanged and kept alongside.
+
+The raw markers `ExternalMemory` / `InternalMemory` are still re-exported for
+direct `allocator_api2` use, but they skip the atomic check — use them only when
+you know what's going into PSRAM.
 
 For headroom checks, `mem::internal_free()` / `mem::external_free()` return the
 global heap's free internal-DRAM / external-PSRAM bytes (`O(1)`) without a binary

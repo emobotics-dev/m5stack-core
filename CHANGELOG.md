@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `mem::init_heap` no longer takes PSRAM, and PSRAM is never
+  registered with the global allocator by default** (#41). Getting PSRAM into
+  the global heap is a hazard for the *whole* crate graph, not just the
+  caller — once a region carries external capability, every plain
+  `alloc::vec!` / `Box` / `String` anywhere becomes eligible to silently spill
+  into it once internal DRAM runs out (esp-alloc has no "external, but not for
+  capability-less requests" region flag). `init_psram_heap` (map + register
+  everything globally in one call) is removed.
+  - `init_heap(profile, psram)` → `init_heap(profile)`. Binaries that don't
+    need PSRAM: just drop the second argument.
+  - New default: `mem::psram_map(psram) -> &'static mut [MaybeUninit<u8>]` —
+    maps the whole region as a private slice, never touches the global heap.
+  - `psram_split(psram, reserve: Option<usize>)` → `psram_split(psram,
+    reserve: usize)`. The old `reserve: None` (fully private) is now
+    `psram_map`; the old `reserve: Some(n)` is `psram_split(psram, n)`.
+
 ## [0.4.3] - 2026-07-29
 
 ### Changed
