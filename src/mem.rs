@@ -153,6 +153,28 @@ pub fn init_psram_heap(psram: PSRAM<'static>) -> usize {
     free
 }
 
+/// Map the board's external PSRAM and return the whole region as a private
+/// slice. Nothing is registered with the global heap — nothing returned here
+/// is ever reachable by a plain `alloc::vec!` / `Box` / `String`.
+///
+/// The default way to get at PSRAM. Hand the slice to a foreign allocator
+/// (e.g. LVGL's built-in TLSF via `lv_mem_add_pool`) or use it directly. For
+/// deliberate global exposure (so [`psram_box`] / [`psram_vec`] can reach
+/// part of PSRAM), use [`psram_split`] instead.
+///
+/// The size is auto-detected. Call once, after [`esp_hal::init`]. Calling
+/// this (or [`psram_split`]) more than once is unsound — the PSRAM controller
+/// must only be initialized a single time.
+#[cfg(feature = "psram")]
+pub fn psram_map(psram: PSRAM<'static>) -> &'static mut [MaybeUninit<u8>] {
+    // SAFETY: see `psram_split`, which this mirrors with `reserve == total`
+    // (the whole region private, nothing registered globally).
+    let psram = esp_hal::psram::Psram::new(psram, Default::default());
+    let (base, total) = psram.raw_parts();
+    info!("PSRAM mapped: {} KiB private", total / 1024);
+    unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, total) }
+}
+
 /// A private PSRAM region carved off the global heap, plus the external bytes
 /// registered with the global heap. Returned by [`psram_split`].
 #[cfg(feature = "psram")]
