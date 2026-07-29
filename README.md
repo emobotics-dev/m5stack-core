@@ -4,6 +4,16 @@ Board support crate for **M5Stack Fire27** (ESP32) and **CoreS3** (ESP32-S3).
 
 Provides chip-agnostic drivers, shared I2C bus, and reusable async IO task loops with `fn(...)` callbacks.
 
+## Documentation
+
+**API docs: <https://emobotics-dev.github.io/m5stack-core>** — one rustdoc tree
+per board, built from `master` with all optional features on.
+
+The docs.rs build for this crate fails, and cannot be made to pass: docs.rs runs
+the stock rust-lang toolchain, which has no Xtensa backend, and both supported
+boards are Xtensa (ESP32 / ESP32-S3). The link above is the self-hosted
+substitute, the same approach `esp-idf-hal` takes.
+
 ## Features
 
 | Feature | Target | Chip |

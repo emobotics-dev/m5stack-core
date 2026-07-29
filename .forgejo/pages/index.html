@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!--
+  Landing page for https://emobotics-dev.github.io/m5stack-core/ — copied to
+  the site root by .forgejo/workflows/docs.yml. The two board features are
+  mutually exclusive, so there is no single rustdoc tree that covers the whole
+  crate; the reader picks a board here.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>m5stack-core — API documentation</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 3rem 1.5rem;
+      }
+      code { font-family: ui-monospace, monospace; }
+      li { margin-bottom: .5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>m5stack-core</h1>
+    <p>
+      Board support crate for the M5Stack <strong>Fire27</strong> (ESP32) and
+      <strong>CoreS3</strong> (ESP32-S3). Exactly one board feature is enabled
+      per build and each selects different hardware, so the API is documented
+      once per board:
+    </p>
+    <ul>
+      <li><a href="fire27/m5stack_core/index.html">Fire27 — ESP32 (<code>fire27</code>)</a></li>
+      <li><a href="cores3/m5stack_core/index.html">CoreS3 — ESP32-S3 (<code>cores3</code>)</a></li>
+    </ul>
+    <p>
+      Both trees are built from the tip of <code>master</code> with every
+      optional feature enabled, so they can be ahead of the released crate.
+      Links to items from other crates do not resolve — only this crate is
+      documented here.
+    </p>
+    <p>
+      This site exists because docs.rs cannot build the crate: its stock
+      toolchain has no Xtensa backend, which is the only architecture the two
+      supported boards use.
+      <a href="https://github.com/emobotics-dev/m5stack-core">Source</a> ·
+      <a href="https://crates.io/crates/m5stack-core">crates.io</a>
+    </p>
+  </body>
+</html>

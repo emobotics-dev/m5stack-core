@@ -69,6 +69,27 @@ Pre-1.0 semver as Cargo interprets it: **breaking → bump minor (`0.x`), additi
    Note: the `coex` feature has a known xtensa codegen issue; it is not a default
    and `--no-verify` skips the build, so it does not block publishing.
 
+## Docs hosting (docs.rs is red on purpose)
+
+**docs.rs has never built this crate and never will** — don't try to fix it.
+Its stock rust-lang toolchain has no Xtensa backend, and both boards are Xtensa
+(ESP32 / ESP32-S3), so no feature or `[package.metadata.docs.rs]` setting helps.
+(esp-hal dodges this by pointing `default-target` at one of its RISC-V chips —
+this crate has no RISC-V board to fall back to. `esp-idf-hal` hits the same wall
+and self-hosts too; that's the precedent. See #36.)
+
+- The rustdoc is built by `.forgejo/workflows/docs.yml` (both boards, `esp`
+  toolchain) on every push to `master` and force-pushed to the `gh-pages` branch
+  of the **GitHub mirror**, served at
+  `https://emobotics-dev.github.io/m5stack-core` — the crate's `documentation`
+  link.
+- That push needs `GH_PAGES_TOKEN` (a fine-grained GitHub PAT on the mirror,
+  `Contents: read+write`) as a Forgejo Actions secret, and Pages set to the
+  `gh-pages` branch root. Both are one-time human steps; without the secret the
+  job builds the docs and skips the push. How to mint the token and where to
+  paste it — deep links included — is the numbered block above the publish step
+  in `.forgejo/workflows/docs.yml`; it is the only copy, don't restate it here.
+
 ## Layout
 
 - `src/board/` — per-board pin wiring + bring-up (`fire27`, `cores3`, `spi2`,

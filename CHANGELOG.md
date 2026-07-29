@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`documentation` now points at <https://emobotics-dev.github.io/m5stack-core>**
+  (#36) — self-hosted rustdoc, one tree per board. docs.rs has failed for every
+  published version and cannot be fixed: its stock toolchain has no Xtensa
+  backend, and both boards are Xtensa-only, so there is no RISC-V
+  `default-target` to fall back on the way esp-hal has.
+
 ## [0.4.2] - 2026-07-29
 
 Additive — one unified, cross-driver button-timing API so latency-sensitive
