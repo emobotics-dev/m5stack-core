@@ -295,8 +295,8 @@ pub struct Board {
     /// RMT ([`crate::driver::sk6812::Sk6812Driver`]). The M5GO bottom's 5 V LED
     /// rail is gated by the AW9523B — see `Aw9523bDriver::enable_bus_5v`.
     pub sk6812: AnyPin<'static>,
-    /// External SPI PSRAM (~8 MB) — feed to `mem::init_psram_heap` (the heap
-    /// region; sizing/usage is application policy). [feature `psram`]
+    /// External SPI PSRAM (~8 MB) — feed to `mem::psram_map` / `mem::psram_split`
+    /// (sizing/usage is application policy). [feature `psram`]
     pub psram: esp_hal::peripherals::PSRAM<'static>,
     pub m5bus: M5Bus<'static>,
     pub system: SystemResources<'static>,

@@ -22,7 +22,7 @@ m5stack_core::app_desc!();
 async fn main(spawner: Spawner) {
     let p = board::init();
     let board = board::Board::split(p);
-    shim::init_heaps_default(board.psram);
+    shim::init_heaps_default();
     esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
     #[cfg(feature = "fire27")]
     let _console =

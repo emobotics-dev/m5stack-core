@@ -36,9 +36,9 @@ const EXT_PROBE: usize = 256 * 1024;
 async fn main(spawner: Spawner) {
     let p = board::init();
     let board = board::Board::split(p);
-    // DRAM heap only — leave PSRAM for `psram_split`. (NOT `init_heaps_default`,
-    // which registers all PSRAM globally and consumes the peripheral.)
-    mem::init_heap(HeapProfile::Default, None);
+    // DRAM heap only — `init_heap` never touches PSRAM. PSRAM is handed to
+    // `psram_split` below instead.
+    mem::init_heap(HeapProfile::Default);
     esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
     #[cfg(feature = "fire27")]
     let _console = shim::init_console(
@@ -49,7 +49,7 @@ async fn main(spawner: Spawner) {
     let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
 
     log::info!("[psram] split: reserving {} KiB private", RESERVE / 1024);
-    let ok = match mem::psram_split(board.psram, Some(RESERVE)) {
+    let ok = match mem::psram_split(board.psram, RESERVE) {
         Ok(split) => validate(split),
         Err(e) => {
             log::error!("[psram] split FAILED: {:?}", e);

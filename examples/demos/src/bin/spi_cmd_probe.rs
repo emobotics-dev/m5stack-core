@@ -165,7 +165,7 @@ async fn main(spawner: Spawner) {
     // uses no on-board peripheral (no display, no I2C), just three free pads.
     let tg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
-    mem::init_heap(HeapProfile::Default, Some(p.PSRAM));
+    mem::init_heap(HeapProfile::Default);
     esp_rtos::start(AnyTimer::from(tg0.timer0), sw_int.software_interrupt0);
     #[cfg(feature = "fire27")]
     let _console = shim::init_console(

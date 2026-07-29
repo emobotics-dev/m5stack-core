@@ -14,35 +14,45 @@
 //! use m5stack_core::mem::{self, HeapProfile};
 //!
 //! // After board init, before the first allocation:
-//! mem::init_heap(HeapProfile::Default, Some(board.psram)); // DRAM + PSRAM
-//! mem::init_heap(HeapProfile::Lvgl, None);                  // DRAM only
+//! mem::init_heap(HeapProfile::Default); // DRAM regions only — never touches PSRAM
+//! mem::init_heap(HeapProfile::Lvgl);
 //! ```
 //!
-//! The PSRAM-specific surface below ([`init_psram_heap`], [`psram_split`], the
-//! checked [`psram_box`] / [`psram_vec`], [`PsramSafe`]) needs the `psram`
+//! `init_heap` never touches PSRAM — it owns only the DRAM region sizes for a
+//! [`HeapProfile`]. PSRAM is a separate, deliberate decision: see
+//! [`psram_map`] / [`psram_split`] below. The PSRAM-specific surface (those two,
+//! the checked [`psram_box`] / [`psram_vec`], [`PsramSafe`]) needs the `psram`
 //! feature; the heap regions and [`dma_buffer`] need only `heap`.
 //!
 //! Both boards carry SPI PSRAM (Fire27: ~4 MB, CoreS3: ~8 MB). `esp-alloc`
-//! exposes a single global heap that can be backed by several regions;
-//! [`init_psram_heap`] maps the external PSRAM and registers it as one such
-//! region. After that, an application can allocate from it in two ways:
+//! exposes a single global heap that can be backed by several regions. Getting
+//! PSRAM into one of those regions is opt-in and explicit — there is no
+//! function that puts PSRAM behind the global allocator as a side effect of
+//! anything else, because once a region carries external capability, *every*
+//! plain `alloc::vec!` / `Box` / `String` in the whole crate graph — not just
+//! your own code — becomes eligible to silently spill into it once internal
+//! DRAM is exhausted (esp-alloc has no "external, but not for capability-less
+//! requests" region flag).
 //!
-//! 1. **Implicitly** — once registered, the global allocator may satisfy any
-//!    `alloc::vec!` / `Box` / `String` from PSRAM (internal DRAM is consumed
-//!    first, then it spills to PSRAM).
-//! 2. **Explicitly** — pick the region per allocation. Prefer the *checked*
-//!    helpers [`psram_box`] / [`psram_vec`], which reject atomic-bearing types
-//!    at compile time (see [`PsramSafe`]):
-//!
-//! For a *private* region handed to a foreign allocator (not the global heap at
-//! all) — e.g. LVGL's TLSF — use [`psram_split`] instead, which carves a private
-//! slice off the base and registers only the remainder globally.
+//! 1. **[`psram_map`] — the default.** Maps PSRAM and hands back the whole
+//!    region as a private slice. Nothing is registered with the global heap;
+//!    nothing here is ever reachable by a plain allocation. Hand the slice to
+//!    a foreign allocator (e.g. LVGL's TLSF) or use it directly.
+//! 2. **[`psram_split`] — deliberate global exposure.** Carves a private
+//!    region off the base (as above) *and* registers the remainder with the
+//!    global heap, for the checked [`psram_box`] / [`psram_vec`] helpers
+//!    (which reject atomic-bearing types at compile time — see [`PsramSafe`]).
+//!    Reach for this only when you've decided part (or with `reserve: 0`, all)
+//!    of PSRAM should be globally exposed, and accept what that costs.
 //!
 //! ```ignore
 //! use m5stack_core::mem;
 //!
-//! let psram_free = mem::init_psram_heap(peripherals.PSRAM);
+//! // Never touches the global allocator:
+//! let psram = mem::psram_map(peripherals.PSRAM);
 //!
+//! // Deliberately expose part of PSRAM globally:
+//! let split = mem::psram_split(peripherals.PSRAM, 2 * 1024 * 1024)?;
 //! let mut big = mem::psram_vec::<u8>(512 * 1024);   // in PSRAM, atomics rejected
 //! let scratch = mem::psram_box([0u32; 1024]);       // in PSRAM
 //! let dma = mem::dma_buffer(4 * 1024);              // in internal DRAM, DMA-safe
@@ -90,21 +100,18 @@ pub enum HeapProfile {
     Coex,
 }
 
-/// Register the global heap regions for `profile`, plus external PSRAM when
-/// `psram` is `Some`, using the HIL-proven per-board sizes. Call once, right
-/// after [`crate::board::init`] / `Board::split` and before any allocation.
+/// Register the global heap's DRAM regions for `profile`, using the
+/// HIL-proven per-board sizes. Call once, right after [`crate::board::init`] /
+/// `Board::split` and before any allocation.
 ///
-/// This is the single place a binary sets up the heap — it never calls
-/// `esp_alloc::heap_allocator!` itself. esp-alloc's global heap holds at most
-/// three regions; each profile registers at most the reclaimed-ROM region, the
-/// plain-DRAM region and the external PSRAM region — never a fourth (a 4th
-/// `add_region` panics silently). Pass `None` for heap-only workloads
-/// (e.g. [`HeapProfile::Lvgl`], or a board with no external RAM).
-///
-/// Registering PSRAM needs the `psram` feature; without it a `Some(_)` argument
-/// is accepted but the external region is **not** added (the DRAM regions still
-/// are).
-pub fn init_heap(profile: HeapProfile, psram: Option<PSRAM<'static>>) {
+/// This is the single place a binary sets up the DRAM heap — it never calls
+/// `esp_alloc::heap_allocator!` itself. This never touches PSRAM: see
+/// [`psram_map`] / [`psram_split`] for that, called separately (and
+/// optionally) afterward. esp-alloc's global heap holds at most three
+/// regions; each profile registers at most the reclaimed-ROM region and the
+/// plain-DRAM region, leaving room for [`psram_split`]'s external region — a
+/// 4th `add_region` panics silently.
+pub fn init_heap(profile: HeapProfile) {
     match profile {
         HeapProfile::Default => {
             esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
@@ -126,31 +133,28 @@ pub fn init_heap(profile: HeapProfile, psram: Option<PSRAM<'static>>) {
             }
         }
     }
-    if let Some(psram) = psram {
-        // `psram` feature off → the binding is consumed here without registering
-        // an external region (the PSRAM controller stays uninitialised).
-        let _ = &psram;
-        #[cfg(feature = "psram")]
-        init_psram_heap(psram);
-    }
 }
 
-/// Map the board's external PSRAM and add it to the global heap as an
-/// [`ExternalMemory`] region.
+/// Map the board's external PSRAM and return the whole region as a private
+/// slice. Nothing is registered with the global heap — nothing returned here
+/// is ever reachable by a plain `alloc::vec!` / `Box` / `String`.
 ///
-/// The size is auto-detected. Returns the amount of external (PSRAM) heap free
-/// immediately after registration, in bytes.
+/// The default way to get at PSRAM. Hand the slice to a foreign allocator
+/// (e.g. LVGL's built-in TLSF via `lv_mem_add_pool`) or use it directly. For
+/// deliberate global exposure (so [`psram_box`] / [`psram_vec`] can reach
+/// part of PSRAM), use [`psram_split`] instead.
 ///
-/// Call once, after [`esp_hal::init`]. Usually invoked for you by [`init_heap`]
-/// when you pass `Some(psram)`; call it directly only if you manage the DRAM
-/// regions yourself. Calling it more than once is unsound — the PSRAM
-/// controller must only be initialized a single time.
+/// The size is auto-detected. Call once, after [`esp_hal::init`]. Calling
+/// this (or [`psram_split`]) more than once is unsound — the PSRAM controller
+/// must only be initialized a single time.
 #[cfg(feature = "psram")]
-pub fn init_psram_heap(psram: PSRAM<'static>) -> usize {
-    esp_alloc::psram_allocator!(psram, esp_hal::psram);
-    let free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into());
-    info!("PSRAM heap registered: {} KiB external free", free / 1024);
-    free
+pub fn psram_map(psram: PSRAM<'static>) -> &'static mut [MaybeUninit<u8>] {
+    // SAFETY: see `psram_split`, which this mirrors with `reserve == total`
+    // (the whole region private, nothing registered globally).
+    let psram = esp_hal::psram::Psram::new(psram, Default::default());
+    let (base, total) = psram.raw_parts();
+    info!("PSRAM mapped: {} KiB private", total / 1024);
+    unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, total) }
 }
 
 /// A private PSRAM region carved off the global heap, plus the external bytes
@@ -204,19 +208,18 @@ pub enum PsramSplitError {
 /// Map the board's external PSRAM, carve a **private** region off the base, and
 /// register the remainder with the global heap.
 ///
-/// The split-out counterpart of [`init_psram_heap`] (which maps *and* registers
-/// the whole region globally in one step). Reach for `psram_split` when a
-/// consumer needs a private, exclusive, contiguous PSRAM region to hand to a
-/// *foreign* allocator — LVGL's built-in TLSF via `lv_mem_add_pool` — rather than
-/// routing those allocations through the shared global allocator.
+/// The deliberate-global-exposure counterpart of [`psram_map`] (which makes
+/// the whole region private and touches the global heap not at all). Reach for
+/// `psram_split` only once you've decided that some of PSRAM should be
+/// reachable by the checked [`psram_box`] / [`psram_vec`] helpers — that
+/// decision then applies to the *whole* crate graph's plain allocations, not
+/// just yours, once internal DRAM runs out (see the module docs).
 ///
-/// - `reserve: Some(n)` carves `n` bytes private from the base and registers the
-///   remainder globally. `reserve: None` makes the whole region private (nothing
-///   is added to the global heap; [`PsramSplit::global_free`] is `0`).
-///   `reserve: Some(0)` is the mirror image: an empty [`PsramSplit::private`]
-///   slice and *all* PSRAM registered globally — i.e. it degenerates to what
-///   [`init_psram_heap`] does. Sound (a zero-length slice grants access to
-///   nothing) but rarely what you want.
+/// - `reserve` carves that many bytes private from the base and registers the
+///   remainder globally. `reserve == 0` is the maximal-exposure case: an empty
+///   [`PsramSplit::private`] slice and *all* PSRAM registered globally. Sound (a
+///   zero-length slice grants access to nothing) but rarely what you want —
+///   prefer [`psram_map`] if you don't need any global exposure at all.
 /// - The private region is carved **from the base**, so [`PsramSplit::private`]
 ///   starts at the (large-aligned) PSRAM mapping base — aligned for LVGL's TLSF
 ///   with no math; esp-alloc aligns the remainder's base internally.
@@ -227,9 +230,9 @@ pub enum PsramSplitError {
 ///   ever needs a custom `PsramConfig` (a fixed `PsramSize`, say); no current
 ///   one does.
 ///
-/// Call once, after [`esp_hal::init`], **instead of** passing `Some(psram)` to
-/// [`init_heap`] or calling [`init_psram_heap`]: taking `PSRAM<'static>` by value
-/// makes the once-only mapping a type-level guarantee, so the two cannot both run.
+/// Call once, after [`esp_hal::init`], **instead of** [`psram_map`]: taking
+/// `PSRAM<'static>` by value makes the once-only mapping a type-level
+/// guarantee, so the two cannot both run.
 ///
 /// # Caveats handed back to the caller
 /// - **No atomics in the private region.** The checked [`psram_box`] /
@@ -244,10 +247,7 @@ pub enum PsramSplitError {
 /// [`PsramSplitError::NotMapped`] if PSRAM does not map; [`PsramSplitError::TooSmall`]
 /// if it maps smaller than `reserve`.
 #[cfg(feature = "psram")]
-pub fn psram_split(
-    psram: PSRAM<'static>,
-    reserve: Option<usize>,
-) -> Result<PsramSplit, PsramSplitError> {
+pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> Result<PsramSplit, PsramSplitError> {
     // `Psram` has no `Drop`: the mapping is recorded in esp-hal's range statics
     // and survives the value dropping (see `PsramSplit::private`), so a local is
     // fine — nothing unmaps at the end of this block.
@@ -260,7 +260,6 @@ pub fn psram_split(
         return Err(PsramSplitError::NotMapped);
     }
 
-    let reserve = reserve.unwrap_or(total);
     if reserve > total {
         return Err(PsramSplitError::TooSmall { available: total });
     }
@@ -368,8 +367,8 @@ pub fn internal_free() -> usize {
 }
 
 /// Free bytes in the global heap's **external** (PSRAM) region, right now — `0`
-/// unless PSRAM was registered globally (via [`init_heap`] with `Some(psram)` /
-/// [`init_psram_heap`]; a private [`psram_split`] region is *not* counted here).
+/// unless [`psram_split`] registered a non-empty remainder globally (a private
+/// [`psram_map`] / [`psram_split`] region is *not* counted here).
 pub fn external_free() -> usize {
     esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into())
 }

@@ -71,8 +71,8 @@ pub struct Board {
     /// PDMA channel for [`Self::spi3`] — SPI3's own dedicated PDMA unit, not
     /// shared with `spi2` (`DMA_SPI2`).
     pub spi3_dma: AnySpiDmaChannel<'static>,
-    /// External SPI PSRAM (~4 MB) — feed to `mem::init_psram_heap` (the heap
-    /// region; the ESP32 cannot DMA from PSRAM). [feature `psram`]
+    /// External SPI PSRAM (~4 MB) — feed to `mem::psram_map` / `mem::psram_split`
+    /// (the ESP32 cannot DMA from PSRAM). [feature `psram`]
     pub psram: esp_hal::peripherals::PSRAM<'static>,
     pub m5bus: M5Bus<'static>,
     pub system: SystemResources<'static>,

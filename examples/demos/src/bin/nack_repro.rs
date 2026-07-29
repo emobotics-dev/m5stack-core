@@ -81,7 +81,7 @@ async fn heartbeat() {
 async fn main(spawner: Spawner) {
     let p = board::init();
     let board = board::Board::split(p);
-    shim::init_heaps_coex(board.psram);
+    shim::init_heaps_coex();
     esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
     #[cfg(feature = "fire27")]
     let _console =
