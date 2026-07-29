@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-29
+
 ### Changed
 
 - **`documentation` now points at <https://emobotics-dev.github.io/m5stack-core>**
