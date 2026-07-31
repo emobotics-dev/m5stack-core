@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Firmware identity reporting** (#43): `app_elf_sha256()` — the built
+  image's own content hash, straight off the esp-idf application descriptor,
+  needs nothing from the consumer. New `app-desc` feature (implied by `heap`,
+  as before) decouples the descriptor from the global heap, so a board that
+  wants identity reporting without `esp-alloc` in the graph can enable just
+  this.
+- **`identity` feature** (implies `app-desc`): makes `app_desc!()`'s version
+  field an enforced build-time git descriptor instead of plain
+  `CARGO_PKG_VERSION` — same call site, no application-code change. Forgetting
+  the required `build.rs` wiring is a compile error (`env!()` has nothing to
+  read), not a silent gap. Off by default; existing consumers are unaffected.
+- **New crate `m5stack-core-build`**: a host-only build-time helper —
+  `emit_identity_env()`, called once from a consumer's own `build.rs`, sets
+  the git descriptor `identity` requires. Optional; the env var can also be
+  set by hand.
+
 ### Changed
 
 - **BREAKING: `mem::init_heap` no longer takes PSRAM, and PSRAM is never

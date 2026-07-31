@@ -52,11 +52,25 @@ multicore = ["dep:esp-rtos"]
 # the ring, `install` can only register the backend, and `on_panic` still writes
 # the RTC breadcrumb and halts (RWDT recovers) — just with no serial surface.
 console-serial = []
+# esp-idf application descriptor (`app_desc!`, `app_elf_sha256()`): a fixed,
+# ELF-mapped struct (project name/version/build time/ELF content hash) that a
+# host can read straight off flash without booting the board. Decoupled from
+# `heap` — reading/emitting the descriptor touches no allocator — so a board
+# that wants identity reporting but no global heap doesn't have to pull in
+# esp-alloc just to get it.
+app-desc = ["dep:esp-bootloader-esp-idf"]
+# Enforced firmware build identity: `app_desc!()`'s version field becomes the
+# consumer's own build-time git descriptor (`M5STACK_CORE_BUILD_MARK`, set by
+# the consumer's own `build.rs` — see the `m5stack-core-build` crate) instead
+# of plain `CARGO_PKG_VERSION`. The call site never changes; forgetting the
+# `build.rs` wiring is a compile error (a missing `env!()`), not a silent gap.
+# Off by default — `app_desc!()` keeps today's plain-version behavior.
+identity = ["app-desc"]
 # Global-heap ownership (the `mem` module): `mem::init_heap(profile, psram)`
 # declares the esp-alloc DRAM regions (HIL-proven per-board sizes) so a binary
 # never calls `esp_alloc::heap_allocator!` itself. PSRAM-free, so a board with
 # no external RAM (or that just doesn't want it) enables only this.
-heap = ["dep:esp-alloc", "dep:allocator-api2", "dep:esp-bootloader-esp-idf"]
+heap = ["dep:esp-alloc", "dep:allocator-api2", "app-desc"]
 # External PSRAM heap support (the PSRAM region + the `psram_box`/`psram_vec`
 # checked allocators). Implies `heap`. Enabling it activates a build-time guard
 # requiring opt-level > 0 (build.rs) and the compile-time `PsramSafe` atomic
@@ -147,7 +161,7 @@ esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git",
 esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
 
 [workspace]
-members = ["examples/common", "examples/demos"]
+members = ["examples/common", "examples/demos", "m5stack-core-build"]
 
 # Shared example dependencies — referenced by the example crates via
 # `<dep>.workspace = true` so the esp-hal fork rev (and the rest) is stated

@@ -27,7 +27,9 @@ Exactly one board feature must be enabled. Orthogonal opt-ins:
 |---------|---------|----------|
 | `display` | `board::display` (ILI9342C bring-up) + `board::spi2` device construction | `lcd-async`, `embassy-embedded-hal` |
 | `buttons` | `io::buttons::Buttons` — debounced Fire27 front-panel driver | `async-button` |
-| `heap` | `mem::init_heap` — BSP owns the global heap (DRAM regions + HIL-proven per-board sizes) | `esp-alloc`, `esp-bootloader-esp-idf` |
+| `app-desc` | `app_desc!` + `app_elf_sha256()` — the esp-idf application descriptor (**implied by `heap`**) | `esp-bootloader-esp-idf` |
+| `identity` | enforced firmware build identity — `app_desc!()`'s version field becomes the consumer's git commit + dirty state (**implies `app-desc`**) | (via `app-desc`) |
+| `heap` | `mem::init_heap` — BSP owns the global heap (DRAM regions + HIL-proven per-board sizes) | `esp-alloc`, (`app-desc`) |
 | `psram` | external-PSRAM region + checked `psram_box`/`psram_vec` (**implies `heap`**) | (via `heap`) |
 | `console-serial` | the `io::console` serial transport (UART0 / USB-Serial-JTAG); **off** = R9 production backstop (no serial symbols, panic still breadcrumbs + halts) | — |
 | `panic-handler` | BSP-provided `#[panic_handler]` → `io::console::on_panic` (opt in, or supply your own) | — |
@@ -285,6 +287,50 @@ documented:
 `PsramSafe` requires the `esp` toolchain's `auto_traits` + `negative_impls`
 (enabled only when `psram` is on). No esp-hal Cargo feature is required — PSRAM
 itself is available under the already-enabled `unstable` feature.
+
+### Firmware identity (`app_desc!`)
+
+`app_desc!()` (feature `app-desc`, implied by `heap`) emits the esp-idf
+application descriptor — a fixed, ELF-mapped struct (project name, version,
+build time, and `app_elf_sha256()`, the built image's own content hash). A
+host can read it straight off flash without booting the board, which is what
+makes a "skip the flash if this board already carries the intended image"
+workflow possible. Invoke it once, in the binary (not the BSP), so it captures
+the *application's* `CARGO_PKG_VERSION`:
+
+```rust
+m5stack_core::app_desc!();
+```
+
+By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
+feature (implies `app-desc`) makes it a build-time git descriptor instead —
+same call site, no application-code change — and turns "forgot to wire this
+up" into a compile error rather than a silent gap:
+
+1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
+2. Call it once from your own `build.rs`:
+   ```rust
+   fn main() {
+       m5stack_core_build::emit_identity_env();
+   }
+   ```
+3. Enable the `identity` feature. `app_desc!()`'s call site is unchanged, but
+   its expansion now requires `M5STACK_CORE_BUILD_MARK` (an 8-hex-char
+   abbreviated commit hash + a `*` if the tree is dirty, e.g. `a1b2c3d4*`) —
+   if step 1 or 2 was skipped, that's `env!()` failing to compile *in your own
+   crate*, pointing straight at the `app_desc!()` line, not a silently-plain
+   version field.
+
+`EspAppDesc::version` is a fixed 32-byte C string (silently truncated past
+that) — `m5stack-core-build` keeps the mark itself short (≤16 bytes) to leave
+headroom. The mark alone becomes the whole version field; nothing prefixes it
+with `CARGO_PKG_VERSION` automatically, so if you want that too, fold it into
+what `m5stack-core-build` emits, or set `M5STACK_CORE_BUILD_MARK` yourself
+from your own `build.rs` instead — the env var's *name* is the only contract,
+not how it gets set. BSP owns the mechanism (reading the descriptor back,
+enforcing the wiring); the consumer's own `build.rs` owns the content —
+`m5stack-core` never inspects its own git tree, only `m5stack-core-build`
+does, and only against the *calling* crate's directory.
 
 ### Serial console (`io::console`)
 
