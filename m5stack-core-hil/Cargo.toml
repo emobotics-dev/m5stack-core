@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "m5stack-core-hil"
+version = "0.1.0"
+edition = "2024"
+# Let-chains (`if let Some(x) = o && x > n`) are used below and stabilised in
+# 1.88 — which is also what the esp-hal 1.1.1 family requires, so the whole
+# repo states one number.
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+description = "Hardware-in-the-loop harness for M5Stack boards: drive a run, preserve its evidence, judge it"
+repository = "https://github.com/emobotics-dev/m5stack-core"
+keywords = ["esp32", "m5stack", "hardware-in-the-loop", "testing", "serial"]
+categories = ["development-tools::testing", "embedded"]
+
+# Its own workspace, deliberately, for two reasons.
+#
+# Mechanically: the repo root's `.cargo/config.toml` pins
+# `target = "xtensa-esp32-none-elf"` and `build-std = ["alloc", "core"]`, so a
+# host binary joined to the outer workspace would be cross-compiled to the
+# board. (Cargo merges config by DIRECTORY hierarchy, so excluding it from the
+# workspace is not enough on its own — see `.cargo/config.toml` here.)
+#
+# By intent: nothing about claiming a board, preserving its output and judging a
+# run is specific to this BSP, and this is expected to be usable on its own.
+# Kept self-contained — own manifest, own lock, own cargo config, no path
+# dependency on `m5stack-core` — so that stays true.
+[workspace]
+
+# Short, because it is typed at a prompt and written into scripts.
+[[bin]]
+name = "m5stack-hil"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+# Three, and the rule for all three is the same: **do not hand-roll a
+# commodity.** A config format and a command line are both solved problems with
+# obvious, universally-used crates; reimplementing either buys nothing and
+# costs a subset that is wrong in ways only a user discovers.
+#
+# `clap` for the command line. What it replaces was a `while let` over
+# `env::args()` with a match arm per flag — and the arms were never the
+# problem. The problem was everything a flat match cannot express: `--rig`
+# passed with `--mac`, or `--until` with no `--capture`, were accepted and then
+# silently ignored, because nothing checked them. Those rules are now `ArgGroup`
+# and `requires` attributes, enforced by the parser and visible in `--help`,
+# which is generated rather than kept in sync by hand. It also fixes `--help`
+# going to stderr with a non-zero exit.
+#
+# `serde` + `toml` for `config` — the one part of this crate that parses a file
+# a HUMAN writes and edits. Hand-rolling a TOML subset there would reject
+# things an author reasonably expects to work (single quotes, escapes,
+# multi-line strings) and would have to be maintained forever; a real parser is
+# the right tool for a real format.
+#
+# `deny_unknown_fields` is why serde specifically: a config key nobody
+# recognises must be an ERROR, not something silently skipped. A parser that
+# ignored a typo'd key would run with settings the author believed were in
+# effect — the exact class of quiet-wrong failure the rest of this crate exists
+# to prevent.
+#
+# The RUN LOGIC stays dependency-free, which is a different claim and still
+# true: text -> numbers -> verdict, so its tests are instant and cannot rot when
+# an unrelated crate bumps a version. Each place there that would otherwise want
+# a dependency states the trade and its escape hatch instead: `serial` on
+# `stty`, `wait` on inotify/udev, `lock` on signal handling. The line is between
+# a commodity someone else maintains better (parsing) and this crate's actual
+# subject matter (owning a board and its evidence).
+clap = { version = "4.6.5", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
+
+# NOT probe-rs, despite it being the preferred way to drive a CoreS3 — the
+# `probe-rs` LIBRARY cannot address one. Measured against 0.32.0: it ships 241
+# built-in target definitions, none of which contain an ESP32, and declares no
+# Xtensa core anywhere in them, while the installed CLI answers `probe-rs chip
+# list | grep esp32s3` fine. The Espressif targets and the ESP-IDF image format
+# live in `probe-rs-tools`, not in the crate, so `Session::auto_attach("esp32s3",
+# …)` would fail with "chip not found".
+#
+# So the probe is driven as a subprocess (see `board::Reset`) until the crate
+# carries the targets. Worth revisiting: in-process would let a JTAG reset
+# report typed errors instead of an exit code and a line of stderr.

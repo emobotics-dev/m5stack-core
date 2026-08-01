@@ -1,7 +1,19 @@
 /target/
 /examples/*/target/
+/m5stack-core-hil/target/
 Cargo.lock
+# …except the HIL harness's. It is a host *binary* with real dependencies, and
+# its own workspace, so a committed lock is what makes two people's runs — and
+# CI's — the same build. The library's lock stays ignored, as a library's should.
+!/m5stack-core-hil/Cargo.lock
 /work/
+# …and any nested one: the harness runs with its own crate as cwd, so a
+# relative capture path can land outside the root work/ dir.
+work/
+
+# Rig configuration: which board is at which MAC/port. Describes a bench, not
+# this project, so it is per-checkout — see hil.toml.example and tools/README.md.
+/hil.toml
 
 # crates.io publish token — never commit
 .cargo/credentials.toml

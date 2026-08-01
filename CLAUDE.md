@@ -52,14 +52,36 @@ lower — claiming lower is a promise the crate cannot keep.
 
 ## HIL (hardware-in-the-loop)
 
-- **CoreS3**: has a JTAG probe → `probe-rs download --chip esp32s3 <elf>` then
-  `probe-rs reset --chip esp32s3`. Console on its USB-Serial-JTAG (115200).
-- **Fire27**: no probe → `espflash flash --monitor --monitor-baud 1000000 <elf>`.
-  **Console is UART0 @ 1 Mbaud**, not 115200.
+**Use the harness — do not hand-roll a runner.** `m5stack-core-hil` (host crate,
+binary `m5stack-hil`) owns claiming a board, flashing it only when it is not
+already running the image, and capturing output without losing any. Wrappers and
+setup: [`tools/README.md`](tools/README.md). One-time: `cp hil.toml.example
+hil.toml`.
+
+```sh
+tools/cores3-run.sh display 20            # build, ensure the image, capture
+tools/hil.sh --board cores3 --read-identity
+```
+
+Boards are **named** in `hil.toml`, never spelled out at a call site: a MAC (and
+the `/dev/serial/by-id/...` path derived from it) is a fact about a rig, so
+swapping hardware or adding a second rig is a config edit and nothing else.
+
+- **CoreS3**: covered by the harness — reset over **JTAG** (`probe-rs`, with the
+  probe named explicitly so a multi-board rig cannot reset the wrong one), flash
+  via `espflash`, console on its USB-Serial-JTAG. The JTAG reset is what lets
+  the harness attach *before* resetting and so catch the identity line at
+  ~0.3 s; an RTS reset cannot, because it needs the port itself.
+- **Fire27**: not yet wired into the harness (next PR). Meanwhile: `espflash
+  flash --monitor --monitor-baud 1000000 <elf>`; **console is UART0 @ 1 Mbaud**,
+  not 115200.
 - Serial devices are per-board; use `/dev/serial/by-id/*`. Some bench serials are
   off-limits — check before flashing.
 - Display verification: capture the panel with the phone camera (the
   `phone-camera` skill / ADB). Release the ADB claim when done.
+- Anything ad-hoc you write for one investigation goes in gitignored `work/`. If
+  you find yourself editing a runner script to do a run, that script is wrong —
+  the varying part belongs on the command line or in `hil.toml`.
 
 ## No probabilistic fixes (hardware bugs)
 

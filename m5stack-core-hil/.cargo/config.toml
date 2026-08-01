@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# This is a HOST tool. The repo root's `.cargo/config.toml` pins
+# `target = "xtensa-esp32-none-elf"`, and cargo merges config by DIRECTORY
+# hierarchy — being its own workspace does not exempt this crate, so without
+# this file `cargo test` here cross-compiles the harness to the board and fails
+# with "can't find crate for `std`".
+#
+# Nearest config wins, so naming the host target here is the whole fix.
+[build]
+target = "x86_64-unknown-linux-gnu"
+
+# The root config also sets `build-std = ["alloc", "core"]` for the board, and
+# that is inherited here too. Left alone it rebuilds `core` for the host on top
+# of the `core` that host `std` already carries, and the compile dies with
+# "duplicate lang item in crate `core`: sized".
+#
+# The esp toolchain ships `rust-src` but no prebuilt host std, so the choice is
+# build-std with std, not no build-std at all.
+[unstable]
+build-std = ["std"]

@@ -1,0 +1,10 @@
+# Matches the style this crate's sources were written in. Scoped to this crate
+# rather than the repo root: the BSP and the examples are formatted to rustfmt's
+# defaults, and reflowing them is not this change's business.
+max_width = 120
+use_small_heuristics = "Max"
+imports_granularity = "Crate"
+reorder_imports = true
+group_imports = "StdExternalCrate"
+style_edition = "2024"
+wrap_comments = true

@@ -1,0 +1,10 @@
+# `clippy::unwrap_used` / `expect_used` are denied in library code (see
+# Cargo.toml's [lints]) to force invariants to be documented. Tests may use them
+# freely — a panicking assertion is the point there.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Board and vendor names that read like code identifiers to
+# `clippy::doc_markdown` but are legitimate prose in our docs. ".." keeps
+# clippy's built-in allowlist.
+doc-valid-idents = ["..", "CoreS3", "Fire27", "M5Stack"]
