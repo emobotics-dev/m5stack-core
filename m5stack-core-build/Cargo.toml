@@ -3,7 +3,7 @@
 name = "m5stack-core-build"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 description = "Build-time git-identity helper for m5stack-core's `identity` feature"
 repository = "https://github.com/emobotics-dev/m5stack-core"

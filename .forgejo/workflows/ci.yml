@@ -84,3 +84,21 @@ jobs:
         run: |
           cargo build --release -p demos --no-default-features --features cores3,lvgl --target xtensa-esp32s3-none-elf
           cargo build --release -p demos --bin coex --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
+
+      # The HIL harness is a HOST crate in its own workspace (it must be — the
+      # root .cargo/config.toml pins an Xtensa target), so nothing above builds
+      # it and `--workspace` never reaches it. Its logic is pure
+      # text -> numbers -> verdict and needs no board, so the whole suite runs
+      # here; the tests that DO need a board are `#[ignore]`d and stay out.
+      # Without this step the harness could rot unnoticed while every other
+      # build stayed green.
+      #
+      # `working-directory`, NOT `--manifest-path`: cargo reads
+      # .cargo/config.toml from the CURRENT DIRECTORY, not from the manifest's,
+      # so `--manifest-path m5stack-core-hil/Cargo.toml` run from the repo root
+      # applies the ROOT config — the Xtensa target — and the build dies with
+      # "can't find crate for `std`". Being in the directory is what lets the
+      # crate's own config (host target, build-std=["std"]) take effect.
+      - name: Test HIL harness (host)
+        working-directory: m5stack-core-hil
+        run: cargo test

@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# HIL rig configuration for `m5stack-hil`. Copy to `hil.toml` (gitignored) and
+# edit for your bench:
+#
+#     cp hil.toml.example hil.toml
+#
+# Boards are NAMED here so nothing else has to spell out a MAC. A board's
+# `/dev/serial/by-id/...` path is derived from its MAC, and both are facts about
+# a rig rather than about the code — swapping hardware, or moving to a second
+# rig, is an edit to this file and to nothing else.
+#
+# Looked for in this order: $M5STACK_HIL_CONFIG, then `hil.toml` here or in any
+# parent directory, then ~/.config/m5stack-hil/hil.toml.
+#
+# Unknown keys are an ERROR, not something skipped — a typo must fail the run
+# rather than silently leave a setting at its default.
+
+# The rig used when --rig is not given.
+default_rig = "bench"
+
+
+[rigs.bench.cores3]
+# A CoreS3 speaks over its own USB-Serial-JTAG, so the by-id path is derived
+# from the MAC and is not restated. Find it with:
+#     ls /dev/serial/by-id/
+mac = "1C:DB:D4:BA:83:38"
+
+# Optional. A substring the application prints BEFORE its identity line. Giving
+# one buys a real distinction: without it, "the board did not boot" and "this
+# image carries no identity" are indistinguishable, and the harness says so
+# rather than guessing which it was.
+# banner = "m5stack-core"
+
+# How the board is restarted. A `mac` board defaults to "probe-rs" — the CoreS3's
+# USB-Serial-JTAG carries a real debug probe, and resetting through it does not
+# depend on the serial adapter honouring RTS/DTR. "espflash" resets over the
+# tty's control lines instead, for a board with no probe.
+#
+# "probe-rs" needs `chip` too, since probe-rs addresses a target by name.
+# reset = "probe-rs"
+
+# Optional flash settings; these are the CoreS3 defaults.
+# chip       = "esp32s3"
+# flash_freq = "80mhz"          # espflash defaults to 40mhz — see tools/README.md
+# flash_size = "16mb"
+# partition_table = "partitions.csv"
+
+
+# A Fire27 sits behind a USB-serial bridge, so its by-id name is not derived
+# from a MAC: name the port, and give the board a stable id of its own for the
+# lock. Never a `ttyACM` index — those renumber on replug, and a lock keyed to
+# one would let two runs claim the same board under two names.
+#
+# [rigs.bench.fire27]
+# port = "/dev/serial/by-id/usb-Silicon_Labs_CP2104_USB_to_UART_Bridge_Controller_5864000922-if00-port0"
+# id   = "fire27-5864000922"
+# baud = 1000000
+# chip = "esp32"
+
+
+# A second rig defines the same board names against different hardware, and
+# `--rig lab2` selects it. Nothing in the code or the scripts changes.
+#
+# [rigs.lab2.cores3]
+# mac = "AA:BB:CC:DD:EE:FF"

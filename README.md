@@ -581,10 +581,11 @@ Notes:
   CoreS3 drives SPI2 on GPIO36/37 over GDMA, with the panel reset via the AW9523
   expander and the backlight via the AXP2101 (no GPIO reset/backlight pins).
 - **Logging is the BSP console on both boards** (`io::console`, no probe). Read
-  it over the serial port — Fire27 at **1 Mbaud** (e.g. `espflash monitor
-  --baud 1000000`, or `screen /dev/tty… 1000000`), CoreS3 at the default rate on
-  the USB-Serial-JTAG CDC port. Flash CoreS3 with `probe-rs download` + `reset`
-  (or `espflash`), then read the **CDC port**, not RTT. **Never emit a per-frame
+  it over the serial port — Fire27 at **1 Mbaud**, CoreS3 on the USB-Serial-JTAG
+  CDC port, never RTT. Prefer the harness
+  ([`tools/README.md`](tools/README.md)) over flashing and monitoring by hand:
+  it owns the port for the whole run, so it does not lose the boot the way an
+  attach-after-reset does. **Never emit a per-frame
   log stream** over the console — an undrained UART/CDC back-pressures the ring
   and can stall the render loop (HIL-confirmed at oxivgl Trace level); keep the
   LVGL demo at `Info`. A panic is reported once at the *next* boot as the
@@ -593,6 +594,49 @@ Notes:
   needs network access, the target C compiler (`xtensa-esp32{,s3}-elf-gcc`) and
   `libclang` for `bindgen` (with `BINDGEN_EXTRA_CLANG_ARGS` pointing at the
   newlib sysroot) — all provided by the devcontainer.
+
+## Hardware-in-the-loop (`m5stack-core-hil`)
+
+A **host-side** companion crate in this repo (binary `m5stack-hil`) for driving a
+board from a workstation or CI: claim it, put the right image on it, capture what
+it says, and — optionally — judge the result. It is not part of the published
+BSP and no firmware depends on it.
+
+```sh
+cp hil.toml.example hil.toml              # once: name your boards
+tools/cores3-run.sh display 20            # build, ensure the image, capture 20 s
+tools/hil.sh --board cores3 --read-identity
+```
+
+What it is for, and what each piece buys:
+
+- **`--ensure-image <ELF>`** — reset the board, read the identity it prints at
+  boot, and write the image *only* if it differs, then verify the write took.
+  This is the consumer side of the [`identity`](#firmware-identity-app_desc)
+  feature: the board answers with its own build mark and `app_elf_sha256`, so
+  the check reflects **what is on the chip** rather than what a stamp file
+  believes was flashed. Measured on this bench: ~6 s for a match against ~15 s
+  for a write.
+- **Ownership and evidence** — the port is held by a value and released by
+  `Drop` on every path including panic; a second claimant is refused *by name*
+  rather than killed. The capture is append-only and streamed to disk as bytes
+  arrive, so a failing attempt's evidence survives the retry, and a board that
+  dies mid-sentence still leaves its unterminated last line.
+- **Bounded, named waits** — no `sleep` before a reset. A wait returns the
+  instant its condition holds and, on expiry, says which condition failed and
+  why.
+- **`report` / `gate` (optional)** — a parse contract and a pass/fail gate for
+  consumers that want a *measured* run judged. Nothing else in the crate depends
+  on them; what a run measures, and what counts as too slow, stay with the
+  project that knows.
+
+Boards are **named** in `hil.toml` (gitignored; see `hil.toml.example`), so a
+MAC never appears in a command line or a script — swapping hardware, or moving
+to a second rig, is a config edit and nothing else. Unknown keys in that file are
+an error rather than something silently ignored.
+
+Full usage, and the wrapper scripts, are in [`tools/README.md`](tools/README.md).
+Currently wired for **CoreS3**; Fire27 is next.
 
 ## Dependencies & the esp-hal fork
 

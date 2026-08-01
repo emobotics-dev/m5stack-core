@@ -29,16 +29,59 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
   `fire27`. Toolchain: the `esp` channel (`rust-toolchain.toml`).
 - Example: `cargo build --release --features "cores3,display,psram" --target xtensa-esp32s3-none-elf`.
 
+## Dependency policy
+
+**Latest-and-greatest, except where the esp-hal 1.1.1 stack forbids it.** Track
+the newest version of everything; the only legitimate reason to hold a dep back
+is a constraint imposed by esp-hal/esp-radio/esp-alloc/esp-sync (or by another
+dep that is itself already at its latest).
+
+A hold must say *why*, inline, and the reason must be **verified rather than
+assumed** — attempt the bump and record what actually breaks. Re-verified
+2026-08-01 by doing exactly that:
+
+| held | latest | what happens on bump |
+|---|---|---|
+| `allocator-api2` 0.3 | 0.4 | `E0277` at `src/mem.rs:351` — esp-alloc 0.10 implements **0.3**'s `Allocator` for `Internal`/`ExternalMemory`; 0.4 is a different trait ("expected"/"found" both named `Allocator`) |
+| `fixed` 1.29 | 1.31 | resolution fails — 1.30+ needs `az ^1.3`, embedded-graphics 0.8.2 needs `az ~1.2.0` (a **normal** dep, and e-g is already latest) |
+| `trouble-host` 0.6 | 0.7 | cargo *does* resolve it, compiling bt-hci 0.8.1 **and** 0.9.0 side by side. Port `ble.rs` first (0.7 moved the controller into `HostResources`' first generic, and `build()` yields a `Stack`) — the pre-port errors are misleading. The real blocker then shows plainly: `BleConnector: bt_hci::transport::Transport` unsatisfied, with *"expected `FromHciBytesError`, found `FromHciBytesError`"* — the two-versions signature. Gated on **esp-radio**, not esp-hal: 0.18.0 wants `esp-hal ~1.1.0-rc.0` (1.1.1 satisfies it), and **no published esp-radio uses bt-hci 0.9**, not even `1.0.0-beta.0` |
+
+`cargo update --workspace` locking 0 packages is the quick check that nothing
+else has drifted. MSRV tracks the esp-hal family's (**1.88**), not something
+lower — claiming lower is a promise the crate cannot keep.
+
 ## HIL (hardware-in-the-loop)
 
-- **CoreS3**: has a JTAG probe → `probe-rs download --chip esp32s3 <elf>` then
-  `probe-rs reset --chip esp32s3`. Console on its USB-Serial-JTAG (115200).
-- **Fire27**: no probe → `espflash flash --monitor --monitor-baud 1000000 <elf>`.
-  **Console is UART0 @ 1 Mbaud**, not 115200.
+**Use the harness — do not hand-roll a runner.** `m5stack-core-hil` (host crate,
+binary `m5stack-hil`) owns claiming a board, flashing it only when it is not
+already running the image, and capturing output without losing any. Wrappers and
+setup: [`tools/README.md`](tools/README.md). One-time: `cp hil.toml.example
+hil.toml`.
+
+```sh
+tools/cores3-run.sh display 20            # build, ensure the image, capture
+tools/hil.sh --board cores3 --read-identity
+```
+
+Boards are **named** in `hil.toml`, never spelled out at a call site: a MAC (and
+the `/dev/serial/by-id/...` path derived from it) is a fact about a rig, so
+swapping hardware or adding a second rig is a config edit and nothing else.
+
+- **CoreS3**: covered by the harness — reset over **JTAG** (`probe-rs`, with the
+  probe named explicitly so a multi-board rig cannot reset the wrong one), flash
+  via `espflash`, console on its USB-Serial-JTAG. The JTAG reset is what lets
+  the harness attach *before* resetting and so catch the identity line at
+  ~0.3 s; an RTS reset cannot, because it needs the port itself.
+- **Fire27**: not yet wired into the harness (next PR). Meanwhile: `espflash
+  flash --monitor --monitor-baud 1000000 <elf>`; **console is UART0 @ 1 Mbaud**,
+  not 115200.
 - Serial devices are per-board; use `/dev/serial/by-id/*`. Some bench serials are
   off-limits — check before flashing.
 - Display verification: capture the panel with the phone camera (the
   `phone-camera` skill / ADB). Release the ADB claim when done.
+- Anything ad-hoc you write for one investigation goes in gitignored `work/`. If
+  you find yourself editing a runner script to do a run, that script is wrong —
+  the varying part belongs on the command line or in `hil.toml`.
 
 ## No probabilistic fixes (hardware bugs)
 

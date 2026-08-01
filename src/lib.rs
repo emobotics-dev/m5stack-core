@@ -151,7 +151,14 @@ pub const fn __str_to_fixed<const N: usize>(s: &str) -> [u8; N] {
 /// Reads back the `CARGO_PKG_VERSION` [`app_desc!`] exports alongside the
 /// descriptor — see [`__str_to_fixed`] for why this needs its own static
 /// rather than reusing [`app_desc()`]'s mechanism.
-#[cfg(feature = "app-desc")]
+///
+/// Gated on `identity`, not merely `app-desc`: without `identity` the
+/// descriptor's own `version` field still holds `CARGO_PKG_VERSION`, so
+/// [`log_boot_identity`] reads it straight from there and this reader has no
+/// caller. `app_desc!` exports the symbol in **both** cases, so a consumer that
+/// wants it can still link against it — only this crate's private reader is
+/// conditional.
+#[cfg(all(feature = "app-desc", feature = "identity"))]
 fn pkg_version() -> &'static str {
     unsafe extern "C" {
         #[link_name = "m5stack_core_pkg_version"]
