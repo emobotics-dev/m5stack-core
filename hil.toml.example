@@ -60,20 +60,34 @@ mac = "1C:DB:D4:BA:83:38"
 # one would let two runs claim the same board under two names.
 #
 # The bridge is NOT derived from an adapter serial the way a CoreS3's path is
-# derived from its MAC, because M5Stack has shipped ESP32 boards behind at least
-# a CP2104 and a CH9102 — identical hardware, different names. Find yours with:
+# derived from its MAC, because M5Stack has shipped ESP32 boards behind more
+# than one USB-serial chip — identical hardware, different names. This bench's
+# Fire27 is a 1a86 (CH-series); the same board elsewhere is a Silicon Labs
+# CP2104, which produces a longer path ending `-if00-port0`. Find yours with:
 #     ls /dev/serial/by-id/
 #
 # [rigs.bench.fire27]
-# port = "/dev/serial/by-id/usb-Silicon_Labs_CP2104_USB_to_UART_Bridge_Controller_5864000922-if00-port0"
+# port = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5864000922-if00"
 # id   = "fire27-5864000922"
+#
+# Note the serial in that path is the ONLY thing separating this board from
+# another 1a86 device on the same bench. Copy it from `ls`, do not retype it.
 #
 # The Fire27 console is UART0 at 1 Mbaud — NOT 115200. The ESP32's ROM and
 # second-stage bootloader still talk at 115200, so their chatter arrives as
-# unreadable bytes and only the application's own output is legible. That makes
-# `banner` more useful here than on a CoreS3, not less: it is what separates
-# "the board never reached the application" from "this image carries no
-# identity", which garbled bootloader noise cannot.
+# unreadable bytes; only the application's own output is legible. Measured on
+# this bench: a boot capture is ~13 kB of binary containing THREE newlines, so
+# a "captured N lines" count means nothing on this board — the transcript is
+# still complete, it is simply not text until the application starts.
+#
+# Two consequences. A `banner` must be a line the APPLICATION prints, never a
+# bootloader one, since the latter is unreadable at this rate. And `banner` is
+# more useful here than on a CoreS3, not less: it separates "never reached the
+# application" from "this image carries no identity", which garbled noise
+# cannot.
+#
+# The identity lands at ~0.000-0.001 s of uptime, against ~0.3 s on a CoreS3 —
+# UART0 is live immediately, where the CoreS3 pays USB enumeration first.
 # baud   = 1000000
 # banner = "m5stack-core"
 #
@@ -84,9 +98,12 @@ mac = "1C:DB:D4:BA:83:38"
 #
 # Reset defaults to "serial-lines" for a `port` board: the harness pulses RTS
 # itself, on the port it is already holding, so the boot is captured from the
-# first byte. If this board's auto-reset circuit does not respond to it, the
-# symptom is "never reached the application" (loud, not silent) and the fallback
-# is one line:
+# first byte. Verified on this bench, including the negative control — with the
+# pulse stubbed out the identity is never captured, so the reset is genuinely
+# the pulse and not the DTR edge a port open produces.
+#
+# If a board's auto-reset circuit does not respond, the symptom is "never
+# reached the application" (loud, not silent) and the fallback is one line:
 # reset = "espflash"
 
 

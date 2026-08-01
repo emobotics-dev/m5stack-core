@@ -36,7 +36,7 @@ use std::{
     },
     process::Command,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -322,6 +322,95 @@ fn set_control_lines(port: &File, want: ControlLines) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// How long a device that has just appeared may still refuse to open.
+///
+/// A **settling** window, not a discovery one: the node is already there, and
+/// what is being waited out is the driver finishing with it. `openable`'s docs
+/// record the gap. Bounded and short, unlike the arrival itself, which is
+/// unbounded and therefore waited for as an event.
+const SETTLE_BUDGET: Duration = Duration::from_millis(500);
+
+/// How often to retry the open inside [`SETTLE_BUDGET`].
+const SETTLE_GAP: Duration = Duration::from_millis(20);
+
+/// Wake on `dir` gaining or changing an entry, rather than asking repeatedly.
+///
+/// The watch is registered before the caller's first look, so an arrival
+/// between that look and the wait cannot be missed.
+///
+/// The reader lives on its own thread because `inotify`'s blocking read has no
+/// deadline, and a timed wait is what the caller needs; the channel supplies
+/// one via `recv_timeout`. The thread ends when the receiver is dropped and a
+/// further event wakes it — so it may outlive the wait, parked, until the next
+/// device event or process exit. Acceptable for a CLI that resets a handful of
+/// times; it holds one fd and no lock.
+fn watch(dir: &std::path::Path) -> io::Result<std::sync::mpsc::Receiver<()>> {
+    use inotify::{Inotify, WatchMask};
+
+    let inotify = Inotify::init()?;
+    inotify.watches().add(dir, WatchMask::CREATE | WatchMask::MOVED_TO | WatchMask::ATTRIB)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut inotify = inotify;
+        let mut buf = [0u8; 4096];
+        while inotify.read_events_blocking(&mut buf).is_ok() {
+            if tx.send(()).is_err() {
+                return;
+            }
+        }
+    });
+    Ok(rx)
+}
+
+/// Open `path` as soon as the device is back, woken by the kernel.
+///
+/// The one condition this crate cannot observe with `std` alone — a USB node
+/// reappearing after a reset — and `conventions/testing.md` §1 says to make it
+/// observable rather than poll it. So arrival is an **inotify event** on the
+/// directory holding `path`, not a question asked twenty times a second.
+///
+/// Two different waits, deliberately not merged: arrival is unbounded and is
+/// waited for as an event; the driver settling afterwards is bounded in
+/// milliseconds and is retried, because the node exists by then and there is no
+/// second event to wait for. Calling the settling retry a poll would be fair;
+/// calling the arrival one a poll was the thing worth fixing.
+///
+/// # Errors
+/// If the watch cannot be set up, or the device never becomes openable within
+/// `budget` — naming which of the two it was.
+pub fn open_when_back(path: &str, baud: u32, budget: Duration) -> Result<DrainedSource, String> {
+    let deadline = Instant::now() + budget;
+    let dir = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("/dev"));
+    // Registered BEFORE the first attempt below: otherwise a device that comes
+    // back in between is missed and this waits out the whole budget for an
+    // event that has already happened.
+    let events = watch(dir).map_err(|e| format!("cannot watch {} for {path} to return: {e}", dir.display()))?;
+
+    loop {
+        // Present already, or newly announced: give the driver its bounded
+        // settling window before concluding anything.
+        let settle = Instant::now() + SETTLE_BUDGET.min(deadline.saturating_duration_since(Instant::now()));
+        loop {
+            match DrainedSource::open(path, baud) {
+                Ok(src) => return Ok(src),
+                Err(e) if Instant::now() >= settle => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("{path} never became openable within {budget:?}: {e}"));
+                    }
+                    break;
+                }
+                Err(_) => std::thread::sleep(SETTLE_GAP),
+            }
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(format!("{path} did not come back within {budget:?}"));
+        }
+        // Nothing to do until the kernel says something changed.
+        let _ = events.recv_timeout(left);
+    }
 }
 
 /// A handle opened **only** to drive a board's control lines, never to read it.
@@ -699,12 +788,26 @@ mod ontarget {
         // 2026-07-30, the squatter was already gone one second after spawning.
         // Holding an fd with no read is deterministic and is what the real
         // offender (an orphaned reader) does anyway.
+        // The board must be PRESENT before anything can squat on it. A
+        // preceding test in this tier leaves it re-enumerating after a reset,
+        // and then the squatter's `exec 3<` fails while `sleep` still runs — a
+        // process that holds nothing, so the wait below times out looking for a
+        // hold that never happened. Observed exactly that, and only when this
+        // test ran after the flash-decision tier.
+        wait::until("the board to be present before squatting", Duration::from_secs(10), Duration::from_millis(50), || {
+            SerialSource::openable(&t)
+        })
+        .expect("the board must be addressable before this test can squat on it");
+
         let mut squatter: Child = std::process::Command::new("sh")
             // `exec sleep`, not `sleep`: it replaces the shell in place, so
             // exactly ONE process holds the fd and its pid is the one we spawned.
             // A forking shell would leave two holders and the scan could name
             // either, making the assertion below a coin toss.
-            .args(["-c", &format!("exec 3< '{t}'; exec sleep 30")])
+            // `|| exit 1` so a squatter that could not take the fd dies instead
+            // of lingering as a process that holds nothing — which is
+            // indistinguishable from "not holding it YET" and burns the budget.
+            .args(["-c", &format!("exec 3< '{t}' || exit 1; exec sleep 30")])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -854,8 +957,12 @@ mod ontarget {
 /// window in which nobody is reading, because reading no longer depends on
 /// anyone asking.
 pub struct DrainedSource {
-    /// Bytes collected so far, oldest first.
-    buf: Arc<Mutex<Vec<u8>>>,
+    /// Bytes collected so far, oldest first, paired with the condvar the
+    /// reader signals. Waiting on the pair rather than polling it is what
+    /// keeps `conventions/testing.md` §1 satisfied in-process: the arrival of
+    /// a byte IS an event here, unlike a USB node reappearing (see
+    /// [`crate::wait`]).
+    buf: Arc<(Mutex<Vec<u8>>, Condvar)>,
     /// Set on drop so the reader thread exits rather than leaking per reset.
     stop: Arc<AtomicBool>,
     /// First read error, kept so the next `read_available` can report it
@@ -878,7 +985,7 @@ impl DrainedSource {
         // wait behind it either.
         let tx = src.port.try_clone()?;
         let mut port = src.port;
-        let buf = Arc::new(Mutex::new(Vec::new()));
+        let buf = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let err = Arc::new(Mutex::new(None));
         let (b, s, e) = (Arc::clone(&buf), Arc::clone(&stop), Arc::clone(&err));
@@ -889,10 +996,20 @@ impl DrainedSource {
                     // `VMIN=0`/`VTIME` makes a quiet port return 0, not an
                     // error. Keep going: silence is not the end of the stream.
                     Ok(0) => {}
-                    Ok(n) => b.lock().map_or((), |mut g| g.extend_from_slice(&chunk[..n])),
+                    Ok(n) => {
+                        if let Ok(mut g) = b.0.lock() {
+                            g.extend_from_slice(&chunk[..n]);
+                            // Wake the waiter the instant bytes exist.
+                            b.1.notify_all();
+                        }
+                    }
                     Err(ref x) if x.kind() == io::ErrorKind::Interrupted => {}
                     Err(x) => {
                         *e.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(x.to_string());
+                        // Wake anyone waiting: a dead port must be reported now,
+                        // not after their budget expires on a source that will
+                        // never produce another byte.
+                        b.1.notify_all();
                         return;
                     }
                 }
@@ -942,23 +1059,23 @@ impl Drop for DrainedSource {
 impl Source for DrainedSource {
     fn read_available(&mut self, budget: Duration) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + budget;
+        let (lock, arrived) = (&self.buf.0, &self.buf.1);
+        let mut g = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(e) = self.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
                 return Err(io::Error::other(e));
             }
-            {
-                let mut g = self.buf.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if !g.is_empty() {
-                    return Ok(core::mem::take(&mut *g));
-                }
+            if !g.is_empty() {
+                return Ok(core::mem::take(&mut *g));
             }
-            if Instant::now() >= deadline {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
                 return Ok(Vec::new());
             }
-            // The reader thread is what makes progress; this only waits for it.
-            // Short enough that a deadline is honoured promptly, long enough
-            // not to spin a core while the board is quiet.
-            std::thread::sleep(Duration::from_millis(5).min(budget));
+            // Blocks until the reader signals, or the budget runs out — no
+            // wakeups in between. A 5 ms poll here returned up to 5 ms late and
+            // woke 30 times per `quiesce` window for nothing.
+            g = arrived.wait_timeout(g, left).unwrap_or_else(std::sync::PoisonError::into_inner).0;
         }
     }
 }
