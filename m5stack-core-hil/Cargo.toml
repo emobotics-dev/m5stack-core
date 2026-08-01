@@ -33,7 +33,14 @@ name = "m5stack-hil"
 path = "src/main.rs"
 
 [lints.rust]
-unsafe_code = "forbid"
+# `deny`, not `forbid`, for exactly one reason, allowed at exactly one site:
+# `serial::set_control_lines` needs `TIOCMGET`/`TIOCMSET`, and there is no safe
+# std API for a tty's modem lines. `forbid` cannot be overridden even locally,
+# so keeping it would mean giving up holding the port across a Fire27 reset —
+# see `board::Reset::SerialLines` for why that is not an acceptable trade.
+# Every other module stays unsafe-free, and the one block carries a SAFETY
+# comment naming the invariants it relies on.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = "warn"
@@ -78,6 +85,23 @@ expect_used = "warn"
 clap = { version = "4.6.5", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
+
+# The fourth, and the only one that is NOT a parsing commodity — it is here
+# because a Fire27 has no debug probe: resetting one means
+# pulsing the tty's RTS line, and `std` exposes no modem-line control at all.
+# The alternative was `espflash reset`, which is a subprocess and therefore
+# needs the port to itself — so the harness would have to RELEASE the port
+# across the reset and re-open into a boot already in progress, losing the
+# identity line it resets in order to read (`board::Reset::SerialLines` has the
+# measurement this mirrors). Trading a dependency for a race is the wrong way
+# round.
+#
+# `libc` rather than a serial crate: what is wanted here is two ioctls on a
+# descriptor this crate already owns and configures, not a second port
+# abstraction layered over `serial`'s. A `serialport`-style crate would want to
+# open the port itself — a second handle on one tty, with its own idea of the
+# baud rate — which is more moving parts for less control.
+libc = "0.2.180"
 
 # NOT probe-rs, despite it being the preferred way to drive a CoreS3 — the
 # `probe-rs` LIBRARY cannot address one. Measured against 0.32.0: it ships 241

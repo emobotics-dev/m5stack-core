@@ -66,10 +66,18 @@ pub struct BoardConfig {
     /// what it buys is the "never reached the application" distinction — see
     /// [`crate::board::read_identity`].
     pub banner: Option<String>,
-    /// `"probe-rs"` (over JTAG) or `"espflash"` (over the tty's control lines).
-    /// Defaults to probe-rs for a `mac` board and espflash for a `port` one —
-    /// a board named by MAC is a CoreS3 with a debug probe, and one named by
-    /// port generally is not.
+    /// How to restart the board:
+    ///
+    /// - `"probe-rs"` — over JTAG, through the debug probe. Needs `chip`.
+    /// - `"serial-lines"` — pulse the tty's `RTS` line from this process,
+    ///   **without letting go of the port**.
+    /// - `"espflash"` — the same pulse, but from a subprocess that needs the
+    ///   port to itself. The fallback, because releasing the port across a
+    ///   reset loses the boot output that the reset exists to read.
+    ///
+    /// Defaults to `probe-rs` for a `mac` board and `serial-lines` for a `port`
+    /// one — a board named by MAC is a CoreS3 with a debug probe, and one named
+    /// by port generally is not.
     pub reset: Option<String>,
     /// Which debug probe, as `VID:PID:Serial`. Only needed when `reset =
     /// "probe-rs"` is set on a board whose probe is not derivable from a `mac`
@@ -119,19 +127,26 @@ impl BoardConfig {
                 })?;
                 b.reset = Reset::ProbeRs { chip, probe: self.probe.clone() };
             }
+            Some("serial-lines") => b.reset = Reset::SerialLines,
             Some("espflash") => b.reset = Reset::Espflash,
-            Some(other) => return Err(format!("unknown `reset` value `{other}`; use \"probe-rs\" or \"espflash\"")),
+            Some(other) => {
+                return Err(format!(
+                    "unknown `reset` value `{other}`; use \"probe-rs\", \"serial-lines\" or \"espflash\""
+                ));
+            }
         }
         Ok(b)
     }
 
-    /// The flash settings for this board, over the CoreS3 defaults.
+    /// The flash settings for this board, over the defaults for its chip.
+    ///
+    /// The base is chosen by `chip` rather than always starting from the
+    /// CoreS3's: an ESP32 and an ESP32-S3 do not take the same `espflash`
+    /// arguments, and defaulting a Fire27 to the S3's settings would make every
+    /// Fire27 entry restate them.
     #[must_use]
     pub fn to_flash_config(&self) -> FlashConfig {
-        let mut c = FlashConfig::cores3();
-        if let Some(v) = &self.chip {
-            c.chip.clone_from(v);
-        }
+        let mut c = self.chip.as_deref().map_or_else(FlashConfig::cores3, FlashConfig::for_chip);
         if let Some(v) = &self.flash_size {
             c.flash_size = Some(v.clone());
         }
@@ -308,7 +323,11 @@ mac = "AA:BB:CC:DD:EE:FF"
     #[test]
     fn per_board_flash_settings_override_the_defaults() {
         let c = Config::parse(SAMPLE).expect("parses");
-        assert_eq!(c.board(None, "fire27").expect("defined").to_flash_config().chip, "esp32");
+        // A `chip` picks the whole base, not just the `--chip` argument: a
+        // Fire27 must not inherit an ESP32-S3's settings.
+        let f27 = c.board(None, "fire27").expect("defined").to_flash_config();
+        assert_eq!(f27.chip, "esp32");
+        assert_eq!(f27.flash_freq.as_deref(), Some("80mhz"));
         // …and a board that says nothing keeps the CoreS3 default, including the
         // 80 MHz flash clock espflash would otherwise set to 40.
         let s3 = c.board(None, "cores3").expect("defined").to_flash_config();
@@ -337,14 +356,34 @@ mac = "AA:BB:CC:DD:EE:FF"
             s3.reset,
             Reset::ProbeRs { chip: "esp32s3".into(), probe: Some("303a:1001:1C:DB:D4:BA:83:38".into()) }
         );
+        // A Fire27 has no probe, so it resets over its own control lines —
+        // driven from the held port, NOT by handing the tty to espflash, which
+        // would have to release it across the boot it exists to capture.
         let f27 = c.board(None, "fire27").expect("defined").to_board().expect("addressable");
-        assert_eq!(f27.reset, Reset::Espflash);
+        assert_eq!(f27.reset, Reset::SerialLines);
     }
 
     #[test]
     fn the_reset_route_can_be_overridden() {
         let c = Config::parse("[rigs.r.b]\nmac = \"m\"\nreset = \"espflash\"\n").expect("parses");
         assert_eq!(c.board(Some("r"), "b").expect("defined").to_board().expect("ok").reset, Reset::Espflash);
+    }
+
+    /// The escape hatch a Fire27 whose auto-reset circuit this cannot drive
+    /// needs — and the reason it is worth naming both routes in the config
+    /// rather than inferring one.
+    #[test]
+    fn a_port_board_can_be_put_back_on_the_espflash_route() {
+        let c = Config::parse("[rigs.r.b]\nport = \"/dev/x\"\nid = \"i\"\nreset = \"espflash\"\n").expect("parses");
+        assert_eq!(c.board(Some("r"), "b").expect("defined").to_board().expect("ok").reset, Reset::Espflash);
+    }
+
+    /// …and a probe-carrying board can be asked for the line reset explicitly,
+    /// without needing a `chip` the way probe-rs does.
+    #[test]
+    fn the_line_reset_can_be_asked_for_by_name() {
+        let c = Config::parse("[rigs.r.b]\nmac = \"m\"\nreset = \"serial-lines\"\n").expect("parses");
+        assert_eq!(c.board(Some("r"), "b").expect("defined").to_board().expect("ok").reset, Reset::SerialLines);
     }
 
     /// probe-rs addresses a target by name, so asking for it without saying
@@ -361,6 +400,7 @@ mac = "AA:BB:CC:DD:EE:FF"
         let c = Config::parse("[rigs.r.b]\nmac = \"m\"\nreset = \"openocd\"\n").expect("parses");
         let e = c.board(Some("r"), "b").expect("defined").to_board().expect_err("must refuse");
         assert!(e.contains("openocd") && e.contains("probe-rs"), "{e}");
+        assert!(e.contains("serial-lines") && e.contains("espflash"), "must list every route: {e}");
     }
 
     #[test]

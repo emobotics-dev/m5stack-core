@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::{
     identity::{self, Identity},
     listen::{Listener, Outcome, Source},
-    serial::DrainedSource,
+    serial::{ControlLines, ControlPort, DrainedSource, LineControl},
     wait,
 };
 
@@ -46,6 +46,24 @@ pub const QUIESCE_BUDGET: Duration = Duration::from_secs(3);
 /// itself be lost. Duplicated from `m5stack_core::io::console`, which is
 /// `no_std` and Xtensa-only.
 pub const DROP_MARKER: &str = "[CONSOLE-DROP";
+
+/// How long `EN` is held low by [`reset_lines_sequence`].
+///
+/// `esptool`'s own hard reset holds it for 100 ms, and this matches it rather
+/// than shortening it: the value is the one every ESP32 board has been reset
+/// with for years, so a board that needs longer is a board with a fault worth
+/// finding, not a constant worth nudging.
+pub const EN_LOW_HOLD: Duration = Duration::from_millis(100);
+
+/// How long the control lines are left idle before `EN` is pulled.
+///
+/// **Not a race workaround** — a settling time for real hardware. The kernel
+/// raises `DTR` and `RTS` when a tty is opened, and `EN` is pulled up through
+/// an RC network (order of a millisecond on the usual `10 kΩ`/`100 nF`). Driving
+/// the lines idle and pulling `EN` in the same instant would start the reset
+/// pulse from an indeterminate level rather than from a known-high one, so the
+/// board's *own* charge curve, not this harness, sets how long that takes.
+pub const LINE_SETTLE: Duration = Duration::from_millis(20);
 
 /// Espressif's USB-Serial-JTAG `VID:PID`, which `probe-rs` prefixes to a
 /// probe's serial number: `303a:1001:<MAC>`.
@@ -110,16 +128,34 @@ pub enum Reset {
         /// somebody else's board. Derived from the MAC for a CoreS3.
         probe: Option<String>,
     },
-    /// Over the serial port's control lines, through `espflash`. For a board
-    /// with no debug probe — a Fire27 behind its USB-serial bridge.
+    /// Over the serial port's `RTS`/`DTR` lines, driven **in this process** on
+    /// the descriptor already held. The default for a board with no debug probe.
+    ///
+    /// `espflash reset` pulses the same lines, but as a subprocess it needs the
+    /// tty to itself — so [`Reset::Espflash`] must release the port and re-open
+    /// into a boot already under way, and the kernel submits no read URBs while
+    /// it is closed. That window is exactly the boot. On a CoreS3 releasing is
+    /// unavoidable; on a Fire27 it is not, because the USB-serial bridge is a
+    /// **separate chip from the ESP32** and does not reset with it, so the fd
+    /// stays valid throughout.
+    ///
+    /// Assumes the standard `esptool` auto-reset circuit (`RTS`→`EN`,
+    /// `DTR`→`IO0`, mutually cancelling). If a board lacks it the pulse does
+    /// nothing and the board keeps running, which surfaces as "never reached
+    /// the application" rather than as a silent pass; `reset = "espflash"` is
+    /// the escape hatch.
+    SerialLines,
+    /// Over the serial port's control lines, through `espflash`.
     ///
     /// Worth keeping as the **recovery** route on a board that normally resets
     /// over JTAG: driving the tty's control lines is independent of the debug
     /// unit, so it still works when that does not — probe-rs 0.30 times out
     /// resetting an Xtensa target while its probe enumeration is fine.
     ///
-    /// That independence is only against the debug unit. `esptool` does the
-    /// same job by the same means where it is installed.
+    /// That independence is against the *debug unit* only. It is **not** a
+    /// second path to a [`Reset::SerialLines`] board: those are the same two
+    /// lines driven from a subprocess instead of in-process, which is also why
+    /// this one alone inherits the attach-after-reset race.
     Espflash,
 }
 
@@ -163,13 +199,56 @@ impl Board {
     /// A board at an explicit port — for anything whose `by-id` name this crate
     /// does not construct (a Fire27 behind its USB-serial bridge, a bench
     /// adapter). `id` must still be stable; the lock refuses a tty path.
+    ///
+    /// The port is **not** derived from an adapter serial the way
+    /// [`Board::cores3`] derives one from a MAC, and that is deliberate: a
+    /// CoreS3's bridge is on the die and its `by-id` name has exactly one
+    /// shape, whereas M5Stack has shipped ESP32 boards behind a CP2104 and a
+    /// CH9102 at least, which produce different names for identical hardware.
+    /// Guessing which would be a rule that is right until it is silently wrong,
+    /// so the port is stated.
+    ///
     /// A board with no debug probe resets over its serial control lines, so
-    /// this defaults to [`Reset::Espflash`]. Override `reset` for a board that
-    /// has a probe but a non-derivable port name.
+    /// this defaults to [`Reset::SerialLines`] — driven from the held
+    /// descriptor, not by releasing the port to `espflash`. Override `reset`
+    /// for a board that has a probe but a non-derivable port name.
     #[must_use]
     pub fn at_port(id: &str, port: &str, baud: u32) -> Self {
-        Self { id: id.to_string(), port: port.to_string(), baud, reset: Reset::Espflash }
+        Self { id: id.to_string(), port: port.to_string(), baud, reset: Reset::SerialLines }
     }
+}
+
+/// Pulse `EN` low and release it, leaving `IO0` high so the chip boots the
+/// **application** rather than the ROM downloader.
+///
+/// Split out from [`hard_reset`] and generic over [`LineControl`] so the
+/// sequence can be proven on the host: the ioctl either works or returns
+/// `EINVAL`, but the *order* is the part that can be plausibly wrong in a way
+/// that costs a bench session — assert `DTR` at the wrong moment and the board
+/// comes up in download mode, silent, looking exactly like an image that does
+/// not boot.
+///
+/// # Errors
+/// If a line cannot be driven — the descriptor is not a tty, typically.
+pub fn reset_lines_sequence<T: LineControl>(lines: &T, id: &str) -> Result<(), String> {
+    let step = |want: ControlLines, what: &str| {
+        lines.set_control_lines(want).map_err(|e| {
+            format!(
+                "board {id}: cannot {what}: {e}\n\
+                 This resets the board by pulsing the tty's RTS line. If the port is not a real \
+                 serial device, set `reset = \"espflash\"` for this board in hil.toml."
+            )
+        })
+    };
+    // A known-idle start: the kernel raises both lines when the port is opened,
+    // and on the cancelling circuit that leaves EN high but says nothing about
+    // how long it has been there.
+    step(ControlLines::IDLE, "release the reset lines")?;
+    std::thread::sleep(LINE_SETTLE);
+    step(ControlLines::RESET, "pull EN low")?;
+    std::thread::sleep(EN_LOW_HOLD);
+    step(ControlLines::IDLE, "release EN")?;
+    Ok(())
 }
 
 /// Restart the chip, by whichever route [`Board::reset`] names.
@@ -193,6 +272,13 @@ impl Board {
 /// If the reset tool cannot be run, or reports failure.
 pub fn hard_reset(board: &Board) -> Result<(), String> {
     let (prog, args) = match &board.reset {
+        // No subprocess at all: open a control-only handle and pulse the lines.
+        // This is the detached form; `reset_attached` uses the port it is
+        // already holding instead, which is the one worth having.
+        Reset::SerialLines => {
+            let lines = ControlPort::open(&board.port).map_err(|e| format!("board {}: {e}", board.id))?;
+            return reset_lines_sequence(&lines, &board.id);
+        }
         Reset::ProbeRs { chip, probe } => {
             check_probe_rs()?;
             let mut a: Vec<String> = vec!["reset".into(), "--chip".into(), chip.clone(), "--non-interactive".into()];
@@ -234,9 +320,11 @@ pub fn hard_reset(board: &Board) -> Result<(), String> {
 /// opening misses it (measured: 0 bytes from a board that was printing).
 ///
 /// [`Reset::ProbeRs`] removes that rather than racing it: a JTAG reset does not
-/// re-enumerate the USB device, so the fd survives it. [`Reset::Espflash`]
-/// cannot hold the port and inherits the race — a property of the route, and
-/// the reason probe-rs is preferred wherever a probe exists.
+/// re-enumerate the USB device, so the fd survives it. [`Reset::SerialLines`]
+/// removes it a second way for a board with no probe — the lines are pulsed on
+/// the descriptor already held, and an external bridge does not reset with the
+/// ESP32. [`Reset::Espflash`] is the only route that must let go, and inherits
+/// the race; hence the other two are the defaults wherever they apply.
 ///
 /// # Errors
 /// If the reset fails, or (on the espflash path) the board never comes back.
@@ -250,6 +338,15 @@ pub fn reset_attached(board: &Board, l: &mut Listener<DrainedSource>) -> Result<
     match &board.reset {
         // The port is NOT released: that is the whole point.
         Reset::ProbeRs { .. } => hard_reset(board),
+        Reset::SerialLines => {
+            // Held, so the lines are driven through the capture rather than
+            // around it. `None` means a previous reconnect failed, which is a
+            // hard error and not something to reset around.
+            let held = l.source_mut().ok_or_else(|| {
+                format!("board {}: the listener has no port — an earlier reconnect failed", board.id)
+            })?;
+            reset_lines_sequence(held, &board.id)
+        }
         Reset::Espflash => l.across_reset(|| reset_and_reopen(board)),
     }?;
     Ok(isolation)
@@ -271,7 +368,8 @@ pub fn reset_attached(board: &Board, l: &mut Listener<DrainedSource>) -> Result<
 /// **Opening for real is the probe.** A throwaway
 /// [`crate::serial::SerialSource::openable`] poll would discard what its own
 /// read URBs fetched — the boot being waited for — and a failed open is
-/// already the "not back yet" signal.
+/// already the "not back yet" signal. A board behind an external bridge never
+/// leaves at all, so the wait simply returns at once.
 ///
 /// # Errors
 /// If the reset fails, or the device never comes back.
@@ -546,6 +644,96 @@ mod tests {
         assert!(parse_probe_rs_version("probe-rs 0.9.0").expect("parses") < PROBE_RS_MIN);
         assert!(parse_probe_rs_version("probe-rs 0.32.0").expect("parses") >= PROBE_RS_MIN);
         assert!(parse_probe_rs_version("probe-rs 1.0.0").expect("parses") >= PROBE_RS_MIN);
+    }
+
+    /// Records every state the lines were driven to, in order. The reset
+    /// sequence is pure ordering over this trait, so it is fully testable
+    /// without a board — which matters, because every mistake it can make is
+    /// one that looks like broken firmware from the outside.
+    struct Recorder(std::cell::RefCell<Vec<ControlLines>>);
+
+    impl Recorder {
+        fn new() -> Self {
+            Self(std::cell::RefCell::new(Vec::new()))
+        }
+        fn seen(&self) -> Vec<ControlLines> {
+            self.0.borrow().clone()
+        }
+    }
+
+    impl LineControl for Recorder {
+        fn set_control_lines(&self, want: ControlLines) -> std::io::Result<()> {
+            self.0.borrow_mut().push(want);
+            Ok(())
+        }
+    }
+
+    /// A board with no probe still gets a real reset: `EN` goes low and comes
+    /// back up, from a known-idle start.
+    #[test]
+    fn the_serial_line_reset_pulses_en_low_and_releases_it() {
+        let r = Recorder::new();
+        reset_lines_sequence(&r, "fire27").expect("driving a recorder cannot fail");
+        assert_eq!(
+            r.seen(),
+            vec![ControlLines::IDLE, ControlLines::RESET, ControlLines::IDLE],
+            "must start idle, pull EN low, then release it"
+        );
+    }
+
+    /// THE property worth a test. `DTR` drives `IO0`, and a chip released from
+    /// reset with `IO0` low comes up in the ROM **download mode**: silent, and
+    /// indistinguishable from an image that fails to boot. Asserting it at any
+    /// point in the sequence would do that, so it is asserted at no point.
+    #[test]
+    fn the_reset_never_asserts_dtr_which_would_boot_into_download_mode() {
+        let r = Recorder::new();
+        reset_lines_sequence(&r, "fire27").expect("recorder");
+        assert!(
+            r.seen().iter().all(|l| !l.dtr),
+            "DTR pulls IO0 low; the board would come up in the ROM downloader, not the app: {:?}",
+            r.seen()
+        );
+    }
+
+    /// The pulse must END with the chip running. A sequence that left `EN` held
+    /// low would look exactly like a dead board to everything downstream.
+    #[test]
+    fn the_reset_leaves_both_lines_released() {
+        let r = Recorder::new();
+        reset_lines_sequence(&r, "fire27").expect("recorder");
+        assert_eq!(r.seen().last().copied(), Some(ControlLines::IDLE), "the chip must be left running");
+    }
+
+    /// `EN` is held low for a real, board-sized interval rather than a
+    /// same-instant toggle the hardware would never see.
+    #[test]
+    fn en_is_held_low_long_enough_for_the_chip_to_see_it() {
+        let t0 = std::time::Instant::now();
+        reset_lines_sequence(&Recorder::new(), "fire27").expect("recorder");
+        assert!(t0.elapsed() >= EN_LOW_HOLD, "EN must be held for {EN_LOW_HOLD:?}, took {:?}", t0.elapsed());
+    }
+
+    /// A failure to drive the lines must name the board and offer the way out,
+    /// because the commonest cause is a `port` that is not a serial device.
+    #[test]
+    fn a_line_that_cannot_be_driven_reports_the_escape_hatch() {
+        struct Broken;
+        impl LineControl for Broken {
+            fn set_control_lines(&self, _: ControlLines) -> std::io::Result<()> {
+                Err(std::io::Error::from_raw_os_error(25)) // ENOTTY
+            }
+        }
+        let e = reset_lines_sequence(&Broken, "fire27").expect_err("must fail");
+        assert!(e.contains("fire27"), "must name the board: {e}");
+        assert!(e.contains("espflash"), "must offer the fallback route: {e}");
+    }
+
+    /// A probe-less board resets over its own control lines, held — not by
+    /// handing the port to `espflash`, which would have to release it.
+    #[test]
+    fn a_port_addressed_board_defaults_to_the_held_line_reset() {
+        assert_eq!(Board::at_port("fire27-586", "/dev/serial/by-id/x", 1_000_000).reset, Reset::SerialLines);
     }
 
     #[test]

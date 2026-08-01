@@ -20,6 +20,11 @@
 //! Reading the identity needs a reset **we** caused: the line goes out in the
 //! first fraction of a second, so a board that booted an hour ago cannot be
 //! asked. That is also why asking (~6 s) can replace flashing (~15 s).
+//!
+//! Resetting a board with **no** probe is the one job not delegated: every
+//! external tool for it needs the port to itself, and letting go across a reset
+//! means re-opening into a boot already under way. See
+//! [`m5stack_core_hil::board::Reset::SerialLines`].
 
 use std::{fs, path::PathBuf, process::ExitCode, time::Duration};
 
@@ -279,6 +284,15 @@ impl Cli {
     /// If the board cannot be resolved — see [`AddressArgs::resolve`].
     fn resolve(&self) -> Result<Target, String> {
         let (board, base, config_banner) = self.address.resolve()?;
+        // A board addressed by `--port` has no config entry to take flash
+        // defaults from, so `--chip esp32` has to choose the base itself —
+        // otherwise it would mean "an ESP32-S3's settings with the name
+        // swapped". Naming a board in hil.toml already does this, and
+        // addressing one directly must not behave differently.
+        let base = match (&self.address.port, self.flash.chip.as_deref()) {
+            (Some(_), Some(chip)) => FlashConfig::for_chip(chip),
+            _ => base,
+        };
         Ok(Target {
             board,
             flash: self.flash.over(base),
