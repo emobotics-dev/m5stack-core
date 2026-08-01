@@ -22,11 +22,16 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches:
-      - master
-      - 'feature/**'   # cover stacked PRs whose base is another feature branch
-      - 'feat/**'      # same, for the shorter `feat/` prefix
-      - 'refactor/**'  # and refactor/* bases (the BSP foundation stacks on one)
+    # NO base-branch filter. A `pull_request:` list here filters on the BASE,
+    # and a base this list does not name means the build is not skipped but
+    # never triggered at all — no failing check, no pending check, nothing on
+    # the PR to notice. Stacking (conventions/git-workflow.md §7) makes any
+    # branch a potential base, so an allow-list is a trap that has already
+    # sprung: a PR stacked on a `fix/**` branch sat green-looking with no build
+    # behind it, and was one command away from being merged that way.
+    #
+    # Listing every prefix instead would be the same trap with more entries.
+    branches: ['**']
   workflow_dispatch:
 
 # Cancel an in-flight run when a newer commit supersedes it (grouped per PR /
