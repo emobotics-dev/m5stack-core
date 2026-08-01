@@ -60,6 +60,7 @@ hil.toml`.
 
 ```sh
 tools/cores3-run.sh display 20            # build, ensure the image, capture
+tools/fire27-run.sh m5go 20               # the same, other board
 tools/hil.sh --board cores3 --read-identity
 ```
 
@@ -67,14 +68,23 @@ Boards are **named** in `hil.toml`, never spelled out at a call site: a MAC (and
 the `/dev/serial/by-id/...` path derived from it) is a fact about a rig, so
 swapping hardware or adding a second rig is a config edit and nothing else.
 
-- **CoreS3**: covered by the harness — reset over **JTAG** (`probe-rs`, with the
-  probe named explicitly so a multi-board rig cannot reset the wrong one), flash
-  via `espflash`, console on its USB-Serial-JTAG. The JTAG reset is what lets
-  the harness attach *before* resetting and so catch the identity line at
-  ~0.3 s; an RTS reset cannot, because it needs the port itself.
-- **Fire27**: not yet wired into the harness (next PR). Meanwhile: `espflash
-  flash --monitor --monitor-baud 1000000 <elf>`; **console is UART0 @ 1 Mbaud**,
-  not 115200.
+Both boards are covered, and on both the harness **attaches before resetting**
+and never lets go of the port — that is what catches the identity line at
+~0.3 s. Only *how* the reset is delivered differs:
+
+- **CoreS3**: reset over **JTAG** (`probe-rs`, with the probe named explicitly
+  so a multi-board rig cannot reset the wrong one), flash via `espflash`,
+  console on its USB-Serial-JTAG. A JTAG reset does not re-enumerate the USB
+  device, so the descriptor survives it.
+- **Fire27**: no probe, so the harness pulses **RTS** itself on the port it
+  holds (`reset = "serial-lines"`, the default for a `port` board). Its
+  USB-serial bridge is a separate chip from the ESP32 and does not reset with
+  it, so nothing is released. **Console is UART0 @ 1 Mbaud**, not 115200 — the
+  ROM and bootloader still talk at 115200, so their chatter arrives as garbage
+  and only the application is legible.
+- Handing the reset to `espflash` is the one route that must release the port
+  and re-open into a boot already under way. It stays available as a fallback
+  (`reset = "espflash"`) and is not a default anywhere.
 - Serial devices are per-board; use `/dev/serial/by-id/*`. Some bench serials are
   off-limits — check before flashing.
 - Display verification: capture the panel with the phone camera (the

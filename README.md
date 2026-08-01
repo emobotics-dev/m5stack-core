@@ -607,6 +607,7 @@ BSP and no firmware depends on it.
 ```sh
 cp hil.toml.example hil.toml              # once: name your boards
 tools/cores3-run.sh display 20            # build, ensure the image, capture 20 s
+tools/fire27-run.sh m5go 20               # …the same, for the other board
 tools/hil.sh --board cores3 --read-identity
 ```
 
@@ -627,6 +628,12 @@ What it is for, and what each piece buys:
 - **Bounded, named waits** — no `sleep` before a reset. A wait returns the
   instant its condition holds and, on expiry, says which condition failed and
   why.
+- **The port is never released across a reset** — on either board, so the boot
+  is captured from its first byte. A CoreS3 is reset over JTAG (`probe-rs`),
+  which leaves the USB device enumerated; a Fire27, which has no probe, by
+  pulsing the tty's `RTS` line from the harness itself. Handing the port to a
+  reset *tool* would mean re-opening into a boot already under way, and losing
+  the identity line the reset exists to read.
 - **`report` / `gate` (optional)** — a parse contract and a pass/fail gate for
   consumers that want a *measured* run judged. Nothing else in the crate depends
   on them; what a run measures, and what counts as too slow, stay with the
