@@ -15,6 +15,11 @@
 # pulled anonymously from the Forgejo registry, so no credentials block is
 # needed. The esp-hal / embedded-fatfs git deps are public GitHub forks and
 # fetch anonymously; nothing needs a token.
+#
+# Concurrent legs behind one aggregate job, tuned for wall-clock on a fleet that
+# is idle most of the time: each leg recompiles the dependency graph, trading
+# ~2.2x the runner time for ~half the turnaround. Timings, why this grouping,
+# and the caching follow-up are in #58.
 
 name: CI
 
@@ -49,33 +54,40 @@ env:
   GIT_TERMINAL_PROMPT: "0"
 
 jobs:
-  build:
-    name: Build (ESP32 + ESP32-S3)
+  # ── fire27 / ESP32 ──────────────────────────────────────────────────────────
+  #
+  # No toolchain-plumbing step in any leg: the m5stack-core-ci:v6 image exports
+  # PATH (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself.
+  # These green builds ARE the regression test that the image's exported env is
+  # complete — if it weren't, they would fail with `linker not found` or bindgen
+  # `inttypes.h not found` (see #11).
+  fire27-lib:
+    name: fire27 lib
     runs-on: [rust, esp32]
     container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # No toolchain-plumbing step: the m5stack-core-ci:v6 image exports PATH
-      # (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself. This
-      # green build IS the regression test that the image's exported env is
-      # complete — if it weren't, the fire27/cores3 builds below would fail with
-      # `linker not found` or bindgen `inttypes.h not found` (see #11).
-
       - name: Build lib (fire27 / ESP32)
         run: cargo build --release --features fire27
 
-      - name: Build lib (cores3 / ESP32-S3)
-        run: cargo build --release --features cores3 --target xtensa-esp32s3-none-elf
-
+  fire27-full:
+    name: fire27 all features
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Build lib (fire27, all features)
         run: cargo build --release --features "fire27,display,buttons,psram,serial-cmd,search-masks,coex"
 
-      - name: Build lib (cores3, all features)
-        run: cargo build --release --features "cores3,display,buttons,psram,serial-cmd,search-masks,coex" --target xtensa-esp32s3-none-elf
-
+  fire27-examples:
+    name: fire27 examples
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       # `coex` is built on its own (`--bin coex --features coex`): esp-radio's
       # coexist blob can't link into the non-BLE bins, so the coex feature must
       # not be enabled while building them. `lvgl` is gated (skips the LVGL C
@@ -85,16 +97,54 @@ jobs:
           cargo build --release -p demos --features lvgl
           cargo build --release -p demos --bin coex --features coex
 
+  # ── cores3 / ESP32-S3 ───────────────────────────────────────────────────────
+  cores3-lib:
+    name: cores3 lib
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build lib (cores3 / ESP32-S3)
+        run: cargo build --release --features cores3 --target xtensa-esp32s3-none-elf
+
+  cores3-full:
+    name: cores3 all features
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build lib (cores3, all features)
+        run: cargo build --release --features "cores3,display,buttons,psram,serial-cmd,search-masks,coex" --target xtensa-esp32s3-none-elf
+
+  cores3-examples:
+    name: cores3 examples
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # See the coex / lvgl note on the fire27 examples leg.
       - name: Build examples (cores3 / ESP32-S3)
         run: |
           cargo build --release -p demos --no-default-features --features cores3,lvgl --target xtensa-esp32s3-none-elf
           cargo build --release -p demos --bin coex --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
 
-      # Two HOST crates that nothing above builds: the harness is in its own
+  # ── host crates ─────────────────────────────────────────────────────────────
+  host:
+    name: host crates
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Two HOST crates that no board leg builds: the harness is in its own
       # workspace, and `--workspace` reaches neither. Their logic needs no
       # board, so the full suites run here; tests that DO need one are
-      # `#[ignore]`d and stay out. Without these steps both could rot unnoticed
-      # while every other build stayed green.
+      # `#[ignore]`d and stay out. Without these both could rot unnoticed while
+      # every board build stayed green.
       #
       # `working-directory`, NOT `--manifest-path` or `-p` from the root: cargo
       # reads .cargo/config.toml from the CURRENT DIRECTORY, so from the root
@@ -108,3 +158,46 @@ jobs:
       - name: Test build helper (host)
         working-directory: m5stack-core-build
         run: cargo test
+
+  # DO NOT RENAME: master's protection requires this exact context string, so
+  # renaming silently disarms the gate — a required check that stops existing
+  # never reports, green by absence (#52). `if: always()` for the same reason: a
+  # skipped aggregate reports nothing, so it runs and judges the legs itself.
+  build:
+    name: Build (ESP32 + ESP32-S3)
+    if: always()
+    needs:
+      - fire27-lib
+      - fire27-full
+      - fire27-examples
+      - cores3-lib
+      - cores3-full
+      - cores3-examples
+      - host
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    steps:
+      - name: Verify every leg succeeded
+        env:
+          LEG_RESULTS: >-
+            fire27-lib=${{ needs.fire27-lib.result }}
+            fire27-full=${{ needs.fire27-full.result }}
+            fire27-examples=${{ needs.fire27-examples.result }}
+            cores3-lib=${{ needs.cores3-lib.result }}
+            cores3-full=${{ needs.cores3-full.result }}
+            cores3-examples=${{ needs.cores3-examples.result }}
+            host=${{ needs.host.result }}
+        run: |
+          set -eu
+          rc=0
+          for entry in $LEG_RESULTS; do
+            leg=${entry%%=*}
+            result=${entry#*=}
+            printf '%-18s %s\n' "$leg" "$result"
+            [ "$result" = success ] || rc=1
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::at least one build leg did not succeed"
+            exit 1
+          fi
+          echo "all legs succeeded"
