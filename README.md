@@ -296,18 +296,21 @@ build time, and `app_elf_sha256()`, the built image's own content hash). A
 host can read it straight off flash without booting the board, which is what
 makes a "skip the flash if this board already carries the intended image"
 workflow possible. Invoke it once, in the binary (not the BSP), so it captures
-the *application's* `CARGO_PKG_VERSION`:
+the *application's* own metadata:
 
 ```rust
 m5stack_core::app_desc!();
 ```
 
-Whenever `app-desc` is on, `io::console::install` also logs it once, as the
-first BSP-emitted line, right after the transport comes up — before anything
-the application itself logs (real capture, CoreS3 HIL):
+`project_name` is `CARGO_BIN_NAME`, not the package name: a package can have
+more than one `[[bin]]`, and only the per-binary compilation — where this
+macro expands — knows which one is being built. Whenever `app-desc` is on,
+`io::console::install` also logs the descriptor once, as the first
+BSP-emitted line, right after the transport comes up — before anything the
+application itself logs (real capture, CoreS3 HIL):
 
 ```
-[00000.320 INFO ] [identity] demos 57a94935* sha256=f5a3e9aa33281b42
+[00000.321 INFO ] [identity] display display/565d6052* sha256=038a1c0a794cbba1
 ```
 
 (`markers::IDENTITY`, grep-able like `markers::PANIC`/`PREV_PANIC`.) This
@@ -317,36 +320,44 @@ consumer enabling `app-desc`/`heap` is expected to call it, matching the
 reference to `esp_app_desc`), not a missing log line.
 
 By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
-feature (implies `app-desc`) makes it a build-time git descriptor instead —
-same call site, no application-code change — and turns "forgot to wire this
-up" into a compile error rather than a silent gap:
+feature (implies `app-desc`) makes it `<bin>/<features>/<hash><dirty>`
+instead (e.g. `display/csp/a1b2c3d4*`, or `display/a1b2c3d4*` with no
+features tag) — same call site, no application-code change — and turns
+"forgot to wire this up" into a compile error rather than a silent gap:
 
 1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
-2. Call it once from your own `build.rs`:
+2. Call it once from your own `build.rs`, with a short features tag (or `""`
+   for none — `m5stack-core-build` never inspects or guesses which of your
+   Cargo features matter, that's your call):
    ```rust
    fn main() {
-       m5stack_core_build::emit_identity_env();
+       m5stack_core_build::emit_identity_env("csp");
    }
    ```
 3. Enable the `identity` feature. `app_desc!()`'s call site is unchanged, but
-   its expansion now requires `M5STACK_CORE_BUILD_MARK` (an 8-hex-char
-   abbreviated commit hash + a `*` if the tree is dirty, e.g. `a1b2c3d4*`) —
-   if step 1 or 2 was skipped, that's `env!()` failing to compile *in your own
+   its expansion now requires `M5STACK_CORE_BUILD_MARK` (`<features>/<hash><dirty>`,
+   an 8-hex-char abbreviated commit hash plus a `*` if the tree is dirty) — if
+   step 1 or 2 was skipped, that's `env!()` failing to compile *in your own
    crate*, pointing straight at the `app_desc!()` line, not a silently-plain
    version field.
 
 `EspAppDesc::version` is a fixed 32-byte C string with **no reserved NUL
 terminator** — a 32-byte mark fills the whole array with no trailing zero,
 which isn't a valid C string and could send a host tool reading it (by
-scanning for NUL) past the struct entirely. `m5stack-core-build` caps the
-mark at 31 bytes, the true safe ceiling, not an arbitrary one. The mark alone
-becomes the whole version field; nothing prefixes it with `CARGO_PKG_VERSION`
-automatically, so if you want that too, fold it into what `m5stack-core-build`
-emits, or set `M5STACK_CORE_BUILD_MARK` yourself from your own `build.rs`
-instead — the env var's *name* is the only contract, not how it gets set.
-BSP owns the mechanism (reading the descriptor back, enforcing the wiring);
-the consumer's own `build.rs` owns the content —
-`m5stack-core` never inspects its own git tree, only `m5stack-core-build`
+scanning for NUL) past the struct entirely. 31 bytes is the true safe
+ceiling. Since the binary name is joined with the git mark only at the
+`app_desc!()` call site (a `build.rs` runs once per *package*, so it can
+never know which binary it's describing — that's why `m5stack-core-build`
+doesn't take or emit the binary name itself), that's also where the length
+is checked: `app_desc!()` emits a `const` assertion, so a combination that
+doesn't fit is a real compile error naming the exact 31-byte limit, not a
+silent truncation — which part to shorten (the `features` tag, or nothing
+this crate controls) is entirely your call, not something either crate
+decides for you.
+
+BSP owns the mechanism (reading the descriptor back, enforcing the wiring,
+joining in `CARGO_BIN_NAME`); the consumer's own `build.rs` owns the content
+— `m5stack-core` never inspects its own git tree, only `m5stack-core-build`
 does, and only against the *calling* crate's directory.
 
 ### Serial console (`io::console`)

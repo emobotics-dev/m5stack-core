@@ -15,14 +15,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wants identity reporting without `esp-alloc` in the graph can enable just
   this.
 - **`identity` feature** (implies `app-desc`): makes `app_desc!()`'s version
-  field an enforced build-time git descriptor instead of plain
-  `CARGO_PKG_VERSION` — same call site, no application-code change. Forgetting
-  the required `build.rs` wiring is a compile error (`env!()` has nothing to
-  read), not a silent gap. Off by default; existing consumers are unaffected.
+  field `<bin>/<features>/<hash><dirty>` (e.g. `display/csp/a1b2c3d4*`)
+  instead of plain `CARGO_PKG_VERSION` — same call site, no application-code
+  change. Forgetting the required `build.rs` wiring is a compile error
+  (`env!()` has nothing to read), not a silent gap; a combination that
+  doesn't fit the descriptor's fixed 31-byte field is also a compile error
+  (a `const` assertion at the `app_desc!()` call site), not a silent
+  truncation. Off by default; existing consumers are unaffected.
+- **`project_name` is now `CARGO_BIN_NAME`**, not the package name, in both
+  the default and `identity` cases — a package can have more than one
+  `[[bin]]`, and only the per-binary compilation (where `app_desc!()`
+  expands) knows which one is being built.
 - **New crate `m5stack-core-build`**: a host-only build-time helper —
-  `emit_identity_env()`, called once from a consumer's own `build.rs`, sets
-  the git descriptor `identity` requires. Optional; the env var can also be
-  set by hand.
+  `emit_identity_env(features: &str)`, called once from a consumer's own
+  `build.rs`, sets the `<features>/<hash><dirty>` env var `identity` requires
+  (the binary name is joined in separately, by `app_desc!()` itself, since a
+  `build.rs` runs once per package and can't know which binary it's
+  describing). Optional; the env var can also be set by hand.
 - **Automatic boot-time identity log** (#43): `io::console::install` now logs
   the descriptor once — project name, version, and an `app_elf_sha256`
   prefix — as the first BSP-emitted line, right after the transport comes up

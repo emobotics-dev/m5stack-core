@@ -9,9 +9,24 @@
 //!
 //! ```no_run
 //! fn main() {
-//!     m5stack_core_build::emit_identity_env();
+//!     // "" if you don't want a features tag in the mark.
+//!     m5stack_core_build::emit_identity_env("csp");
 //! }
 //! ```
+//!
+//! `app_desc!()` (under `identity`) joins this with `CARGO_BIN_NAME` — set by
+//! Cargo at the point `app_desc!()` itself expands, since a package can have
+//! more than one `[[bin]]` and a `build.rs` (this crate) runs once per
+//! *package*, not per binary, so it can never know which binary it's
+//! describing. That's why the binary name isn't part of what this crate
+//! emits: it genuinely can't be, correctly, from here.
+//!
+//! This crate performs **no length enforcement or truncation** — the full
+//! mark (`CARGO_BIN_NAME` + this crate's output) is only known where
+//! `app_desc!()` expands, so that's where the length is checked, as a real
+//! compile error if it doesn't fit, not a silent cut here. Which part to
+//! shorten in response (the `features` tag, or nothing this crate controls)
+//! is entirely the caller's call.
 //!
 //! This crate only ever inspects the *calling* crate's own directory
 //! (`CARGO_MANIFEST_DIR`, which is unambiguous for a build script — it is
@@ -22,33 +37,33 @@
 use std::path::Path;
 use std::process::Command;
 
-/// Bytes budget for the emitted mark — the full width `EspAppDesc::version`
-/// (the field `app_desc!()` writes this into under `identity`) can safely
-/// hold. That field is a fixed **32-byte** C string, but `str_to_cstr_array`
-/// reserves no NUL terminator: a 32-byte mark fills the array with no
-/// trailing zero, leaving it *not* a valid C string — a host tool that reads
-/// `version` by scanning for NUL could walk past the struct entirely. 31
-/// bytes leaves that terminator, so this is the true safe ceiling, not an
-/// arbitrary choice.
-const MAX_MARK_LEN: usize = 31;
-
-/// Sets `cargo:rustc-env=M5STACK_CORE_BUILD_MARK=<mark>` from the calling
-/// crate's own git state: an 8-hex-char abbreviated commit hash, plus a
-/// trailing `*` if the working tree has uncommitted changes (e.g. `a1b2c3d4*`).
+/// Sets `cargo:rustc-env=M5STACK_CORE_BUILD_MARK=<mark>` from `features` and
+/// the calling crate's own git state: `<features>/<hash><dirty>`, or just
+/// `<hash><dirty>` if `features` is `""` — an 8-hex-char abbreviated commit
+/// hash, plus a trailing `*` if the working tree has uncommitted changes
+/// (e.g. `csp/a1b2c3d4*`, or `a1b2c3d4*` with no features tag).
 ///
-/// Never fails the build: falls back to `"unknown"` if `git` isn't on `PATH`,
-/// the crate isn't a git checkout (e.g. built from a source tarball), or `git`
-/// errors for any other reason.
-pub fn emit_identity_env() {
+/// `features` is never inspected or validated — pass whatever short,
+/// consumer-meaningful tag you want (or `""`); this crate has no way to know
+/// which of your Cargo features are identity-relevant, so it doesn't guess.
+///
+/// Never fails the build: falls back to `"unknown"` for the commit if `git`
+/// isn't on `PATH`, the crate isn't a git checkout (e.g. built from a source
+/// tarball), or `git` errors for any other reason.
+pub fn emit_identity_env(features: &str) {
     let dir = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR is set by cargo for every build script");
-    let mark = git_mark(Path::new(&dir)).unwrap_or_else(|| "unknown".to_string());
-    let mark = truncate(&mark, MAX_MARK_LEN);
+    let commit = git_mark(Path::new(&dir)).unwrap_or_else(|| "unknown".to_string());
+    let mark = join_mark(features, &commit);
     println!("cargo:rustc-env=M5STACK_CORE_BUILD_MARK={mark}");
     // Re-run only when the commit or working-tree state actually changes,
     // not on every build.
     println!("cargo:rerun-if-changed={dir}/.git/HEAD");
     println!("cargo:rerun-if-changed={dir}/.git/index");
+}
+
+fn join_mark(features: &str, commit: &str) -> String {
+    if features.is_empty() { commit.to_string() } else { format!("{features}/{commit}") }
 }
 
 fn git_mark(dir: &Path) -> Option<String> {
@@ -65,39 +80,17 @@ fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
     String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
 }
 
-fn truncate(s: &str, max_chars: usize) -> &str {
-    match s.char_indices().nth(max_chars) {
-        Some((byte_idx, _)) => &s[..byte_idx],
-        None => s,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{MAX_MARK_LEN, truncate};
+    use super::join_mark;
 
     #[test]
-    fn truncate_short_string_unchanged() {
-        assert_eq!(truncate("a1b2c3d4", 16), "a1b2c3d4");
+    fn no_features_is_just_the_commit() {
+        assert_eq!(join_mark("", "a1b2c3d4*"), "a1b2c3d4*");
     }
 
     #[test]
-    fn truncate_long_string_cuts_at_budget() {
-        assert_eq!(truncate("a1b2c3d4*-N-g0123456789", 16), "a1b2c3d4*-N-g012");
-    }
-
-    #[test]
-    fn truncate_exact_length_unchanged() {
-        let s = "0123456789abcdef";
-        assert_eq!(truncate(s, 16), s);
-    }
-
-    #[test]
-    fn max_mark_len_leaves_room_for_the_cstr_nul_terminator() {
-        // EspAppDesc::version is exactly 32 bytes with no reserved terminator
-        // slot — the emitted mark must leave at least one byte for it.
-        assert!(MAX_MARK_LEN < 32);
-        let mark = "a".repeat(40);
-        assert_eq!(truncate(&mark, MAX_MARK_LEN).len(), MAX_MARK_LEN);
+    fn features_prefix_the_commit() {
+        assert_eq!(join_mark("csp", "a1b2c3d4*"), "csp/a1b2c3d4*");
     }
 }

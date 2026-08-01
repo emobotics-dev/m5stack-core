@@ -152,23 +152,55 @@ pub(crate) fn log_boot_identity() {
 /// `m5stack-core-build` crate). BSP owns the mechanism, never the content: if
 /// the `build.rs` wiring is missing, `env!()` fails to compile in the
 /// *consumer's* crate — a real compile error, not a silent fallback.
+///
+/// `project_name` is `CARGO_BIN_NAME`, not `CARGO_PKG_NAME`: a package can
+/// have more than one `[[bin]]`, and only the per-binary compilation (where
+/// this macro expands) knows which one is being built — `CARGO_PKG_NAME`
+/// would report the same value for every binary in a multi-bin package.
 #[cfg(all(feature = "app-desc", not(feature = "identity")))]
 #[macro_export]
 macro_rules! app_desc {
     () => {
-        $crate::__bootloader::esp_app_desc!();
+        $crate::__bootloader::esp_app_desc!(
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_BIN_NAME"),
+            $crate::__bootloader::BUILD_TIME,
+            $crate::__bootloader::BUILD_DATE,
+            $crate::__bootloader::ESP_IDF_COMPATIBLE_VERSION,
+            $crate::__bootloader::MMU_PAGE_SIZE,
+            0,
+            u16::MAX,
+            $crate::__bootloader::SECURE_VERSION
+        );
     };
 }
 
-/// See the non-`identity` [`app_desc!`] above — same call site, enforced
-/// build-identity version field.
+/// See the non-`identity` [`app_desc!`] above — same call site. The version
+/// field becomes `CARGO_BIN_NAME` joined with the git mark
+/// (`<bin>/<features>/<hash><dirty>`, e.g. `display/csp/a1b2c3d4*`) — binary
+/// name included for the same reason as `project_name` above, joined here
+/// (rather than by `m5stack-core-build`) because only this per-binary
+/// compilation knows `CARGO_BIN_NAME`; a `build.rs` runs once per *package*
+/// and can't know which binary it's describing.
+///
+/// `EspAppDesc::version` is a fixed 32-byte C string with no reserved NUL
+/// terminator (see `m5stack-core-build`'s docs) — 31 bytes is the true safe
+/// ceiling. Enforced here as a real compile error, not a silent truncation:
+/// which part to shorten (the `features` tag passed to `emit_identity_env`,
+/// or nothing this crate controls) is the caller's call, not this macro's.
 #[cfg(all(feature = "app-desc", feature = "identity"))]
 #[macro_export]
 macro_rules! app_desc {
     () => {
+        const _: () = ::core::assert!(
+            ::core::concat!(::core::env!("CARGO_BIN_NAME"), "/", ::core::env!("M5STACK_CORE_BUILD_MARK")).len() <= 31,
+            "m5stack_core::app_desc!(): CARGO_BIN_NAME + '/' + M5STACK_CORE_BUILD_MARK exceeds \
+             31 bytes (EspAppDesc::version's safe ceiling — see m5stack-core-build's docs). \
+             Shorten the `features` tag passed to emit_identity_env(), or the binary name."
+        );
         $crate::__bootloader::esp_app_desc!(
-            env!("M5STACK_CORE_BUILD_MARK"),
-            env!("CARGO_PKG_NAME"),
+            ::core::concat!(::core::env!("CARGO_BIN_NAME"), "/", ::core::env!("M5STACK_CORE_BUILD_MARK")),
+            env!("CARGO_BIN_NAME"),
             $crate::__bootloader::BUILD_TIME,
             $crate::__bootloader::BUILD_DATE,
             $crate::__bootloader::ESP_IDF_COMPATIBLE_VERSION,
