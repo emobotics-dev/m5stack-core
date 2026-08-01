@@ -124,6 +124,31 @@ impl FlashConfig {
     pub fn cores3() -> Self {
         Self { chip: "esp32s3".into(), flash_size: None, flash_freq: Some("80mhz".into()), partition_table: None }
     }
+
+    /// The Fire27 defaults: a plain ESP32, same 80 MHz reasoning as above.
+    ///
+    /// If a freshly written Fire27 does not boot, `flash_freq` is the first
+    /// thing to try at `40mhz` — espflash's own default, and the safe value for
+    /// a flash part that cannot run at 80. That is a one-line `hil.toml` edit
+    /// rather than a code change, and the failure is loud: `--ensure-image`
+    /// verifies the write took by reading the board back, so a board that does
+    /// not come up is reported and not measured.
+    #[must_use]
+    pub fn fire27() -> Self {
+        Self { chip: "esp32".into(), flash_size: None, flash_freq: Some("80mhz".into()), partition_table: None }
+    }
+
+    /// Defaults for a named `espflash` chip, falling back to the CoreS3's for
+    /// anything this crate has no opinion about — with `chip` set as asked, so
+    /// an unknown target is still addressable rather than silently rewritten.
+    #[must_use]
+    pub fn for_chip(chip: &str) -> Self {
+        match chip {
+            "esp32" => Self::fire27(),
+            "esp32s3" => Self::cores3(),
+            other => Self { chip: other.to_string(), ..Self::cores3() },
+        }
+    }
 }
 
 /// What [`ensure_image`] did.

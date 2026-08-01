@@ -22,12 +22,18 @@
 //!
 //! Termios is set with `stty` rather than a serial crate: it is already a hard
 //! requirement of every script here, and adopting a second port abstraction
-//! with its own idea of a baud rate costs more than it saves.
+//! with its own idea of a baud rate costs more than it saves. `libc` is taken
+//! for the one thing `stty` cannot do — driving the modem control lines for a
+//! reset ([`LineControl`]). That is a reset, not a configuration, and is not an
+//! argument for rewriting the termios setup that works.
 
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::FileTypeExt,
+    os::{
+        fd::AsRawFd,
+        unix::fs::{FileTypeExt, OpenOptionsExt},
+    },
     process::Command,
     sync::{
         Arc, Mutex,
@@ -219,6 +225,166 @@ impl SerialSource {
     }
 }
 
+/// The state of the two tty control lines an ESP32's auto-reset circuit is
+/// wired to.
+///
+/// `RTS` and `DTR` drive `EN` (reset) and `IO0` (boot mode) through a
+/// two-transistor circuit that **cancels when both are asserted** — which is
+/// what stops an ordinary terminal, raising both on open, from resetting the
+/// board. The lines can only be reasoned about together, hence one value rather
+/// than two setters.
+///
+/// | `rts` | `dtr` | `EN`  | `IO0` | effect                       |
+/// |-------|-------|-------|-------|------------------------------|
+/// | false | false | high  | high  | running, normal boot         |
+/// | true  | false | LOW   | high  | held in reset, will run app  |
+/// | false | true  | high  | LOW   | download mode on next release|
+/// | true  | true  | high  | high  | cancelled — nothing happens  |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlLines {
+    pub rts: bool,
+    pub dtr: bool,
+}
+
+impl ControlLines {
+    /// Neither line asserted: `EN` and `IO0` both released, so the chip runs.
+    pub const IDLE: Self = Self { rts: false, dtr: false };
+
+    /// `RTS` alone: `EN` low, `IO0` **high**.
+    ///
+    /// The `IO0` half is the load-bearing one. Asserting `DTR` here would pull
+    /// `IO0` low and the chip would come out of reset in the ROM **download
+    /// mode** instead of running the application — a board that then sits
+    /// silent, looking for all the world like an image that fails to boot.
+    /// That is the failure `board::reset_lines_sequence`'s test pins.
+    pub const RESET: Self = Self { rts: true, dtr: false };
+}
+
+/// Anything whose tty control lines can be driven.
+///
+/// Two things can: the [`DrainedSource`] the harness is already **holding** —
+/// which is the whole point, since driving the lines from the attached handle
+/// is what removes the release-and-race — and a [`ControlPort`] opened purely
+/// for the purpose when nothing is attached.
+///
+/// A trait rather than an inherent method so the reset *sequence* — which lines
+/// in which order, held for how long — can be unit-tested on the host against a
+/// recorder. The sequence is the part that can be wrong in a way that costs a
+/// bench session; the ioctl is the part that either works or returns `EINVAL`.
+pub trait LineControl {
+    /// Drive both lines to `want`, together.
+    ///
+    /// # Errors
+    /// If the descriptor is not a tty, or the ioctl fails.
+    fn set_control_lines(&self, want: ControlLines) -> io::Result<()>;
+}
+
+/// Drive `port`'s `RTS`/`DTR` to `want` in **one** `TIOCMSET`.
+///
+/// Read-modify-write rather than `TIOCMBIS`/`TIOCMBIC`, for two reasons that
+/// both matter on the reset path:
+///
+/// - **Together.** Set-then-clear would pass through an intermediate state, and
+///   on the cancelling circuit above the intermediate states are precisely the
+///   ones that pull `EN` or `IO0`. A single `TIOCMSET` cannot glitch the board
+///   into download mode between two ioctls.
+/// - **Only these two.** The word also carries `CTS`, `DSR`, `CD`, `RI`; a
+///   blind `TIOCMSET` of a constructed word would assert or clear whatever else
+///   the driver had in there.
+fn set_control_lines(port: &File, want: ControlLines) -> io::Result<()> {
+    let fd = port.as_raw_fd();
+    let mut bits: libc::c_int = 0;
+
+    // SAFETY: `fd` is borrowed from `port`, which is alive for this whole
+    // function, so the descriptor is open and owned throughout. `TIOCMGET` and
+    // `TIOCMSET` each take exactly one `*mut c_int` / `*const c_int`, and
+    // `bits` is a live, correctly-typed, correctly-aligned local of that type.
+    // Neither request retains the pointer past the call.
+    #[allow(unsafe_code, reason = "std exposes no modem-line control; see the manifest")]
+    let read = unsafe { libc::ioctl(fd, libc::TIOCMGET, &raw mut bits) };
+    if read < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    for (line, on) in [(libc::TIOCM_RTS, want.rts), (libc::TIOCM_DTR, want.dtr)] {
+        if on {
+            bits |= line;
+        } else {
+            bits &= !line;
+        }
+    }
+
+    // SAFETY: as above; `bits` is now the full word read back with only the two
+    // requested bits changed, so nothing else in it is invented.
+    #[allow(unsafe_code, reason = "std exposes no modem-line control; see the manifest")]
+    let wrote = unsafe { libc::ioctl(fd, libc::TIOCMSET, &raw const bits) };
+    if wrote < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A handle opened **only** to drive a board's control lines, never to read it.
+///
+/// For [`crate::board::hard_reset`] on a probe-less board when nothing is
+/// attached. It deliberately does not read: a second reader on one tty splits
+/// the byte stream and both halves see holes, which is the failure
+/// [`SerialSource::open`] refuses at length — so this opens the port and reads
+/// nothing from it, and is safe to hold alongside an attached
+/// [`DrainedSource`] of the same process.
+pub struct ControlPort {
+    port: File,
+}
+
+impl ControlPort {
+    /// Open `path` for line control.
+    ///
+    /// Clears `hupcl` before doing anything else, and that is not tidiness:
+    /// with `hupcl` set — the driver's default on a pristine port — **closing**
+    /// the descriptor lowers `DTR`, and on the circuit above a `DTR` edge at
+    /// close time is another reset, arriving *after* this function has reported
+    /// the board reset and released it. The caller would be listening to a boot
+    /// that is about to be interrupted by one it never asked for.
+    ///
+    /// It does not touch baud, raw mode or `VMIN`/`VTIME`: those belong to
+    /// whoever is capturing, and this may be opened while that capture is live.
+    ///
+    /// # Errors
+    /// If the port cannot be opened, or `stty` cannot clear `hupcl`.
+    pub fn open(path: &str) -> io::Result<Self> {
+        // `O_NONBLOCK` because opening a tty **blocks until carrier** unless
+        // `clocal` is already set, and `clocal` is one of the things this is
+        // here to set — a hang with no output is the worst failure shape
+        // available. Nothing is ever read through this descriptor, so
+        // non-blocking changes no semantics; `SerialSource` deliberately keeps
+        // its own, bench-proven, blocking open, since there the flag WOULD
+        // change how reads behave.
+        let port = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| io::Error::new(e.kind(), format!("{path}: {e}")))?;
+        // Applied while we hold the descriptor, for the same reason
+        // `SerialSource::open` configures after opening: a setting made by a
+        // process that immediately closes the port need not outlive it.
+        let out = Command::new("stty").args(["-F", path, "-hupcl", "clocal"]).output()?;
+        if !out.status.success() {
+            return Err(io::Error::other(format!(
+                "stty could not clear hupcl on {path}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(Self { port })
+    }
+}
+
+impl LineControl for ControlPort {
+    fn set_control_lines(&self, want: ControlLines) -> io::Result<()> {
+        set_control_lines(&self.port, want)
+    }
+}
+
 impl Source for SerialSource {
     fn read_available(&mut self, budget: Duration) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + budget;
@@ -283,8 +449,13 @@ mod tests {
 /// - a board running firmware built with `m5stack-core`'s **`serial-cmd`**
 ///   feature — the precondition is a firmware that can *receive* a byte, and
 ///   that feature is what decides it;
-/// - `M5STACK_HIL_BOARD` set to its **MAC** — never a `ttyACM` number, which
-///   renumbers on replug (§1).
+/// - `M5STACK_HIL_BOARD` set to its **MAC**, or — for a board behind an
+///   external bridge, whose `by-id` name is not MAC-derived — that full path.
+///   Never a `ttyACM` number, which renumbers on replug (§1).
+///
+/// Two instead need a **probe-less** board (a Fire27, or any board configured
+/// `reset = "serial-lines"`), since what they prove is that pulsing the tty's
+/// own control lines restarts the chip. They need no `serial-cmd`.
 ///
 /// The BSP owns no command vocabulary, so the probe byte and the reply it
 /// should produce are the caller's. Choose a verb that is observable and
@@ -315,8 +486,10 @@ mod ontarget {
         sync::{Mutex, MutexGuard},
     };
 
-    use super::{Duration, Instant, SerialSource, fs};
+    use super::{ControlLines, DrainedSource, Duration, Instant, LineControl, SerialSource, fs};
     use crate::{
+        board,
+        identity::MARKER,
         listen::{Listener, Outcome, Source},
         wait,
     };
@@ -343,7 +516,7 @@ mod ontarget {
         std::env::var(var).unwrap_or_else(|_| {
             panic!(
                 "{var} is unset ({what}). This tier needs the rig:\n  \
-                 M5STACK_HIL_BOARD=<board-MAC> M5STACK_HIL_PROBE=<byte> \
+                 M5STACK_HIL_BOARD=<board-MAC|/dev/serial/by-id/…> M5STACK_HIL_PROBE=<byte> \
                  M5STACK_HIL_PROBE_REPLY=<substring> cargo test -- --ignored\n\
                  The board must run firmware built with m5stack-core's `serial-cmd` \
                  feature, so it can receive a command byte at all."
@@ -351,11 +524,21 @@ mod ontarget {
         })
     }
 
-    /// The board's stable path, built the one way the crate builds it — via
-    /// [`crate::board::Board::cores3`], so the tests and the tool cannot
-    /// disagree about how a board is addressed.
+    /// The board's stable path.
+    ///
+    /// Accepts **either** a CoreS3's MAC — turned into a path the one way the
+    /// crate does it, via [`crate::board::Board::cores3`], so the tests and the
+    /// tool cannot disagree about how a board is addressed — or a full
+    /// `/dev/serial/by-id/...` path, which is how a board behind an external
+    /// bridge (a Fire27) is named, since its by-id name is not derived from a
+    /// MAC.
+    ///
+    /// Decided by shape rather than by a second variable: a leading `/` is
+    /// unambiguous, and a variable nobody remembers to set is a variable that
+    /// silently selects the wrong board.
     fn tty() -> String {
-        crate::board::Board::cores3(&required("M5STACK_HIL_BOARD", "the board's MAC")).port
+        let board = required("M5STACK_HIL_BOARD", "the board's MAC, or its /dev/serial/by-id path");
+        if board.starts_with('/') { board } else { crate::board::Board::cores3(&board).port }
     }
 
     /// Is `name` present in `stty -a` output, and is it ON?
@@ -576,6 +759,67 @@ mod ontarget {
         }
     }
 
+    /// The claim [`board::Reset::SerialLines`] rests on, and the one part of it
+    /// no host test can reach: pulsing `RTS` on a **held** port really restarts
+    /// the chip, and the capture really spans the reset instead of stopping at
+    /// it.
+    ///
+    /// The host suite proves the *sequence* — idle, `EN` low, idle, and `DTR`
+    /// never asserted — against a recorder. What it cannot prove is that the
+    /// board on the far end is wired to those lines at all. That is exactly one
+    /// bench run, and until it has been made, this is the test that has not been
+    /// run rather than a claim that has been checked.
+    ///
+    /// Needs a board whose reset lines the harness drives — a Fire27, or any
+    /// board configured `reset = "serial-lines"`. It does **not** need
+    /// `serial-cmd`: nothing is sent to the board.
+    #[test]
+    #[ignore = "needs the rig: a probe-less board (Fire27), M5STACK_HIL_BOARD=<its by-id path>"]
+    fn a_held_line_reset_restarts_the_board_without_breaking_the_capture() {
+        let _rig = rig();
+        let t = tty();
+        let port = DrainedSource::open(&t, BAUD).expect("open");
+        let mut l = Listener::new(port);
+
+        // Consume any backlog first, so what arrives below is unambiguously the
+        // boot this test caused and not something already in the buffer.
+        let _ = l.wait_for_line("\u{0}no-such-pattern", Duration::from_millis(400));
+        let before = l.bytes().len();
+
+        board::reset_lines_sequence(l.source_mut().expect("attached"), "line-reset")
+            .expect("driving RTS on a real serial port must work");
+
+        // The identity goes out at ~0.3 s of uptime. Seeing it on the SAME fd
+        // that was open before the reset is the whole property: no release, no
+        // re-open, no window.
+        match l.wait_for_line(MARKER, board::IDENTITY_BUDGET) {
+            Outcome::Matched(line) => assert!(line.contains(MARKER), "{line}"),
+            other => panic!(
+                "no identity within {:?} of a line reset: {other:?}\n\
+                 Either the board does not carry the standard auto-reset circuit — set \
+                 `reset = \"espflash\"` for it in hil.toml — or it is running an image \
+                 built without `m5stack_core::app_desc!()`.\ncaptured: {:?}",
+                board::IDENTITY_BUDGET,
+                String::from_utf8_lossy(l.bytes())
+            ),
+        }
+        assert!(l.bytes().len() > before, "the capture must have grown across the reset, not stopped at it");
+    }
+
+    /// `DTR` must be left alone by everything on the reset path, because it
+    /// drives `IO0`: a board released from reset with `IO0` low comes up in the
+    /// ROM downloader — silent, and indistinguishable from an image that does
+    /// not boot. Asserted against the real ioctl rather than a recorder.
+    #[test]
+    #[ignore = "needs the rig: a probe-less board (Fire27), M5STACK_HIL_BOARD=<its by-id path>"]
+    fn the_control_lines_can_be_driven_on_a_real_port() {
+        let _rig = rig();
+        let s = DrainedSource::open(&tty(), BAUD).expect("open");
+        for want in [ControlLines::IDLE, ControlLines::RESET, ControlLines::IDLE] {
+            s.set_control_lines(want).unwrap_or_else(|e| panic!("driving {want:?} on a real tty failed: {e}"));
+        }
+    }
+
     /// The probe a bounded reset-wait is pointed at. On a board that is present
     /// it must succeed immediately — if this were slow or flaky, every
     /// re-enumeration wait built on it would inherit that.
@@ -670,6 +914,22 @@ impl DrainedSource {
     pub fn send(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.tx.write_all(bytes)?;
         self.tx.flush()
+    }
+}
+
+/// Reset the board **without letting go of it**.
+///
+/// This is what makes a probe-less board as observable as one with a JTAG
+/// probe. The lines are driven on the descriptor this source already holds, so
+/// the reset happens *inside* the capture rather than in a gap between two of
+/// them — see [`crate::board::Reset::SerialLines`].
+impl LineControl for DrainedSource {
+    fn set_control_lines(&self, want: ControlLines) -> io::Result<()> {
+        // The write half, deliberately: the reader thread owns the other
+        // descriptor and is blocked in `read`, and an ioctl does not need to
+        // wait behind it. Both refer to the same tty, so the lines are the same
+        // lines.
+        set_control_lines(&self.tx, want)
     }
 }
 
