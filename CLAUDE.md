@@ -29,6 +29,27 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
   `fire27`. Toolchain: the `esp` channel (`rust-toolchain.toml`).
 - Example: `cargo build --release --features "cores3,display,psram" --target xtensa-esp32s3-none-elf`.
 
+## Dependency policy
+
+**Latest-and-greatest, except where the esp-hal 1.1.1 stack forbids it.** Track
+the newest version of everything; the only legitimate reason to hold a dep back
+is a constraint imposed by esp-hal/esp-radio/esp-alloc/esp-sync (or by another
+dep that is itself already at its latest).
+
+A hold must say *why*, inline, and the reason must be **verified rather than
+assumed** — attempt the bump and record what actually breaks. Re-verified
+2026-08-01 by doing exactly that:
+
+| held | latest | what happens on bump |
+|---|---|---|
+| `allocator-api2` 0.3 | 0.4 | `E0277` at `src/mem.rs:351` — esp-alloc 0.10 implements **0.3**'s `Allocator` for `Internal`/`ExternalMemory`; 0.4 is a different trait ("expected"/"found" both named `Allocator`) |
+| `fixed` 1.29 | 1.31 | resolution fails — 1.30+ needs `az ^1.3`, embedded-graphics 0.8.2 needs `az ~1.2.0` (a **normal** dep, and e-g is already latest) |
+| `trouble-host` 0.6 | 0.7 | cargo *does* resolve it, compiling bt-hci 0.8.1 **and** 0.9.0 side by side. Port `ble.rs` first (0.7 moved the controller into `HostResources`' first generic, and `build()` yields a `Stack`) — the pre-port errors are misleading. The real blocker then shows plainly: `BleConnector: bt_hci::transport::Transport` unsatisfied, with *"expected `FromHciBytesError`, found `FromHciBytesError`"* — the two-versions signature. Gated on **esp-radio**, not esp-hal: 0.18.0 wants `esp-hal ~1.1.0-rc.0` (1.1.1 satisfies it), and **no published esp-radio uses bt-hci 0.9**, not even `1.0.0-beta.0` |
+
+`cargo update --workspace` locking 0 packages is the quick check that nothing
+else has drifted. MSRV tracks the esp-hal family's (**1.88**), not something
+lower — claiming lower is a promise the crate cannot keep.
+
 ## HIL (hardware-in-the-loop)
 
 - **CoreS3**: has a JTAG probe → `probe-rs download --chip esp32s3 <elf>` then
