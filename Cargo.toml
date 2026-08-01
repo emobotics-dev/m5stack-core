@@ -152,13 +152,13 @@ thiserror-no-std    = "2.0.2"
 # not the floating `local` branch, so builds are reproducible. `cargo publish`
 # ignores [patch], so downstream consumers resolve the stock crates.io versions.
 [patch.crates-io]
-esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
+esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 
 [workspace]
 members = ["examples/common", "examples/demos", "m5stack-core-build"]
@@ -172,13 +172,13 @@ members = ["examples/common", "examples/demos", "m5stack-core-build"]
 # esp-println), so they declare the fork explicitly.
 [workspace.dependencies]
 # esp-hal family (emobotics fork, pinned rev)
-esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a", features = ["internal-heap-stats"] }
-esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a", features = ["panic-handler", "custom-halt", "colors", "println"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
-esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a", features = ["unstable"] }
-esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a", features = ["log-04", "colors", "timestamp"], default-features = false }
-esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a", features = ["embassy", "esp-radio"] }
-esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e65726f8ec1c7c3aee7cd94e675e9fa8df2ab22a" }
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["log-04", "colors", "timestamp"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["embassy", "esp-radio"] }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 # CoreS3 logging/panic (USB-Serial-JTAG)
 panic-halt           = "1.0.0"
 rtt-target           = { version = "0.6.2", features = ["log"] }

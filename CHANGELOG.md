@@ -86,6 +86,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `psram_split(psram, reserve: Option<usize>)` → `psram_split(psram,
     reserve: usize)`. The old `reserve: None` (fully private) is now
     `psram_map`; the old `reserve: Some(n)` is `psram_split(psram, n)`.
+- **esp-hal fork rev bumped to `2fca1aa4`.** One of the six commits it picks
+  up changes behaviour on both boards: the I2C driver now recovers the bus
+  after **every** failed transaction, a NACK included. Earlier revisions
+  skipped that recovery on ESP32 and rate-limited it on ESP32-S3, on the
+  belief that its chip-wide `PeripheralClockControl::reset` fallback desynced
+  the WiFi/BLE blob (#3, #10). That was a misattribution — the register it
+  touches (`SYSTEM.PERIP_RST_EN`) carries no radio bits, radio reset and clock
+  living in separate DPORT registers, and 30k+ resets under WiFi+BLE coex on
+  both boards produced no wedge. The real fault was contention between the I2C
+  completion IRQ and the radio controller's IRQ on one core, which is
+  application-side: it is why `Board::i2c0` is handed out blocking on both
+  boards, with the core-binding rule stated on the field. The practical
+  effect of the bump is that an un-recovered NACK can no longer poison later
+  transactions on the shared bus. Also included: two USB-Serial-JTAG
+  async-write fixes (a lost wakeup, and an `int_ena` race that could deafen
+  the reader) and ESP32 SPI-slave DMA arm-sequence parity with ESP-IDF (#21).
 
 ## [0.4.3] - 2026-07-29
 
