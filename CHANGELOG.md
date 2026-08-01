@@ -15,31 +15,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wants identity reporting without `esp-alloc` in the graph can enable just
   this.
 - **`identity` feature** (implies `app-desc`): makes `app_desc!()`'s version
-  field `<bin>/<features>/<hash><dirty>` (e.g. `display/crypto-opt/0f63a4926303+`)
-  instead of plain `CARGO_PKG_VERSION` — same call site, no application-code
-  change. Forgetting the required `build.rs` wiring is a compile error
-  (`env!()` has nothing to read), not a silent gap; a combination that
-  doesn't fit the descriptor's fixed 31-byte field is also a compile error
-  (a `const` assertion at the `app_desc!()` call site), not a silent
-  truncation. Off by default; existing consumers are unaffected.
+  field `<pkg>/<bin>/<features>/<hash><dirty>` (e.g.
+  `demos/display/crypto-opt/0f63a4926303+`) instead of plain
+  `CARGO_PKG_VERSION` — same call site, no application-code change.
+  Forgetting the required `build.rs` wiring is a compile error (`env!()` has
+  nothing to read), not a silent gap; a combination that doesn't fit the
+  descriptor's fixed 31-byte field is also a compile error (a `const`
+  assertion at the `app_desc!()` call site), not a silent truncation. Off by
+  default; existing consumers are unaffected.
 - **`project_name` is now `CARGO_BIN_NAME`**, not the package name, in both
   the default and `identity` cases — a package can have more than one
   `[[bin]]`, and only the per-binary compilation (where `app_desc!()`
-  expands) knows which one is being built.
+  expands) knows which one is being built. The crate's own `CARGO_PKG_VERSION`
+  is still logged (`version=`) even under `identity`, where the descriptor's
+  own `version` field no longer holds it — `app_desc!()` exports it under a
+  second small linker symbol for the boot log to read back.
 - **New crate `m5stack-core-build`**: a host-only build-time helper —
   `emit_identity_env(features: &str)`, called once from a consumer's own
   `build.rs`, sets the `<features>/<hash><dirty>` env var `identity` requires
-  (the binary name is joined in separately, by `app_desc!()` itself, since a
-  `build.rs` runs once per package and can't know which binary it's
-  describing). Optional; the env var can also be set by hand.
+  (the package/binary names are joined in separately, by `app_desc!()`
+  itself, since a `build.rs` runs once per package and can't know which
+  binary it's describing). Optional; the env var can also be set by hand.
 - **Automatic boot-time identity log** (#43): `io::console::install` now logs
-  the descriptor once — project name, version, and an `app_elf_sha256`
-  prefix — as the first BSP-emitted line, right after the transport comes up
-  and before the application's own logging, whenever `app-desc` is on
-  (`markers::IDENTITY`). Requires `app_desc!()` to have been invoked
-  somewhere in the binary; if it wasn't, this is a **link** error, not a
-  missing log line — any consumer already enabling `app-desc`/`heap` is
-  expected to call it.
+  the descriptor once — package/binary + git mark (or plain binary +
+  version), and an `app_elf_sha256` prefix — as the first BSP-emitted line,
+  right after the transport comes up and before the application's own
+  logging, whenever `app-desc` is on (`markers::IDENTITY`). Requires
+  `app_desc!()` to have been invoked somewhere in the binary; if it wasn't,
+  this is a **link** error, not a missing log line — any consumer already
+  enabling `app-desc`/`heap` is expected to call it.
 
 ### Changed
 

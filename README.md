@@ -310,14 +310,16 @@ BSP-emitted line, right after the transport comes up — before anything the
 application itself logs. Without `identity` (real capture, CoreS3 HIL):
 
 ```
-[00000.324 INFO ] identity: display 0.1.0 app_elf_sha256=62dfd06e294b
+[00000.324 INFO ] identity: display version=0.1.0 app_elf_sha256=62dfd06e294b
 ```
 
 With `identity` on (real capture, CoreS3 HIL) — the git mark already carries
-the binary name, so it isn't repeated separately:
+the package and binary name, so they aren't repeated separately; the crate's
+`version=` is still shown, since the descriptor's own `version` field no
+longer holds it:
 
 ```
-[00000.325 INFO ] identity: display/544084f89418+ app_elf_sha256=7966ca9868ea
+[00000.321 INFO ] identity: demos/display/b0e1958cea29+ version=0.1.0 app_elf_sha256=dd2d390028a3
 ```
 
 (`markers::IDENTITY`, grep-able like `markers::PANIC`/`PREV_PANIC`.) This
@@ -327,10 +329,11 @@ consumer enabling `app-desc`/`heap` is expected to call it, matching the
 reference to `esp_app_desc`), not a missing log line.
 
 By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
-feature (implies `app-desc`) makes it `<bin>/<features>/<hash><dirty>`
-instead (e.g. `display/crypto-opt/0f63a4926303+`, or `display/0f63a4926303+`
-with no features tag) — same call site, no application-code change — and
-turns "forgot to wire this up" into a compile error rather than a silent gap:
+feature (implies `app-desc`) makes it `<pkg>/<bin>/<features>/<hash><dirty>`
+instead (e.g. `demos/display/crypto-opt/0f63a4926303+`, or
+`demos/display/0f63a4926303+` with no features tag) — same call site, no
+application-code change — and turns "forgot to wire this up" into a compile
+error rather than a silent gap:
 
 1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
 2. Call it once from your own `build.rs`, with a short features tag (or `""`
@@ -352,20 +355,23 @@ turns "forgot to wire this up" into a compile error rather than a silent gap:
 terminator** — a 32-byte mark fills the whole array with no trailing zero,
 which isn't a valid C string and could send a host tool reading it (by
 scanning for NUL) past the struct entirely. 31 bytes is the true safe
-ceiling. Since the binary name is joined with the git mark only at the
-`app_desc!()` call site (a `build.rs` runs once per *package*, so it can
-never know which binary it's describing — that's why `m5stack-core-build`
-doesn't take or emit the binary name itself), that's also where the length
-is checked: `app_desc!()` emits a `const` assertion, so a combination that
+ceiling. Since the package and binary name are joined with the git mark only
+at the `app_desc!()` call site (a `build.rs` runs once per *package*, so it
+can never know which binary it's describing — that's why `m5stack-core-build`
+doesn't take or emit either name itself), that's also where the length is
+checked: `app_desc!()` emits a `const` assertion, so a combination that
 doesn't fit is a real compile error naming the exact 31-byte limit, not a
 silent truncation — which part to shorten (the `features` tag, or nothing
 this crate controls) is entirely your call, not something either crate
-decides for you.
+decides for you. Four segments plus a 12-char hash eats budget fast — a
+package/binary pair over ~17 bytes combined leaves no room for a features tag
+at all; this is expected, not a bug, and the fix is always to shorten
+whichever part makes sense for your project.
 
 BSP owns the mechanism (reading the descriptor back, enforcing the wiring,
-joining in `CARGO_BIN_NAME`); the consumer's own `build.rs` owns the content
-— `m5stack-core` never inspects its own git tree, only `m5stack-core-build`
-does, and only against the *calling* crate's directory.
+joining in `CARGO_PKG_NAME`/`CARGO_BIN_NAME`); the consumer's own `build.rs`
+owns the content — `m5stack-core` never inspects its own git tree, only
+`m5stack-core-build` does, and only against the *calling* crate's directory.
 
 ### Serial console (`io::console`)
 

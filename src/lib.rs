@@ -104,6 +104,51 @@ fn app_desc() -> &'static __bootloader::EspAppDesc {
     unsafe { &ESP_APP_DESC }
 }
 
+/// Bytes budget for [`__pkg_version_bytes`] — plenty for any real semver
+/// string (`"0.4.3"` is 5 bytes; `"1.0.0-beta.12"` is 13). Unlike the
+/// identity mark, a too-long crate version here is a cosmetic display
+/// nicety, not an identity-tracking risk, so it's a silent truncation, not
+/// enforced by a compile-time assertion the way `app_desc!`'s mark is.
+#[cfg(feature = "app-desc")]
+#[doc(hidden)]
+pub const PKG_VERSION_BYTES: usize = 16;
+
+/// Zero-pads/truncates `s` into a fixed-size, C-safe byte array — the same
+/// shape `EspAppDesc`'s own fields use, chosen deliberately: a plain `&str`
+/// (a fat pointer) has no stable ABI for an `extern` static to read back
+/// across the crate boundary the way [`app_desc()`] reads `EspAppDesc`
+/// (which is `#[repr(C)]`); a fixed byte array does. Used only by
+/// [`app_desc!`]'s expansion, to export `CARGO_PKG_VERSION` for
+/// [`pkg_version()`] to read back — needed because `identity` repurposes
+/// `EspAppDesc::version` for the git mark, so the crate version isn't
+/// available there anymore.
+#[cfg(feature = "app-desc")]
+#[doc(hidden)]
+pub const fn __str_to_fixed<const N: usize>(s: &str) -> [u8; N] {
+    let bytes = s.as_bytes();
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < bytes.len() && i < N {
+        out[i] = bytes[i];
+        i += 1;
+    }
+    out
+}
+
+/// Reads back the `CARGO_PKG_VERSION` [`app_desc!`] exports alongside the
+/// descriptor — see [`__str_to_fixed`] for why this needs its own static
+/// rather than reusing [`app_desc()`]'s mechanism.
+#[cfg(feature = "app-desc")]
+fn pkg_version() -> &'static str {
+    unsafe extern "C" {
+        #[link_name = "m5stack_core_pkg_version"]
+        static PKG_VERSION: [u8; PKG_VERSION_BYTES];
+    }
+    let bytes = unsafe { &PKG_VERSION };
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    core::str::from_utf8(&bytes[..len]).unwrap_or("?")
+}
+
 /// The ELF's content hash, straight from the esp-idf application descriptor —
 /// the first bytes distinguish two images built from the same commit with
 /// different uncommitted edits. Unambiguous with no consumer input needed: it
@@ -115,14 +160,17 @@ pub fn app_elf_sha256() -> &'static [u8; 32] {
 }
 
 /// Logs the descriptor's version (plain `CARGO_PKG_VERSION`, or the enforced
-/// `<bin>/<features>/<hash><dirty>` git mark under `identity` — which already
-/// carries the binary name, so it isn't repeated separately there) and a
-/// 6-byte `app_elf_sha256` prefix, once, as early as possible on boot —
-/// called by [`io::console::install`], not meant to be called directly. Like
-/// [`app_elf_sha256`], requires [`app_desc!`] to have been invoked somewhere
-/// in the binary (a link error otherwise, not a silent no-op): any binary
-/// enabling `app-desc` — directly, or via `heap` — is expected to call
-/// [`app_desc!`], matching this crate's existing "thin entry shell" framing.
+/// `<pkg>/<bin>/<features>/<hash><dirty>` git mark under `identity` — which
+/// already carries the binary name, so it isn't repeated separately there),
+/// the crate's `version=` (always the real `CARGO_PKG_VERSION`, even under
+/// `identity` where the descriptor's own version field no longer holds it —
+/// see [`pkg_version()`]), and a 6-byte `app_elf_sha256` prefix, once, as
+/// early as possible on boot — called by [`io::console::install`], not meant
+/// to be called directly. Like [`app_elf_sha256`], requires [`app_desc!`] to
+/// have been invoked somewhere in the binary (a link error otherwise, not a
+/// silent no-op): any binary enabling `app-desc` — directly, or via `heap` —
+/// is expected to call [`app_desc!`], matching this crate's existing "thin
+/// entry shell" framing.
 #[cfg(feature = "app-desc")]
 pub(crate) fn log_boot_identity() {
     use core::fmt::Write as _;
@@ -134,10 +182,15 @@ pub(crate) fn log_boot_identity() {
         let _ = write!(hex, "{byte:02x}");
     }
     #[cfg(feature = "identity")]
-    log::info!("{} {} app_elf_sha256={hex}", io::console::markers::IDENTITY, desc.version());
+    log::info!(
+        "{} {} version={} app_elf_sha256={hex}",
+        io::console::markers::IDENTITY,
+        desc.version(),
+        pkg_version()
+    );
     #[cfg(not(feature = "identity"))]
     log::info!(
-        "{} {} {} app_elf_sha256={hex}",
+        "{} {} version={} app_elf_sha256={hex}",
         io::console::markers::IDENTITY,
         desc.project_name(),
         desc.version()
@@ -161,10 +214,20 @@ pub(crate) fn log_boot_identity() {
 /// have more than one `[[bin]]`, and only the per-binary compilation (where
 /// this macro expands) knows which one is being built — `CARGO_PKG_NAME`
 /// would report the same value for every binary in a multi-bin package.
+///
+/// Also exports `CARGO_PKG_VERSION` under its own linker symbol (see
+/// [`__str_to_fixed`]) — even though the descriptor's own `version` field
+/// already holds it here, `identity`'s arm below doesn't have that field
+/// free, so both arms export it the same way for [`log_boot_identity`] /
+/// [`pkg_version()`] to read uniformly.
 #[cfg(all(feature = "app-desc", not(feature = "identity")))]
 #[macro_export]
 macro_rules! app_desc {
     () => {
+        #[unsafe(export_name = "m5stack_core_pkg_version")]
+        #[used]
+        static __M5STACK_CORE_PKG_VERSION: [u8; $crate::PKG_VERSION_BYTES] =
+            $crate::__str_to_fixed(env!("CARGO_PKG_VERSION"));
         $crate::__bootloader::esp_app_desc!(
             env!("CARGO_PKG_VERSION"),
             env!("CARGO_BIN_NAME"),
@@ -180,12 +243,17 @@ macro_rules! app_desc {
 }
 
 /// See the non-`identity` [`app_desc!`] above — same call site. The version
-/// field becomes `CARGO_BIN_NAME` joined with the git mark
-/// (`<bin>/<features>/<hash><dirty>`, e.g. `display/crypto-opt/0f63a4926303+`) — binary
-/// name included for the same reason as `project_name` above, joined here
-/// (rather than by `m5stack-core-build`) because only this per-binary
-/// compilation knows `CARGO_BIN_NAME`; a `build.rs` runs once per *package*
-/// and can't know which binary it's describing.
+/// field becomes `CARGO_PKG_NAME` + `CARGO_BIN_NAME` joined with the git mark
+/// (`<pkg>/<bin>/<features>/<hash><dirty>`, e.g.
+/// `demos/display/crypto-opt/0f63a4926303+`) — both names included for the
+/// same reason as `project_name` above (a package can have more than one
+/// `[[bin]]`, and disambiguating *which package* matters too once several
+/// crates in a workspace all use `identity`), joined here (rather than by
+/// `m5stack-core-build`) because only this per-binary compilation knows
+/// `CARGO_BIN_NAME`; a `build.rs` runs once per *package* and can't know
+/// which binary it's describing. `CARGO_PKG_VERSION` is exported separately
+/// (see [`__str_to_fixed`]) since the descriptor's `version` field is now
+/// the mark, not the crate version.
 ///
 /// `EspAppDesc::version` is a fixed 32-byte C string with no reserved NUL
 /// terminator (see `m5stack-core-build`'s docs) — 31 bytes is the true safe
@@ -197,13 +265,24 @@ macro_rules! app_desc {
 macro_rules! app_desc {
     () => {
         const _: () = ::core::assert!(
-            ::core::concat!(::core::env!("CARGO_BIN_NAME"), "/", ::core::env!("M5STACK_CORE_BUILD_MARK")).len() <= 31,
-            "m5stack_core::app_desc!(): CARGO_BIN_NAME + '/' + M5STACK_CORE_BUILD_MARK exceeds \
-             31 bytes (EspAppDesc::version's safe ceiling — see m5stack-core-build's docs). \
-             Shorten the `features` tag passed to emit_identity_env(), or the binary name."
+            ::core::concat!(
+                ::core::env!("CARGO_PKG_NAME"), "/", ::core::env!("CARGO_BIN_NAME"), "/",
+                ::core::env!("M5STACK_CORE_BUILD_MARK")
+            ).len() <= 31,
+            "m5stack_core::app_desc!(): CARGO_PKG_NAME + '/' + CARGO_BIN_NAME + '/' + \
+             M5STACK_CORE_BUILD_MARK exceeds 31 bytes (EspAppDesc::version's safe ceiling — \
+             see m5stack-core-build's docs). Shorten the `features` tag passed to \
+             emit_identity_env(), or the package/binary name."
         );
+        #[unsafe(export_name = "m5stack_core_pkg_version")]
+        #[used]
+        static __M5STACK_CORE_PKG_VERSION: [u8; $crate::PKG_VERSION_BYTES] =
+            $crate::__str_to_fixed(env!("CARGO_PKG_VERSION"));
         $crate::__bootloader::esp_app_desc!(
-            ::core::concat!(::core::env!("CARGO_BIN_NAME"), "/", ::core::env!("M5STACK_CORE_BUILD_MARK")),
+            ::core::concat!(
+                ::core::env!("CARGO_PKG_NAME"), "/", ::core::env!("CARGO_BIN_NAME"), "/",
+                ::core::env!("M5STACK_CORE_BUILD_MARK")
+            ),
             env!("CARGO_BIN_NAME"),
             $crate::__bootloader::BUILD_TIME,
             $crate::__bootloader::BUILD_DATE,
