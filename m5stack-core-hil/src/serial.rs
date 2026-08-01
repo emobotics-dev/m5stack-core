@@ -699,12 +699,26 @@ mod ontarget {
         // 2026-07-30, the squatter was already gone one second after spawning.
         // Holding an fd with no read is deterministic and is what the real
         // offender (an orphaned reader) does anyway.
+        // The board must be PRESENT before anything can squat on it. A
+        // preceding test in this tier leaves it re-enumerating after a reset,
+        // and then the squatter's `exec 3<` fails while `sleep` still runs — a
+        // process that holds nothing, so the wait below times out looking for a
+        // hold that never happened. Observed exactly that, and only when this
+        // test ran after the flash-decision tier.
+        wait::until("the board to be present before squatting", Duration::from_secs(10), Duration::from_millis(50), || {
+            SerialSource::openable(&t)
+        })
+        .expect("the board must be addressable before this test can squat on it");
+
         let mut squatter: Child = std::process::Command::new("sh")
             // `exec sleep`, not `sleep`: it replaces the shell in place, so
             // exactly ONE process holds the fd and its pid is the one we spawned.
             // A forking shell would leave two holders and the scan could name
             // either, making the assertion below a coin toss.
-            .args(["-c", &format!("exec 3< '{t}'; exec sleep 30")])
+            // `|| exit 1` so a squatter that could not take the fd dies instead
+            // of lingering as a process that holds nothing — which is
+            // indistinguishable from "not holding it YET" and burns the budget.
+            .args(["-c", &format!("exec 3< '{t}' || exit 1; exec sleep 30")])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -854,8 +868,12 @@ mod ontarget {
 /// window in which nobody is reading, because reading no longer depends on
 /// anyone asking.
 pub struct DrainedSource {
-    /// Bytes collected so far, oldest first.
-    buf: Arc<Mutex<Vec<u8>>>,
+    /// Bytes collected so far, oldest first, paired with the condvar the
+    /// reader signals. Waiting on the pair rather than polling it is what
+    /// keeps `conventions/testing.md` §1 satisfied in-process: the arrival of
+    /// a byte IS an event here, unlike a USB node reappearing (see
+    /// [`crate::wait`]).
+    buf: Arc<(Mutex<Vec<u8>>, Condvar)>,
     /// Set on drop so the reader thread exits rather than leaking per reset.
     stop: Arc<AtomicBool>,
     /// First read error, kept so the next `read_available` can report it
