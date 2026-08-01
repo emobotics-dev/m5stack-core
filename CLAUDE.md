@@ -16,8 +16,15 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
   feature. **Never** let it into the library graph — that breaks publishing.
   Consequence: SD *bring-up* (bus, CS, 74-clock idle, GPIO35 mux) is the BSP's;
   the SD *driver* (`SdSpi`, FAT) stays in the consumer/example.
-- Before releasing, verify: `cargo package --no-verify` then confirm the packaged
-  `Cargo.toml` has no `git =` / `[patch]` (only the `[lib]` `path = "src/lib.rs"`).
+- Before releasing, verify **both halves** of the gate:
+  1. `cargo package --no-verify`, then confirm the packaged `Cargo.toml` has no
+     `git =` / `[patch]` (only the `[lib]` `path = "src/lib.rs"`).
+  2. `cargo package --list` shows **exactly 50 files** — `src/`, `tools/` and the
+     named top-level assets. A surprise means `[package] include` needs a
+     deliberate edit, never a `--allow-dirty` shrug (#59).
+
+  Both guard one thing: a tarball that matches its git tag. Neither is
+  checkable by CI — a fresh checkout has none of the stray files.
 
 ## Building
 

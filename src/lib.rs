@@ -118,7 +118,7 @@ pub fn app_desc() -> &'static __bootloader::EspAppDesc {
 }
 
 /// Bytes budget for [`__pkg_version_bytes`] — plenty for any real semver
-/// string (`"0.4.3"` is 5 bytes; `"1.0.0-beta.12"` is 13). Unlike the
+/// string (`"1.2.3"` is 5 bytes; `"1.0.0-beta.12"` is 13). Unlike the
 /// identity mark, a too-long crate version here is a cosmetic display
 /// nicety, not an identity-tracking risk, so it's a silent truncation, not
 /// enforced by a compile-time assertion the way `app_desc!`'s mark is.
