@@ -368,10 +368,26 @@ package/binary pair over ~17 bytes combined leaves no room for a features tag
 at all; this is expected, not a bug, and the fix is always to shorten
 whichever part makes sense for your project.
 
+Nothing here truncates or abbreviates a name automatically — an automatic
+scheme is a guess, and a wrong guess in an identity string is worse than no
+identity (the same reasoning behind not letting the BSP derive a commit
+itself). If your real package/binary names don't fit, **you** provide the
+short version: `app_desc!()` takes an optional string-literal prefix that
+replaces the automatic `CARGO_PKG_NAME`/`CARGO_BIN_NAME` join outright —
+
+```rust
+m5stack_core::app_desc!("oxichg/evcc-hl"); // instead of the default oxicharge-cores3/evcc-headless
+```
+
+— giving `oxichg/evcc-hl/0f63a4926303+`. `project_name` still reports the
+real `CARGO_BIN_NAME` regardless; only the mark's prefix is overridable, and
+only if you ask for it — the default (no argument) is unaffected.
+
 BSP owns the mechanism (reading the descriptor back, enforcing the wiring,
-joining in `CARGO_PKG_NAME`/`CARGO_BIN_NAME`); the consumer's own `build.rs`
-owns the content — `m5stack-core` never inspects its own git tree, only
-`m5stack-core-build` does, and only against the *calling* crate's directory.
+joining in `CARGO_PKG_NAME`/`CARGO_BIN_NAME` unless overridden); the
+consumer's own `build.rs` owns the content — `m5stack-core` never inspects
+its own git tree, only `m5stack-core-build` does, and only against the
+*calling* crate's directory.
 
 ### Serial console (`io::console`)
 

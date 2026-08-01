@@ -95,8 +95,21 @@ pub use esp_bootloader_esp_idf as __bootloader;
 /// path — the one way a BSP function can reach a descriptor the *consumer*
 /// created. Requires [`app_desc!`] to have been invoked somewhere in the
 /// binary: otherwise this fails to **link**, not silently reads zeroes.
+///
+/// This indirection matters beyond just "how do we reach it": reading
+/// `ESP_APP_DESC` via an `extern` symbol, rather than by path from *inside*
+/// the same crate that defines it, is what keeps [`app_elf_sha256`] correct.
+/// `espflash` patches that field into the flashed image **after**
+/// compilation — the compiler only ever sees the macro's zero initializer.
+/// A same-crate path read of a `static` with a compiler-visible initializer
+/// is free to const-fold to that initializer (needing a `read_volatile` to
+/// stop it); an `extern` read of a symbol whose initializer lives in a
+/// *different* compilation unit has no initializer to see in the first
+/// place, so the hazard cannot arise — no volatile needed. `version` has no
+/// such concern (nothing patches it post-link), but `app_elf_sha256` does:
+/// don't "simplify" this back to a path reference.
 #[cfg(feature = "app-desc")]
-fn app_desc() -> &'static __bootloader::EspAppDesc {
+pub fn app_desc() -> &'static __bootloader::EspAppDesc {
     unsafe extern "C" {
         #[link_name = "esp_app_desc"]
         static ESP_APP_DESC: __bootloader::EspAppDesc;
@@ -242,9 +255,9 @@ macro_rules! app_desc {
     };
 }
 
-/// See the non-`identity` [`app_desc!`] above — same call site. The version
-/// field becomes `CARGO_PKG_NAME` + `CARGO_BIN_NAME` joined with the git mark
-/// (`<pkg>/<bin>/<features>/<hash><dirty>`, e.g.
+/// See the non-`identity` [`app_desc!`] above — same default call site. The
+/// version field becomes `CARGO_PKG_NAME` + `CARGO_BIN_NAME` joined with the
+/// git mark (`<pkg>/<bin>/<features>/<hash><dirty>`, e.g.
 /// `demos/display/crypto-opt/0f63a4926303+`) — both names included for the
 /// same reason as `project_name` above (a package can have more than one
 /// `[[bin]]`, and disambiguating *which package* matters too once several
@@ -257,9 +270,22 @@ macro_rules! app_desc {
 ///
 /// `EspAppDesc::version` is a fixed 32-byte C string with no reserved NUL
 /// terminator (see `m5stack-core-build`'s docs) — 31 bytes is the true safe
-/// ceiling. Enforced here as a real compile error, not a silent truncation:
-/// which part to shorten (the `features` tag passed to `emit_identity_env`,
-/// or nothing this crate controls) is the caller's call, not this macro's.
+/// ceiling, and real package/binary names routinely don't leave room for a
+/// features tag alongside a 12-hex commit (a package/binary pair over ~17
+/// bytes combined already eats the whole budget). Enforced here as a real
+/// compile error, not a silent truncation.
+///
+/// **`app_desc!("prefix")`** — an optional string-literal argument replaces
+/// the automatic `CARGO_PKG_NAME`/`CARGO_BIN_NAME` join with exactly what you
+/// pass, e.g. `app_desc!("oxichg/evcc-hl")`. This is the lever for a project
+/// whose real names don't fit: nothing here truncates or abbreviates on your
+/// behalf (an automatic scheme is a guess, and a wrong guess in an identity
+/// string is worse than no identity — see `#43`'s own reasoning for not
+/// letting the BSP derive a commit itself), so *you* decide what the prefix
+/// says and how long it is. `project_name` still reports the real
+/// `CARGO_BIN_NAME` regardless — only the mark's prefix is overridable.
+/// Default (no argument) is unaffected and unchanged for every existing
+/// caller.
 #[cfg(all(feature = "app-desc", feature = "identity"))]
 #[macro_export]
 macro_rules! app_desc {
@@ -269,10 +295,12 @@ macro_rules! app_desc {
                 ::core::env!("CARGO_PKG_NAME"), "/", ::core::env!("CARGO_BIN_NAME"), "/",
                 ::core::env!("M5STACK_CORE_BUILD_MARK")
             ).len() <= 31,
-            "m5stack_core::app_desc!(): CARGO_PKG_NAME + '/' + CARGO_BIN_NAME + '/' + \
-             M5STACK_CORE_BUILD_MARK exceeds 31 bytes (EspAppDesc::version's safe ceiling — \
-             see m5stack-core-build's docs). Shorten the `features` tag passed to \
-             emit_identity_env(), or the package/binary name."
+            "m5stack_core::app_desc!(): the identity mark (CARGO_PKG_NAME + '/' + CARGO_BIN_NAME \
+             + '/' + M5STACK_CORE_BUILD_MARK) exceeds 31 bytes (EspAppDesc::version's safe \
+             ceiling — see m5stack-core-build's docs). Shorten the `features` tag passed to \
+             emit_identity_env(), or pass a shorter prefix explicitly: \
+             app_desc!(\"short-pkg/short-bin\") instead of the default \
+             CARGO_PKG_NAME/CARGO_BIN_NAME."
         );
         #[unsafe(export_name = "m5stack_core_pkg_version")]
         #[used]
@@ -283,6 +311,30 @@ macro_rules! app_desc {
                 ::core::env!("CARGO_PKG_NAME"), "/", ::core::env!("CARGO_BIN_NAME"), "/",
                 ::core::env!("M5STACK_CORE_BUILD_MARK")
             ),
+            env!("CARGO_BIN_NAME"),
+            $crate::__bootloader::BUILD_TIME,
+            $crate::__bootloader::BUILD_DATE,
+            $crate::__bootloader::ESP_IDF_COMPATIBLE_VERSION,
+            $crate::__bootloader::MMU_PAGE_SIZE,
+            0,
+            u16::MAX,
+            $crate::__bootloader::SECURE_VERSION
+        );
+    };
+    ($prefix:literal) => {
+        const _: () = ::core::assert!(
+            ::core::concat!($prefix, "/", ::core::env!("M5STACK_CORE_BUILD_MARK")).len() <= 31,
+            "m5stack_core::app_desc!(\"prefix\"): the identity mark (prefix + '/' + \
+             M5STACK_CORE_BUILD_MARK) exceeds 31 bytes (EspAppDesc::version's safe ceiling — see \
+             m5stack-core-build's docs). Shorten the `features` tag passed to \
+             emit_identity_env(), or the prefix passed here."
+        );
+        #[unsafe(export_name = "m5stack_core_pkg_version")]
+        #[used]
+        static __M5STACK_CORE_PKG_VERSION: [u8; $crate::PKG_VERSION_BYTES] =
+            $crate::__str_to_fixed(env!("CARGO_PKG_VERSION"));
+        $crate::__bootloader::esp_app_desc!(
+            ::core::concat!($prefix, "/", ::core::env!("M5STACK_CORE_BUILD_MARK")),
             env!("CARGO_BIN_NAME"),
             $crate::__bootloader::BUILD_TIME,
             $crate::__bootloader::BUILD_DATE,

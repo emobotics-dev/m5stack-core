@@ -44,6 +44,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `app_desc!()` to have been invoked somewhere in the binary; if it wasn't,
   this is a **link** error, not a missing log line — any consumer already
   enabling `app-desc`/`heap` is expected to call it.
+- **`app_desc!("prefix")`** — an optional string-literal argument overrides
+  the automatic `CARGO_PKG_NAME`/`CARGO_BIN_NAME` join in the `identity`
+  mark, e.g. `app_desc!("oxichg/evcc-hl")` instead of the real (and, for a
+  real project, often too long to fit the 31-byte field)
+  `oxicharge-cores3/evcc-headless`. Nothing here abbreviates automatically —
+  this is the caller's explicit choice, same reasoning as everywhere else in
+  this design. `project_name` is unaffected, still the real `CARGO_BIN_NAME`.
+  Default (no argument) is unchanged.
+- **`app_desc()` is now public** — reads back the whole descriptor
+  (`EspAppDesc`), not just the `app_elf_sha256()` convenience wrapper.
 
 ### Changed
 
