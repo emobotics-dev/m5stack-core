@@ -22,11 +22,15 @@
 use std::path::Path;
 use std::process::Command;
 
-/// Bytes budget for the emitted mark. `EspAppDesc::version` (the field
-/// `app_desc!()` writes this into under `identity`) is a fixed 32-byte C
-/// string that silently truncates past that, and a consumer may want to
-/// prefix the mark with their own `CARGO_PKG_VERSION` — keep this short.
-const MAX_MARK_LEN: usize = 16;
+/// Bytes budget for the emitted mark — the full width `EspAppDesc::version`
+/// (the field `app_desc!()` writes this into under `identity`) can safely
+/// hold. That field is a fixed **32-byte** C string, but `str_to_cstr_array`
+/// reserves no NUL terminator: a 32-byte mark fills the array with no
+/// trailing zero, leaving it *not* a valid C string — a host tool that reads
+/// `version` by scanning for NUL could walk past the struct entirely. 31
+/// bytes leaves that terminator, so this is the true safe ceiling, not an
+/// arbitrary choice.
+const MAX_MARK_LEN: usize = 31;
 
 /// Sets `cargo:rustc-env=M5STACK_CORE_BUILD_MARK=<mark>` from the calling
 /// crate's own git state: an 8-hex-char abbreviated commit hash, plus a
@@ -70,7 +74,7 @@ fn truncate(s: &str, max_chars: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate;
+    use super::{MAX_MARK_LEN, truncate};
 
     #[test]
     fn truncate_short_string_unchanged() {
@@ -86,5 +90,14 @@ mod tests {
     fn truncate_exact_length_unchanged() {
         let s = "0123456789abcdef";
         assert_eq!(truncate(s, 16), s);
+    }
+
+    #[test]
+    fn max_mark_len_leaves_room_for_the_cstr_nul_terminator() {
+        // EspAppDesc::version is exactly 32 bytes with no reserved terminator
+        // slot — the emitted mark must leave at least one byte for it.
+        assert!(MAX_MARK_LEN < 32);
+        let mark = "a".repeat(40);
+        assert_eq!(truncate(&mark, MAX_MARK_LEN).len(), MAX_MARK_LEN);
     }
 }

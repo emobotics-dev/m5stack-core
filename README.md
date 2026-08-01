@@ -321,14 +321,17 @@ up" into a compile error rather than a silent gap:
    crate*, pointing straight at the `app_desc!()` line, not a silently-plain
    version field.
 
-`EspAppDesc::version` is a fixed 32-byte C string (silently truncated past
-that) — `m5stack-core-build` keeps the mark itself short (≤16 bytes) to leave
-headroom. The mark alone becomes the whole version field; nothing prefixes it
-with `CARGO_PKG_VERSION` automatically, so if you want that too, fold it into
-what `m5stack-core-build` emits, or set `M5STACK_CORE_BUILD_MARK` yourself
-from your own `build.rs` instead — the env var's *name* is the only contract,
-not how it gets set. BSP owns the mechanism (reading the descriptor back,
-enforcing the wiring); the consumer's own `build.rs` owns the content —
+`EspAppDesc::version` is a fixed 32-byte C string with **no reserved NUL
+terminator** — a 32-byte mark fills the whole array with no trailing zero,
+which isn't a valid C string and could send a host tool reading it (by
+scanning for NUL) past the struct entirely. `m5stack-core-build` caps the
+mark at 31 bytes, the true safe ceiling, not an arbitrary one. The mark alone
+becomes the whole version field; nothing prefixes it with `CARGO_PKG_VERSION`
+automatically, so if you want that too, fold it into what `m5stack-core-build`
+emits, or set `M5STACK_CORE_BUILD_MARK` yourself from your own `build.rs`
+instead — the env var's *name* is the only contract, not how it gets set.
+BSP owns the mechanism (reading the descriptor back, enforcing the wiring);
+the consumer's own `build.rs` owns the content —
 `m5stack-core` never inspects its own git tree, only `m5stack-core-build`
 does, and only against the *calling* crate's directory.
 
