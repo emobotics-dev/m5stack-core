@@ -203,8 +203,9 @@ impl Board {
     /// The port is **not** derived from an adapter serial the way
     /// [`Board::cores3`] derives one from a MAC, and that is deliberate: a
     /// CoreS3's bridge is on the die and its `by-id` name has exactly one
-    /// shape, whereas M5Stack has shipped ESP32 boards behind a CP2104 and a
-    /// CH9102 at least, which produce different names for identical hardware.
+    /// shape, whereas M5Stack has shipped ESP32 boards behind more than one
+    /// USB-serial chip — a 1a86 (CH-series) on this bench, a CP2104 elsewhere —
+    /// which produce different names for identical hardware.
     /// Guessing which would be a rule that is right until it is silently wrong,
     /// so the port is stated.
     ///

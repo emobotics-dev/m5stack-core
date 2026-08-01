@@ -79,9 +79,17 @@ and never lets go of the port — that is what catches the identity line at
 - **Fire27**: no probe, so the harness pulses **RTS** itself on the port it
   holds (`reset = "serial-lines"`, the default for a `port` board). Its
   USB-serial bridge is a separate chip from the ESP32 and does not reset with
-  it, so nothing is released. **Console is UART0 @ 1 Mbaud**, not 115200 — the
-  ROM and bootloader still talk at 115200, so their chatter arrives as garbage
-  and only the application is legible.
+  it, so nothing is released. Verified on the bench with a negative control:
+  stub the pulse and the identity is never captured, so the reset is the pulse
+  and not the DTR edge a port open produces.
+- **Fire27 console is UART0 @ 1 Mbaud**, not 115200. The ROM and bootloader
+  still talk at 115200, so a boot capture is mostly unreadable bytes (~13 kB
+  with three newlines) and a "captured N lines" count is meaningless there. A
+  `banner` must be an *application* line. The identity lands at ~0.000 s of
+  uptime against ~0.3 s on a CoreS3, which pays USB enumeration first.
+- The Fire27's `by-id` path is **stated, never derived**: this bench's is a
+  1a86 (CH-series), other boards are CP2104, and only the serial distinguishes
+  it from the forbidden Core2 on the same bench.
 - Handing the reset to `espflash` is the one route that must release the port
   and re-open into a boot already under way. It stays available as a fallback
   (`reset = "espflash"`) and is not a default anywhere.
