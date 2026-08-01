@@ -10,8 +10,7 @@ use std::time::Duration;
 use crate::{
     identity::{self, Identity},
     listen::{Listener, Outcome, Source},
-    serial::{ControlLines, ControlPort, DrainedSource, LineControl},
-    wait,
+    serial::{self, ControlLines, ControlPort, DrainedSource, LineControl},
 };
 
 /// Ceiling, not an expectation: ~1 s on a healthy CoreS3. The wait returns as
@@ -378,9 +377,8 @@ pub fn reset_and_reopen(board: &Board) -> Result<DrainedSource, String> {
     hard_reset(board)?;
     // The PATH does not change across a reset — only its availability does — so
     // this waits for the device to come back rather than for a new name.
-    wait::until(&format!("board {} to re-enumerate", board.id), RETURN_BUDGET, RETURN_GAP, || {
-        DrainedSource::open(&board.port, board.baud).map_err(|e| format!("{}: {e}", board.port))
-    })
+    serial::open_when_back(&board.port, board.baud, RETURN_BUDGET)
+        .map_err(|e| format!("board {}: {e}", board.id))
 }
 
 /// Whether the boot a reset caused can be told apart from the one before it.

@@ -27,7 +27,7 @@ use crate::{
     board::{self, Board, Capture},
     identity::{self, Identity},
     listen::{Listener, Source},
-    serial::{DrainedSource, SerialSource},
+    serial::{self, DrainedSource, SerialSource},
     wait,
 };
 
@@ -297,12 +297,8 @@ pub fn ensure_image(
         // discards whatever the open's read URBs fetched — so the poll in front
         // of a reader consumes exactly the boot it is waiting for. A failed
         // open is already the "not back yet" signal.
-        wait::until(
-            &format!("board {} to come back after the write", b.id),
-            board::RETURN_BUDGET,
-            board::RETURN_GAP,
-            || DrainedSource::open(&b.port, b.baud).map_err(|err| format!("{}: {err}", b.port)),
-        )
+        serial::open_when_back(&b.port, b.baud, board::RETURN_BUDGET)
+            .map_err(|err| format!("board {} after the write: {err}", b.id))
     })?;
 
     // Now attached, so this boot IS observable — the same ordering the first

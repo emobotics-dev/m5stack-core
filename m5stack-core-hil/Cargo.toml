@@ -103,6 +103,14 @@ toml = "1.1.4"
 # baud rate — which is more moving parts for less control.
 libc = "0.2.180"
 
+# Waiting for a USB device to come back after a reset is the one condition this
+# crate cannot observe with `std` — `conventions/testing.md` §1 says to make it
+# observable rather than poll, and inotify on the `by-id` directory is how. The
+# de-facto crate for it (141M downloads; `notify` is built on it), with
+# `default-features = false` to leave its optional tokio/futures stream out —
+# what is wanted is the raw fd and a blocking read, not an async stream.
+inotify = { version = "0.11.4", default-features = false }
+
 # NOT probe-rs, despite it being the preferred way to drive a CoreS3 — the
 # `probe-rs` LIBRARY cannot address one. Measured against 0.32.0: it ships 241
 # built-in target definitions, none of which contain an ESP32, and declares no
