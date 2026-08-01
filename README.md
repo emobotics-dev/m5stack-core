@@ -27,7 +27,9 @@ Exactly one board feature must be enabled. Orthogonal opt-ins:
 |---------|---------|----------|
 | `display` | `board::display` (ILI9342C bring-up) + `board::spi2` device construction | `lcd-async`, `embassy-embedded-hal` |
 | `buttons` | `io::buttons::Buttons` — debounced Fire27 front-panel driver | `async-button` |
-| `heap` | `mem::init_heap` — BSP owns the global heap (DRAM regions + HIL-proven per-board sizes) | `esp-alloc`, `esp-bootloader-esp-idf` |
+| `app-desc` | `app_desc!` + `app_elf_sha256()` — the esp-idf application descriptor (**implied by `heap`**) | `esp-bootloader-esp-idf` |
+| `identity` | enforced firmware build identity — `app_desc!()`'s version field becomes the consumer's git commit + dirty state (**implies `app-desc`**) | (via `app-desc`) |
+| `heap` | `mem::init_heap` — BSP owns the global heap (DRAM regions + HIL-proven per-board sizes) | `esp-alloc`, (`app-desc`) |
 | `psram` | external-PSRAM region + checked `psram_box`/`psram_vec` (**implies `heap`**) | (via `heap`) |
 | `console-serial` | the `io::console` serial transport (UART0 / USB-Serial-JTAG); **off** = R9 production backstop (no serial symbols, panic still breadcrumbs + halts) | — |
 | `panic-handler` | BSP-provided `#[panic_handler]` → `io::console::on_panic` (opt in, or supply your own) | — |
@@ -285,6 +287,134 @@ documented:
 `PsramSafe` requires the `esp` toolchain's `auto_traits` + `negative_impls`
 (enabled only when `psram` is on). No esp-hal Cargo feature is required — PSRAM
 itself is available under the already-enabled `unstable` feature.
+
+### Firmware identity (`app_desc!`)
+
+`app_desc!()` (feature `app-desc`, implied by `heap`) emits the esp-idf
+application descriptor — a fixed, ELF-mapped struct (project name, version,
+build time, and `app_elf_sha256()`, the built image's own content hash). A
+host can read it straight off flash without booting the board, which is what
+makes a "skip the flash if this board already carries the intended image"
+workflow possible. Invoke it once, in the binary (not the BSP), so it captures
+the *application's* own metadata:
+
+```rust
+m5stack_core::app_desc!();
+```
+
+`project_name` is `CARGO_BIN_NAME`, not the package name: a package can have
+more than one `[[bin]]`, and only the per-binary compilation — where this
+macro expands — knows which one is being built. Whenever `app-desc` is on,
+`io::console::install` also logs the descriptor once, as the first
+BSP-emitted line, right after the transport comes up — before anything the
+application itself logs. Without `identity` (real capture, CoreS3 HIL):
+
+```
+[00000.324 INFO ] identity: display version=0.1.0 app_elf_sha256=62dfd06e294b
+```
+
+With `identity` on (real capture, CoreS3 HIL) — the git mark already carries
+the package and binary name, so they aren't repeated separately; the crate's
+`version=` is still shown, since the descriptor's own `version` field no
+longer holds it:
+
+```
+[00000.321 INFO ] identity: demos/display/b0e1958cea29+ version=0.1.0 app_elf_sha256=dd2d390028a3
+```
+
+(`markers::IDENTITY`, grep-able like `markers::PANIC`/`PREV_PANIC`.) This
+requires [`app_desc!`] to have been invoked somewhere in the binary — any
+consumer enabling `app-desc`/`heap` is expected to call it, matching the
+"thin entry shell" framing above; skipping it is a **link** error (undefined
+reference to `esp_app_desc`), not a missing log line.
+
+By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
+feature (implies `app-desc`) makes it `<pkg>/<bin>/<features>/<hash><dirty>`
+instead (e.g. `demos/display/crypto-opt/0f63a4926303+`, or
+`demos/display/0f63a4926303+` with no features tag) — same call site, no
+application-code change — and turns "forgot to wire this up" into a compile
+error rather than a silent gap:
+
+1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
+2. Call it once from your own `build.rs`, with a short features tag (or `""`
+   for none — `m5stack-core-build` never inspects or guesses which of your
+   Cargo features matter, that's your call) and a commit-hash width (`12`
+   matches this repo's own choice; shorten it if that's the lever you need —
+   git enforces its own floor of 4 regardless of a smaller request):
+   ```rust
+   fn main() {
+       m5stack_core_build::emit_identity_env("crypto-opt", 12);
+   }
+   ```
+3. Enable the `identity` feature. `app_desc!()`'s call site is unchanged, but
+   its expansion now requires `M5STACK_CORE_BUILD_MARK` (`<features>/<hash><dirty>`,
+   the commit hash abbreviated to whatever width you chose, plus a `+` if the
+   tree is dirty) — if step 1 or 2 was skipped, that's `env!()` failing to
+   compile *in your own crate*, pointing straight at the `app_desc!()` line,
+   not a silently-plain version field.
+
+`EspAppDesc::version` is a fixed 32-byte C string with **no reserved NUL
+terminator** — a 32-byte mark fills the whole array with no trailing zero,
+which isn't a valid C string and could send a host tool reading it (by
+scanning for NUL) past the struct entirely. 31 bytes is the true safe
+ceiling. Since the package and binary name are joined with the git mark only
+at the `app_desc!()` call site (a `build.rs` runs once per *package*, so it
+can never know which binary it's describing — that's why `m5stack-core-build`
+doesn't take or emit either name itself), that's also where the length is
+checked: `app_desc!()` emits a `const` assertion, so a combination that
+doesn't fit is a real compile error naming the exact 31-byte limit, not a
+silent truncation — which part to shorten is entirely your call, not
+something either crate decides for you. Every segment is a lever you control:
+the `features` tag, the commit-hash width (`emit_identity_env`'s second
+argument), and the package/binary prefix itself (`app_desc!`'s optional
+argument, below). Four segments plus a 12-char hash eats budget fast by
+default — a package/binary pair over ~17 bytes combined leaves no room for a
+features tag at all at that width; this is expected, not a bug, and there are
+three independent places to shorten, not one.
+
+Nothing here truncates or abbreviates a name automatically — an automatic
+scheme is a guess, and a wrong guess in an identity string is worse than no
+identity (the same reasoning behind not letting the BSP derive a commit
+itself). If your real package/binary names don't fit, **you** provide the
+short version: `app_desc!()` takes an optional string-literal prefix that
+replaces the automatic `CARGO_PKG_NAME`/`CARGO_BIN_NAME` join outright —
+
+```rust
+m5stack_core::app_desc!("oxichg/evcc-hl"); // instead of the default oxicharge-cores3/evcc-headless
+```
+
+— giving `oxichg/evcc-hl/0f63a4926303+`. `project_name` still reports the
+real `CARGO_BIN_NAME` regardless; only the mark's prefix is overridable, and
+only if you ask for it — the default (no argument) is unaffected.
+
+**For the harshest cases** — every byte matters and even a maximally-shortened
+prefix, features tag and 4-char hash floor still won't fit — the escape
+hatches compose into full control over every part of the mark, with the
+`const` assertion still catching overflow regardless: skip `m5stack-core-build`
+entirely and
+set `M5STACK_CORE_BUILD_MARK` yourself (any content, computed however you
+like — this was already true, `m5stack-core-build` is a convenience, not the
+only way to set that env var), and pair it with an explicit `app_desc!()`
+prefix:
+
+```rust
+// build.rs — bypass emit_identity_env, compute the mark however you want
+println!("cargo:rustc-env=M5STACK_CORE_BUILD_MARK={my_computed_mark}");
+```
+```rust
+// application code
+m5stack_core::app_desc!("my-short-prefix"); // → my-short-prefix/<my_computed_mark>
+```
+
+There's no third mechanism here — this is the same two levers (the macro's
+prefix argument, the env var's content) already described above, just used
+together instead of relying on `m5stack-core-build` for the second one.
+
+BSP owns the mechanism (reading the descriptor back, enforcing the wiring,
+joining in `CARGO_PKG_NAME`/`CARGO_BIN_NAME` unless overridden); the
+consumer's own `build.rs` owns the content — `m5stack-core` never inspects
+its own git tree, only `m5stack-core-build` does, and only against the
+*calling* crate's directory.
 
 ### Serial console (`io::console`)
 

@@ -205,6 +205,12 @@ multicore = ["m5stack-core/multicore"]
 # for "AW9523B ready after N retries" — verifies the cold-boot retry recovery
 # without a power cycle (the rig can't switch USB VBUS).
 test-fault-inject = ["m5stack-core/test-fault-inject"]
+# Enforced firmware build identity (m5stack-core#43): app_desc!()'s version
+# field becomes this build's git commit + dirty state instead of plain
+# CARGO_PKG_VERSION. build.rs emits it via m5stack-core-build; forgetting that
+# wiring while this feature is on is a compile error (env!() has nothing to
+# read), not a silent gap — see m5stack-core's `identity` feature docs.
+identity = ["dep:m5stack-core-build", "m5stack-core/identity"]
 
 [dependencies]
 common               = { path = "../common" }
@@ -263,3 +269,8 @@ static_cell          = { workspace = true }
 # LVGL UI (lvgl feature only)
 oxivgl               = { workspace = true, optional = true }
 oxivgl-sys           = { workspace = true, optional = true }
+
+[build-dependencies]
+# identity feature only — emits M5STACK_CORE_BUILD_MARK from this build's git
+# state. See m5stack-core::app_desc! and the identity feature docs.
+m5stack-core-build   = { path = "../../m5stack-core-build", optional = true }
