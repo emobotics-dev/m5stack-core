@@ -36,9 +36,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `identity` requires (the package/binary names are joined in separately, by
   `app_desc!()` itself, since a `build.rs` runs once per package and can't
   know which binary it's describing). `hash_len` is another lever for the
-  31-byte budget — the commit-hash abbreviation width (`git rev-parse
-  --short=<hash_len>`; git enforces its own floor of 4 regardless of a
-  smaller request). Optional; the env var can also be set by hand.
+  31-byte budget — the commit-hash abbreviation width, honoured **exactly**
+  (clamped to a floor of 4). Optional; the env var can also be set by hand.
+
+  Git state comes from [`vergen-gitcl`] rather than a hand-rolled `git`
+  invocation. That fixes a needless rebuild: the `rerun-if-changed` paths were
+  derived from `CARGO_MANIFEST_DIR`, so for any consumer that is not the
+  repository root — a workspace member, as `examples/demos` is — they named a
+  `.git` that does not exist, and cargo re-ran the build script on *every*
+  build. Measured here on a second, untouched build of one demo: 4.97 s before,
+  0.18 s after. It also makes the width exact: `git rev-parse --short=<n>`
+  treats `n` as a minimum and lengthens an ambiguous prefix, which could have
+  spent the 31-byte budget as a repository aged.
+
+[`vergen-gitcl`]: https://crates.io/crates/vergen-gitcl
 - **Automatic boot-time identity log** (#43): `io::console::install` now logs
   the descriptor once — package/binary + git mark (or plain binary +
   version), and an `app_elf_sha256` prefix — as the first BSP-emitted line,
