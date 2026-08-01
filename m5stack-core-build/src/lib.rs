@@ -30,11 +30,11 @@
 //! shorten in response (the `features` tag, or nothing this crate controls)
 //! is entirely the caller's call.
 //!
-//! This crate only ever inspects the *calling* crate's own directory
-//! (`CARGO_MANIFEST_DIR`, which is unambiguous for a build script — it is
-//! always the directory of the crate whose `build.rs` is running). It never
-//! touches `m5stack-core`'s own tree: content stays the consumer's, the BSP
-//! owns only the mechanism that reads it back (see `m5stack_core::app_desc!`).
+//! The git state read is that of the repository containing the **calling**
+//! crate — `git` is run from the build script's own directory and resolves
+//! upwards from there. It never touches `m5stack-core`'s tree: content stays
+//! the consumer's, and the BSP owns only the mechanism that reads it back (see
+//! `m5stack_core::app_desc!`).
 
 // The doc example above keeps its `fn main()` deliberately: what it documents
 // is a `build.rs`, and a build script IS its `main`. Stripping it to satisfy
@@ -67,12 +67,10 @@ const SHA_LEN: usize = 40;
 /// ambiguous. A fixed width is what the 31-byte `EspAppDesc::version` budget
 /// needs — see [`abbreviate`] for the argument, and for what is given up.
 ///
-/// It also re-runs the calling build script only when git state actually
-/// changes: `vergen` emits `rerun-if-changed` for the **repository's** real
-/// `.git/HEAD` and current branch ref. The hand-rolled version derived those
-/// paths from `CARGO_MANIFEST_DIR`, which is only the repository root for a
-/// single-crate project — for a workspace member they named a `.git` that does
-/// not exist, and cargo re-ran the script on every build as a result.
+/// The calling build script re-runs only when git state actually changes:
+/// `vergen` emits `rerun-if-changed` for the **repository's** real `.git/HEAD`
+/// and current branch ref, which a path built from `CARGO_MANIFEST_DIR` gets
+/// wrong for any crate that is not the repository root.
 ///
 /// `features` is never inspected or validated — pass whatever short,
 /// consumer-meaningful tag you want (or `""`); this crate has no way to know

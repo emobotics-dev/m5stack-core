@@ -139,6 +139,11 @@ and self-hosts too; that's the precedent. See #36.)
   `display`). `src/io/` — console, buttons, watchdog, sensor loops. `src/mem/` —
   global heap + PSRAM. `src/driver/` — onewire, radio, etc.
 - `examples/demos/` — one crate, one bin per subsystem, board via cargo feature.
+- `m5stack-core-build/` — **host** build-script helper for the `identity`
+  feature (`emit_identity_env`). Its own `.cargo/config.toml` pins the host
+  target, without which `cargo test` cross-compiles it to the board and cannot
+  build; run its tests from inside the crate directory, never `-p` from the
+  root.
 - Development is hosted on the self-hosted **Forgejo** instance
   (`http://forgejo:3000/emobotics/m5stack-core`, SSH `ssh://git@forgejo:222`);
   the public `github.com/emobotics-dev/m5stack-core` is the outward mirror

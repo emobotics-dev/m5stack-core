@@ -339,8 +339,10 @@ error rather than a silent gap:
 2. Call it once from your own `build.rs`, with a short features tag (or `""`
    for none — `m5stack-core-build` never inspects or guesses which of your
    Cargo features matter, that's your call) and a commit-hash width (`12`
-   matches this repo's own choice; shorten it if that's the lever you need —
-   git enforces its own floor of 4 regardless of a smaller request):
+   matches this repo's own choice; shorten it if that's the lever you need. The
+   width is honoured **exactly**, clamped to a floor of 4 — unlike `git
+   rev-parse --short`, which treats it as a minimum and lengthens an ambiguous
+   prefix, so a growing repository could have spent your 31-byte budget):
    ```rust
    fn main() {
        m5stack_core_build::emit_identity_env("crypto-opt", 12);
