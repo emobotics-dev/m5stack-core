@@ -31,11 +31,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   own `version` field no longer holds it — `app_desc!()` exports it under a
   second small linker symbol for the boot log to read back.
 - **New crate `m5stack-core-build`**: a host-only build-time helper —
-  `emit_identity_env(features: &str)`, called once from a consumer's own
-  `build.rs`, sets the `<features>/<hash><dirty>` env var `identity` requires
-  (the package/binary names are joined in separately, by `app_desc!()`
-  itself, since a `build.rs` runs once per package and can't know which
-  binary it's describing). Optional; the env var can also be set by hand.
+  `emit_identity_env(features: &str, hash_len: usize)`, called once from a
+  consumer's own `build.rs`, sets the `<features>/<hash><dirty>` env var
+  `identity` requires (the package/binary names are joined in separately, by
+  `app_desc!()` itself, since a `build.rs` runs once per package and can't
+  know which binary it's describing). `hash_len` is another lever for the
+  31-byte budget — the commit-hash abbreviation width (`git rev-parse
+  --short=<hash_len>`; git enforces its own floor of 4 regardless of a
+  smaller request). Optional; the env var can also be set by hand.
 - **Automatic boot-time identity log** (#43): `io::console::install` now logs
   the descriptor once — package/binary + git mark (or plain binary +
   version), and an `app_elf_sha256` prefix — as the first BSP-emitted line,

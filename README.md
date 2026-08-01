@@ -338,18 +338,20 @@ error rather than a silent gap:
 1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
 2. Call it once from your own `build.rs`, with a short features tag (or `""`
    for none — `m5stack-core-build` never inspects or guesses which of your
-   Cargo features matter, that's your call):
+   Cargo features matter, that's your call) and a commit-hash width (`12`
+   matches this repo's own choice; shorten it if that's the lever you need —
+   git enforces its own floor of 4 regardless of a smaller request):
    ```rust
    fn main() {
-       m5stack_core_build::emit_identity_env("crypto-opt");
+       m5stack_core_build::emit_identity_env("crypto-opt", 12);
    }
    ```
 3. Enable the `identity` feature. `app_desc!()`'s call site is unchanged, but
    its expansion now requires `M5STACK_CORE_BUILD_MARK` (`<features>/<hash><dirty>`,
-   a 12-hex-char abbreviated commit hash plus a `+` if the tree is dirty) — if
-   step 1 or 2 was skipped, that's `env!()` failing to compile *in your own
-   crate*, pointing straight at the `app_desc!()` line, not a silently-plain
-   version field.
+   the commit hash abbreviated to whatever width you chose, plus a `+` if the
+   tree is dirty) — if step 1 or 2 was skipped, that's `env!()` failing to
+   compile *in your own crate*, pointing straight at the `app_desc!()` line,
+   not a silently-plain version field.
 
 `EspAppDesc::version` is a fixed 32-byte C string with **no reserved NUL
 terminator** — a 32-byte mark fills the whole array with no trailing zero,
@@ -361,12 +363,14 @@ can never know which binary it's describing — that's why `m5stack-core-build`
 doesn't take or emit either name itself), that's also where the length is
 checked: `app_desc!()` emits a `const` assertion, so a combination that
 doesn't fit is a real compile error naming the exact 31-byte limit, not a
-silent truncation — which part to shorten (the `features` tag, or nothing
-this crate controls) is entirely your call, not something either crate
-decides for you. Four segments plus a 12-char hash eats budget fast — a
-package/binary pair over ~17 bytes combined leaves no room for a features tag
-at all; this is expected, not a bug, and the fix is always to shorten
-whichever part makes sense for your project.
+silent truncation — which part to shorten is entirely your call, not
+something either crate decides for you. Every segment is a lever you control:
+the `features` tag, the commit-hash width (`emit_identity_env`'s second
+argument), and the package/binary prefix itself (`app_desc!`'s optional
+argument, below). Four segments plus a 12-char hash eats budget fast by
+default — a package/binary pair over ~17 bytes combined leaves no room for a
+features tag at all at that width; this is expected, not a bug, and there are
+three independent places to shorten, not one.
 
 Nothing here truncates or abbreviates a name automatically — an automatic
 scheme is a guess, and a wrong guess in an identity string is worse than no
@@ -384,9 +388,10 @@ real `CARGO_BIN_NAME` regardless; only the mark's prefix is overridable, and
 only if you ask for it — the default (no argument) is unaffected.
 
 **For the harshest cases** — every byte matters and even a maximally-shortened
-prefix plus a features tag won't both fit — the two escape hatches compose
-into full control over every part of the mark, with the `const` assertion
-still catching overflow regardless: skip `m5stack-core-build` entirely and
+prefix, features tag and 4-char hash floor still won't fit — the escape
+hatches compose into full control over every part of the mark, with the
+`const` assertion still catching overflow regardless: skip `m5stack-core-build`
+entirely and
 set `M5STACK_CORE_BUILD_MARK` yourself (any content, computed however you
 like — this was already true, `m5stack-core-build` is a convenience, not the
 only way to set that env var), and pair it with an explicit `app_desc!()`
