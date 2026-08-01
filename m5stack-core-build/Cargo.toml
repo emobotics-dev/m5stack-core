@@ -9,3 +9,29 @@ description = "Build-time git-identity helper for m5stack-core's `identity` feat
 repository = "https://github.com/emobotics-dev/m5stack-core"
 keywords = ["esp32", "m5stack", "build-script"]
 categories = ["development-tools::build-utils"]
+
+[dependencies]
+# Interrogating git from a build script is a commodity, and hand-rolling it
+# here got the hard part wrong: the `cargo:rerun-if-changed` paths were built
+# from CARGO_MANIFEST_DIR, so for any consumer that is not the repository ROOT
+# — `examples/demos` in this very repo — they named a `.git` that does not
+# exist. Cargo treats a missing path as always-dirty, so the script re-ran on
+# every build. Measured before the change: a second no-op build of one demo
+# took 0.14 s without `identity` and 4.97 s with it.
+#
+# vergen finds the real git directory and watches the right files — verified by
+# running it from a crate in a subdirectory, where it emitted
+# `rerun-if-changed=<repo>/.git/HEAD` AND the current branch's ref, which is
+# what actually changes on a commit.
+#
+# `-gitcl` of the three flavours: it drives the `git` CLI, exactly as this crate
+# already did, so the behaviour and the "git may be absent" fallback are
+# unchanged. `-git2` would pull libgit2 and a C toolchain into every consumer's
+# build graph; `-gix` a large pure-Rust tree. Neither is worth it to read two
+# values.
+#
+# HELD at 1.x: vergen-gitcl 10.0.1 declares `rust-version = "1.95.0"`, and this
+# crate promises 1.86 (see above) so that a build helper never demands a newer
+# toolchain than the BSP it serves. Verified against the crates.io index rather
+# than assumed. Revisit when the floor moves.
+vergen-gitcl = { version = "1.0.8", features = ["emit_and_set"] }
