@@ -383,6 +383,28 @@ m5stack_core::app_desc!("oxichg/evcc-hl"); // instead of the default oxicharge-c
 real `CARGO_BIN_NAME` regardless; only the mark's prefix is overridable, and
 only if you ask for it — the default (no argument) is unaffected.
 
+**For the harshest cases** — every byte matters and even a maximally-shortened
+prefix plus a features tag won't both fit — the two escape hatches compose
+into full control over every part of the mark, with the `const` assertion
+still catching overflow regardless: skip `m5stack-core-build` entirely and
+set `M5STACK_CORE_BUILD_MARK` yourself (any content, computed however you
+like — this was already true, `m5stack-core-build` is a convenience, not the
+only way to set that env var), and pair it with an explicit `app_desc!()`
+prefix:
+
+```rust
+// build.rs — bypass emit_identity_env, compute the mark however you want
+println!("cargo:rustc-env=M5STACK_CORE_BUILD_MARK={my_computed_mark}");
+```
+```rust
+// application code
+m5stack_core::app_desc!("my-short-prefix"); // → my-short-prefix/<my_computed_mark>
+```
+
+There's no third mechanism here — this is the same two levers (the macro's
+prefix argument, the env var's content) already described above, just used
+together instead of relying on `m5stack-core-build` for the second one.
+
 BSP owns the mechanism (reading the descriptor back, enforcing the wiring,
 joining in `CARGO_PKG_NAME`/`CARGO_BIN_NAME` unless overridden); the
 consumer's own `build.rs` owns the content — `m5stack-core` never inspects
