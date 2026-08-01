@@ -746,3 +746,184 @@ mod tests {
         assert_eq!(b.id, "1C:DB:D4:BA:83:38", "the lock key must be the stable identity");
     }
 }
+
+/// The on-target tier for the flash decision: what only a live board can prove.
+///
+/// # Prerequisite (`conventions/testing.md` §4)
+///
+/// `#[ignore]`d because it needs **the rig**:
+///
+/// - a board attached over USB, running firmware that prints an identity (built
+///   with `app_desc!`);
+/// - `M5STACK_HIL_BOARD` set to its **MAC**, or to a full
+///   `/dev/serial/by-id/...` path for a board behind a bridge;
+/// - optionally `M5STACK_HIL_BANNER`, the substring its application prints, and
+///   `M5STACK_HIL_CYCLES` (default 30).
+///
+/// ```sh
+/// M5STACK_HIL_BOARD=1C:DB:D4:BA:83:38 cargo test -- --ignored
+/// ```
+///
+/// # Why this cannot be a host test
+///
+/// The host suite drives [`read_identity`] through a [`Source`] fake, so every
+/// decision *about* bytes is proven. What a fake cannot express is the thing
+/// that broke: **bytes produced while nobody was attached**. A `Scripted`
+/// source hands over its script whenever it is asked, so it cannot lose a line
+/// to a port that was closed, to a reset that re-enumerated, or to output the
+/// USB-Serial-JTAG discarded because no host was reading.
+///
+/// That is not hypothetical. Two defects reached a consumer through this gap:
+/// the identity read waited for the banner *before* the identity, and a
+/// re-enumeration wait probed the port with a throwaway open that discarded the
+/// bytes it had just caused to arrive. Both passed every host test.
+///
+/// A 30-cycle default is deliberate. The flash decision rests entirely on this
+/// parse, and below 30/30 the guard is guessing rather than deciding — a single
+/// miss was once misdiagnosed as a hardware race when it was a missing reset.
+#[cfg(test)]
+pub(crate) mod ontarget {
+    use std::time::Duration;
+
+    use super::{Board, Capture, IDENTITY_BUDGET, no_holes, read_identity, reset_attached};
+    use crate::flash::FlashConfig;
+    use crate::{listen::Listener, serial::DrainedSource};
+
+    /// A required environment variable, or a failure that says how to run this
+    /// tier. A panic rather than a silent skip: a hardware test that quietly
+    /// passes when its prerequisite is absent is the "green because unrun"
+    /// defect this crate exists to remove.
+    fn required(var: &str) -> String {
+        std::env::var(var).unwrap_or_else(|_| {
+            panic!(
+                "{var} is unset. This tier needs the rig:\n  \
+                 M5STACK_HIL_BOARD=<board-MAC|/dev/serial/by-id/…> cargo test -- --ignored\n\
+                 The board must run firmware that prints an identity (`app_desc!`)."
+            )
+        })
+    }
+
+    /// The board under test, addressed the one way this crate addresses one.
+    ///
+    /// A leading `/` means a full path — how a board behind an external bridge
+    /// is named, since its by-id name is not derived from a MAC. Decided by
+    /// shape rather than a second variable nobody remembers to set.
+    pub(crate) fn board() -> Board {
+        let b = required("M5STACK_HIL_BOARD");
+        if b.starts_with('/') {
+            // The id is NOT the path. `BoardLock::acquire` panics on an id
+            // starting `/dev/` and would otherwise build a lockfile name out of
+            // its slashes — latent only because this tier does not lock yet.
+            // The by-id file name is the stable part and is filesystem-safe.
+            let id = b.rsplit('/').next().unwrap_or(&b);
+            Board::at_port(id, &b, 1_000_000)
+        } else {
+            Board::cores3(&b)
+        }
+    }
+
+    /// How to write to the board under test.
+    ///
+    /// A MAC names a CoreS3, whose chip is known. Anything else is addressed by
+    /// path and could be any ESP32, so the chip must be stated —
+    /// `FlashConfig::cores3()` on a Fire27 makes `espflash` refuse with "Chip
+    /// provided with `-c/--chip` (esp32s3) does not match the detected chip
+    /// (esp32)", and only when a write is finally needed. It refuses rather
+    /// than mis-writing, so the cost is a late failure, not a bricked board.
+    pub(crate) fn flash_config() -> FlashConfig {
+        if let Ok(chip) = std::env::var("M5STACK_HIL_CHIP") {
+            return FlashConfig::for_chip(&chip);
+        }
+        assert!(
+            !required("M5STACK_HIL_BOARD").starts_with('/'),
+            "M5STACK_HIL_CHIP is unset and this board is addressed by path, so its chip cannot be \
+             inferred — set it (e.g. esp32 for a Fire27)"
+        );
+        FlashConfig::cores3()
+    }
+
+    /// The application banner, if the caller named one. Optional on purpose:
+    /// without it `read_identity` collapses "booted but cannot say what it is"
+    /// into "no identity", which is a weaker answer but never a wrong one.
+    pub(crate) fn banner() -> Option<String> {
+        std::env::var("M5STACK_HIL_BANNER").ok()
+    }
+
+    fn cycles(var: &str, default: usize) -> usize {
+        std::env::var(var).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    }
+
+    /// Every reset must yield the identity, and yield the SAME one.
+    ///
+    /// The count is the point: one success proves the happy path, and the
+    /// failures that matter here are intermittent — a line lost to a race shows
+    /// up as 29/30, which is indistinguishable from 30/30 if you only look
+    /// once.
+    ///
+    /// Also asserts the capture is hole-free each cycle. The console ring
+    /// overwrites its OLDEST bytes, so an overrun destroys exactly the
+    /// identity, and would otherwise read as an image that carries none.
+    #[test]
+    #[ignore = "needs the rig: a board printing an identity, M5STACK_HIL_BOARD=<MAC>"]
+    fn every_reset_yields_the_identity() {
+        let (board, banner) = (board(), banner());
+        let n = cycles("M5STACK_HIL_CYCLES", 30);
+        let port = DrainedSource::open(&board.port, board.baud).expect("open the board");
+        let mut l = Listener::new(port);
+
+        let mut first: Option<String> = None;
+        for i in 1..=n {
+            // Carried into the failure below rather than dropped: a reset
+            // that could not be isolated is the first explanation for a missed
+            // identity, and reporting it saves guessing at a race.
+            let iso = reset_attached(&board, &mut l).unwrap_or_else(|e| panic!("cycle {i}: reset: {e}"));
+            let cap =
+                read_identity(&mut l, banner.as_deref(), IDENTITY_BUDGET).unwrap_or_else(|e| panic!("cycle {i}: {e}"));
+            no_holes(&l, &format!("cycle {i}")).unwrap_or_else(|e| panic!("cycle {i}: {e}"));
+
+            let Capture::Identified(id) = cap else {
+                panic!(
+                    "cycle {i} of {n}: no identity ({iso:?}). One miss is the defect — the flash \
+                     decision rests on this parse"
+                );
+            };
+            match &first {
+                None => first = Some(id.to_string()),
+                // The board did not change between cycles, so neither may this.
+                // A differing identity means a stale line was matched, which is
+                // the failure the isolation logic exists to prevent.
+                Some(f) => assert_eq!(&id.to_string(), f, "cycle {i}: identity changed without a flash"),
+            }
+        }
+    }
+
+    /// A reset must isolate the boot it causes from the one before it.
+    ///
+    /// Asserted, not merely reported: on a board quiet enough to be a valid
+    /// subject for this tier it must never happen, and when it does every later
+    /// match here is suspect. The count is carried into the message so a rig
+    /// that has become noisy says how noisy. A firmware that legitimately never
+    /// falls silent is not a subject for this tier — its boots cannot be told
+    /// apart by any means this crate has.
+    #[test]
+    #[ignore = "needs the rig: a board printing an identity, M5STACK_HIL_BOARD=<MAC>"]
+    fn resets_isolate_the_boot_they_cause() {
+        use super::Isolation;
+        let board = board();
+        let n = cycles("M5STACK_HIL_ISOLATION_CYCLES", 10);
+        let port = DrainedSource::open(&board.port, board.baud).expect("open the board");
+        let mut l = Listener::new(port);
+
+        let mut chatty = 0;
+        for i in 1..=n {
+            let iso = reset_attached(&board, &mut l).unwrap_or_else(|e| panic!("cycle {i}: reset: {e}"));
+            if iso == Isolation::Chatty {
+                chatty += 1;
+            }
+            // Let the board finish booting, so the next cycle's quiesce is
+            // measuring a settled board rather than the tail of this boot.
+            let _ = read_identity(&mut l, banner().as_deref(), Duration::from_secs(5));
+        }
+        assert_eq!(chatty, 0, "{chatty} of {n} resets could not be isolated — a wait may match the PREVIOUS boot");
+    }
+}

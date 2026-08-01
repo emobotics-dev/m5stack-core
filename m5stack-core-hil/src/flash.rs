@@ -451,3 +451,92 @@ mod tests {
         assert_eq!(FlashConfig::cores3().chip, "esp32s3");
     }
 }
+
+/// The on-target tier for [`ensure_image`]: the decision that spends a flash.
+///
+/// # Prerequisite (`conventions/testing.md` §4)
+///
+/// `#[ignore]`d because it needs **the rig**, plus the image the board runs:
+///
+/// - `M5STACK_HIL_BOARD` — the board's MAC, or a full `/dev/serial/by-id` path;
+/// - `M5STACK_HIL_IMAGE` — the ELF to ensure. Any image the board can run; the
+///   first cycle writes it if it differs, which is what establishes the state
+///   the rest of the test is about;
+/// - optionally `M5STACK_HIL_BANNER`, and `M5STACK_HIL_SKIP_RUNS` (default 10).
+///
+/// ```sh
+/// M5STACK_HIL_BOARD=1C:DB:D4:BA:83:38 M5STACK_HIL_IMAGE=target/…/app \
+///   cargo test -- --ignored
+/// ```
+///
+/// # What it catches that a host test cannot
+///
+/// A subtly wrong comparison does not fail — it **flashes**, correctly-looking,
+/// on every run. That costs ~20 s and NOR endurance each time and is invisible
+/// unless someone counts. The host suite proves `matched_by` against
+/// constructed pairs; it cannot prove that the pair `ensure_image` builds from
+/// a real board and a real ELF agrees.
+#[cfg(test)]
+mod ontarget {
+    use std::path::PathBuf;
+
+    use super::{Ensured, FlashConfig, ensure_image};
+    use crate::{
+        board::{
+            self, IDENTITY_BUDGET,
+            ontarget::{banner, board},
+        },
+        listen::Listener,
+        serial::DrainedSource,
+    };
+
+    /// Consecutive `ensure_image` runs on an unchanged image must all skip.
+    ///
+    /// Cycle 1 may write — that is how the state is established without
+    /// requiring the caller to have flashed by hand first. Every cycle after it
+    /// must skip, because nothing changed in between. One spurious flash is the
+    /// whole defect: it means the comparison is wrong in a way that still
+    /// produces a working board, so nothing else will ever complain.
+    #[test]
+    #[ignore = "needs the rig: M5STACK_HIL_BOARD=<MAC> M5STACK_HIL_IMAGE=<ELF>"]
+    fn an_unchanged_image_is_never_reflashed() {
+        let elf = PathBuf::from(
+            std::env::var("M5STACK_HIL_IMAGE")
+                .expect("M5STACK_HIL_IMAGE is unset — this tier needs the ELF the board runs"),
+        );
+        let (b, banner) = (board(), banner());
+        let runs: usize = std::env::var("M5STACK_HIL_SKIP_RUNS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+        let cfg = board::ontarget::flash_config();
+
+        let mut flashed = 0;
+        for i in 1..=runs {
+            let port = DrainedSource::open(&b.port, b.baud).expect("open the board");
+            let mut l = Listener::new(port);
+            // A reset that could not be isolated makes the identity read
+            // below suspect, and a suspect read is what spends a flash — so it
+            // fails here rather than being discovered as a spurious write.
+            let iso = board::reset_attached(&b, &mut l).unwrap_or_else(|e| panic!("run {i}: reset: {e}"));
+            assert_eq!(iso, board::Isolation::Clean, "run {i}: reset not isolated; a stale line may be read");
+            let cap = board::read_identity(&mut l, banner.as_deref(), IDENTITY_BUDGET)
+                .unwrap_or_else(|e| panic!("run {i}: {e}"));
+
+            // The board decides the comparison width, so read it back rather
+            // than assuming: the ELF side truncates to match what the board
+            // prints, never the other way round.
+            let width = match &cap {
+                board::Capture::Identified(id) => id.hash_prefix_len(),
+                _ => 12,
+            };
+            match ensure_image(&mut l, &b, &cfg, &elf, &cap, banner.as_deref(), width)
+                .unwrap_or_else(|e| panic!("run {i}: {e}"))
+            {
+                Ensured::AlreadyCurrent(_) => {}
+                Ensured::Flashed { why, .. } => {
+                    flashed += 1;
+                    assert_eq!(i, 1, "run {i} of {runs} flashed an UNCHANGED image — {why}");
+                }
+            }
+        }
+        assert!(flashed <= 1, "{flashed} writes across {runs} runs on one image");
+    }
+}
