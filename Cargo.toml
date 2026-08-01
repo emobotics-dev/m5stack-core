@@ -13,8 +13,25 @@ documentation = "https://emobotics-dev.github.io/m5stack-core"
 readme = "README.md"
 keywords = ["esp32", "m5stack", "embedded", "bsp", "embassy"]
 categories = ["embedded", "no-std", "hardware-support"]
-# Dev-only infrastructure — irrelevant to a published-crate consumer.
-exclude = [".forgejo/", ".devcontainer/", "CLAUDE.md"]
+# An allow-list, not the `exclude` it replaces: cargo packages every
+# untracked-but-unignored file, so a blocklist must name each tool directory
+# that might ever appear — and `.claude/` shipped in 0.5.0 because it did not
+# (#59). Unknown files now fail closed, loudly, and `.cargo/credentials.toml`
+# cannot ship at all since only `config.toml` is named.
+include = [
+    "/src/**/*.rs",
+    "/tools/**",
+    "/build.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/hil.toml.example",
+    "/rust-toolchain.toml",
+    "/.cargo/config.toml",
+    "/.gitignore",
+]
 
 [lib]
 test = false

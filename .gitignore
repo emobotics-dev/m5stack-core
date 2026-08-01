@@ -17,3 +17,6 @@ work/
 
 # crates.io publish token — never commit
 .cargo/credentials.toml
+
+# Per-checkout agent settings — describes this machine, not the project (#59)
+/.claude/
