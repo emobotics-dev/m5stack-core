@@ -4,7 +4,12 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-08-01
+
+Version 0.4.3 was prepared but never released — it was bumped and given a
+changelog section, then never tagged, mirrored or published, so no user could
+ever obtain it. Its one change is folded in below rather than left pointing at
+a version that does not exist. The last release on crates.io was 0.4.2.
 
 ### Added
 
@@ -40,7 +45,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (clamped to a floor of 4). Optional; the env var can also be set by hand.
 
   Git state comes from [`vergen-gitcl`] rather than a hand-rolled `git`
-  invocation. That fixes a needless rebuild: the `rerun-if-changed` paths were
+  invocation (#48). That fixes a needless rebuild: the `rerun-if-changed` paths were
   derived from `CARGO_MANIFEST_DIR`, so for any consumer that is not the
   repository root — a workspace member, as `examples/demos` is — they named a
   `.git` that does not exist, and cargo re-ran the build script on *every*
@@ -68,6 +73,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Default (no argument) is unchanged.
 - **`app_desc()` is now public** — reads back the whole descriptor
   (`EspAppDesc`), not just the `app_elf_sha256()` convenience wrapper.
+- **New crate `m5stack-core-hil` — a hardware-in-the-loop harness for both
+  boards** (#46, #47, #55), binary `m5stack-hil`. A *host* crate: it is not
+  part of the published library and adds nothing to a consumer's dependency
+  graph, but it is what makes a claim like "verified on hardware" mean
+  something specific in this repo. It owns the three things an ad-hoc
+  `espflash` invocation gets wrong:
+
+  - **Claiming a board.** One owner per board, keyed to the MAC rather than a
+    `ttyACM` index (those renumber on replug). A live holder is *refused and
+    reported* — never reclaimed, because killing the holder destroys another
+    session's capture — while a dead holder's lock is taken over and the
+    takeover is said out loud. Released on every exit path, including panics.
+  - **Flashing only when needed.** `--ensure-image` compares the board's
+    running `app_elf_sha256` against the hash of the ELF about to be flashed
+    and skips the write when they already match, turning a ~15 s cycle into
+    ~6 s. This is the first real consumer of the `identity` work above.
+  - **Losing no output.** The harness attaches to the console *before* it
+    resets, because the ESP32-S3's USB-Serial-JTAG discards output when no
+    host is reading — reset-then-open captured **0 bytes** from a board
+    emitting 1788 per boot. Before each reset the port is read until silent,
+    then a cursor barrier is drawn: without that, a line left over from the
+    *previous* boot satisfies a match and turns a broken build into a pass. A
+    board that never goes quiet is reported as such rather than silently
+    treated as clean.
+
+  Both boards are covered, differing only in how the reset is delivered:
+  CoreS3 over JTAG with the probe named explicitly (an unqualified
+  `probe-rs reset` picks one of the probes on a shared bench, i.e. possibly
+  someone else's board), Fire27 by pulsing RTS on the port the harness already
+  holds — its USB-serial bridge is a separate chip from the ESP32, so the tty
+  survives the reset. Verified on the bench with a negative control: stub the
+  pulse and the identity is never captured, which rules out the reset being an
+  artefact of the DTR edge that opening a tty produces.
+
+  Boards are **named** in a gitignored `hil.toml` (see `hil.toml.example`), so
+  swapping hardware or adding a rig is a config edit, not a code edit. Wrappers:
+  `tools/cores3-run.sh`, `tools/fire27-run.sh`, `tools/hil.sh`.
 
 ### Changed
 
@@ -102,16 +144,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transactions on the shared bus. Also included: two USB-Serial-JTAG
   async-write fixes (a lost wakeup, and an `int_ena` race that could deafen
   the reader) and ESP32 SPI-slave DMA arm-sequence parity with ESP-IDF (#21).
-
-## [0.4.3] - 2026-07-29
-
-### Changed
-
 - **`documentation` now points at <https://emobotics-dev.github.io/m5stack-core>**
   (#36) — self-hosted rustdoc, one tree per board. docs.rs has failed for every
   published version and cannot be fixed: its stock toolchain has no Xtensa
   backend, and both boards are Xtensa-only, so there is no RISC-V
-  `default-target` to fall back on the way esp-hal has.
+  `default-target` to fall back on the way esp-hal has. Prepared for 0.4.3;
+  since that version was never published, crates.io still showed no
+  documentation link at all, and this is the release that actually delivers it.
 
 ## [0.4.2] - 2026-07-29
 
