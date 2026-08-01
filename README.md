@@ -302,6 +302,20 @@ the *application's* `CARGO_PKG_VERSION`:
 m5stack_core::app_desc!();
 ```
 
+Whenever `app-desc` is on, `io::console::install` also logs it once, as the
+first BSP-emitted line, right after the transport comes up — before anything
+the application itself logs (real capture, CoreS3 HIL):
+
+```
+[00000.320 INFO ] [identity] demos 57a94935* sha256=f5a3e9aa33281b42
+```
+
+(`markers::IDENTITY`, grep-able like `markers::PANIC`/`PREV_PANIC`.) This
+requires [`app_desc!`] to have been invoked somewhere in the binary — any
+consumer enabling `app-desc`/`heap` is expected to call it, matching the
+"thin entry shell" framing above; skipping it is a **link** error (undefined
+reference to `esp_app_desc`), not a missing log line.
+
 By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
 feature (implies `app-desc`) makes it a build-time git descriptor instead —
 same call site, no application-code change — and turns "forgot to wire this

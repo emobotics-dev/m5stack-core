@@ -389,6 +389,10 @@ pub mod markers {
     pub const CONSOLE_DROP: &str = "[CONSOLE-DROP";
     /// Logged once at boot when a previous-run panic breadcrumb is read back.
     pub const PREV_PANIC: &str = "[bc] previous panic";
+    /// Logged once at boot by [`super::install`] (the `app-desc` feature) —
+    /// project name, version (or the `identity`-enforced git mark), and an
+    /// `app_elf_sha256` prefix.
+    pub const IDENTITY: &str = "[identity]";
 }
 
 /// Console install configuration. `serial: None` is the production backstop —
@@ -422,25 +426,32 @@ pub struct Console {
 /// reader so log TX and command RX share the one port (R7).
 pub fn install(spawner: embassy_executor::Spawner, cfg: Config) -> Console {
     init_with_level(cfg.level);
-    #[cfg(feature = "console-serial")]
-    {
-        let rx = cfg.serial.map(|res| {
-            let (rx, tx) = install_serial(res);
-            crate::must_spawn!(spawner, drain_task(tx));
-            rx
-        });
-        Console { rx }
-    }
-    // R9 serial-free: backend registered above; no transport, no drain task.
-    #[cfg(not(feature = "console-serial"))]
-    {
-        let _ = &spawner;
-        match cfg.serial {
-            Some(res) => match res {}, // SerialResources is uninhabited here
-            None => {}
+    let console = {
+        #[cfg(feature = "console-serial")]
+        {
+            let rx = cfg.serial.map(|res| {
+                let (rx, tx) = install_serial(res);
+                crate::must_spawn!(spawner, drain_task(tx));
+                rx
+            });
+            Console { rx }
         }
-        Console {}
-    }
+        // R9 serial-free: backend registered above; no transport, no drain task.
+        #[cfg(not(feature = "console-serial"))]
+        {
+            let _ = &spawner;
+            match cfg.serial {
+                Some(res) => match res {}, // SerialResources is uninhabited here
+                None => {}
+            }
+            Console {}
+        }
+    };
+    // As early as possible: the first BSP-emitted log line, right after the
+    // backend (and transport, if any) are up. See markers::IDENTITY.
+    #[cfg(feature = "app-desc")]
+    crate::log_boot_identity();
+    console
 }
 
 /// Compatibility no-op. The prior design switched producers from a blocking

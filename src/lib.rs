@@ -13,7 +13,8 @@
 //!   per-board sizes; `heap` feature, implied by `psram`).
 //! - [`io::console::install`] — one-call logging over the chip's native
 //!   transport (UART0 / USB-Serial-JTAG CDC) + an RTC panic breadcrumb
-//!   ([`io::console::take_panic_breadcrumb`]).
+//!   ([`io::console::take_panic_breadcrumb`]) + (`app-desc` feature) the
+//!   firmware identity, logged once as the very first BSP-emitted line.
 //! - the `panic-handler` feature exports the `#[panic_handler]`, and
 //!   [`app_desc!`] the esp-idf app descriptor (`app-desc` feature, implied by
 //!   `heap`) — plus [`app_elf_sha256`], and, under `identity`, an enforced
@@ -86,10 +87,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[doc(hidden)]
 pub use esp_bootloader_esp_idf as __bootloader;
 
-/// The ELF's content hash, straight from the esp-idf application descriptor —
-/// the first bytes distinguish two images built from the same commit with
-/// different uncommitted edits. Unambiguous with no consumer input needed: it
-/// is a function of the linked image, computed and patched in by `espflash`.
+/// Reads back the descriptor [`app_desc!`] emits.
 ///
 /// [`app_desc!`] expands to a `static` named `ESP_APP_DESC` **at its call
 /// site** (i.e. in the binary, not this crate), so this reads it back by its
@@ -98,12 +96,48 @@ pub use esp_bootloader_esp_idf as __bootloader;
 /// created. Requires [`app_desc!`] to have been invoked somewhere in the
 /// binary: otherwise this fails to **link**, not silently reads zeroes.
 #[cfg(feature = "app-desc")]
-pub fn app_elf_sha256() -> &'static [u8; 32] {
+fn app_desc() -> &'static __bootloader::EspAppDesc {
     unsafe extern "C" {
         #[link_name = "esp_app_desc"]
         static ESP_APP_DESC: __bootloader::EspAppDesc;
     }
-    unsafe { ESP_APP_DESC.app_elf_sha256() }
+    unsafe { &ESP_APP_DESC }
+}
+
+/// The ELF's content hash, straight from the esp-idf application descriptor —
+/// the first bytes distinguish two images built from the same commit with
+/// different uncommitted edits. Unambiguous with no consumer input needed: it
+/// is a function of the linked image, computed and patched in by `espflash`.
+/// Requires [`app_desc!`] to have been invoked (see [`app_desc()`]).
+#[cfg(feature = "app-desc")]
+pub fn app_elf_sha256() -> &'static [u8; 32] {
+    app_desc().app_elf_sha256()
+}
+
+/// Logs the descriptor's project name, version (plain `CARGO_PKG_VERSION`, or
+/// the enforced git mark under `identity`) and an 8-byte `app_elf_sha256`
+/// prefix, once, as early as possible on boot — called by
+/// [`io::console::install`], not meant to be called directly. Like
+/// [`app_elf_sha256`], requires [`app_desc!`] to have been invoked somewhere
+/// in the binary (a link error otherwise, not a silent no-op): any binary
+/// enabling `app-desc` — directly, or via `heap` — is expected to call
+/// [`app_desc!`], matching this crate's existing "thin entry shell" framing.
+#[cfg(feature = "app-desc")]
+pub(crate) fn log_boot_identity() {
+    use core::fmt::Write as _;
+
+    let desc = app_desc();
+    let sha = desc.app_elf_sha256();
+    let mut hex = heapless::String::<16>::new();
+    for byte in &sha[..8] {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    log::info!(
+        "{} {} {} sha256={hex}",
+        io::console::markers::IDENTITY,
+        desc.project_name(),
+        desc.version()
+    );
 }
 
 /// Emit the esp-idf application descriptor. Invoke once **in the binary** (not

@@ -23,6 +23,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `emit_identity_env()`, called once from a consumer's own `build.rs`, sets
   the git descriptor `identity` requires. Optional; the env var can also be
   set by hand.
+- **Automatic boot-time identity log** (#43): `io::console::install` now logs
+  the descriptor once — project name, version, and an `app_elf_sha256`
+  prefix — as the first BSP-emitted line, right after the transport comes up
+  and before the application's own logging, whenever `app-desc` is on
+  (`markers::IDENTITY`). Requires `app_desc!()` to have been invoked
+  somewhere in the binary; if it wasn't, this is a **link** error, not a
+  missing log line — any consumer already enabling `app-desc`/`heap` is
+  expected to call it.
 
 ### Changed
 
