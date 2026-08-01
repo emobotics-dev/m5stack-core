@@ -392,7 +392,7 @@ pub mod markers {
     /// Logged once at boot by [`super::install`] (the `app-desc` feature) —
     /// project name, version (or the `identity`-enforced git mark), and an
     /// `app_elf_sha256` prefix.
-    pub const IDENTITY: &str = "[identity]";
+    pub const IDENTITY: &str = "identity:";
 }
 
 /// Console install configuration. `serial: None` is the production backstop —

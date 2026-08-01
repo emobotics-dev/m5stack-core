@@ -39,9 +39,9 @@ use std::process::Command;
 
 /// Sets `cargo:rustc-env=M5STACK_CORE_BUILD_MARK=<mark>` from `features` and
 /// the calling crate's own git state: `<features>/<hash><dirty>`, or just
-/// `<hash><dirty>` if `features` is `""` — an 8-hex-char abbreviated commit
-/// hash, plus a trailing `*` if the working tree has uncommitted changes
-/// (e.g. `csp/a1b2c3d4*`, or `a1b2c3d4*` with no features tag).
+/// `<hash><dirty>` if `features` is `""` — a 12-hex-char abbreviated commit
+/// hash, plus a trailing `+` if the working tree has uncommitted changes
+/// (e.g. `crypto-opt/0f63a4926303+`, or `0f63a4926303+` with no features tag).
 ///
 /// `features` is never inspected or validated — pass whatever short,
 /// consumer-meaningful tag you want (or `""`); this crate has no way to know
@@ -67,9 +67,9 @@ fn join_mark(features: &str, commit: &str) -> String {
 }
 
 fn git_mark(dir: &Path) -> Option<String> {
-    let hash = run_git(dir, &["rev-parse", "--short=8", "HEAD"])?;
+    let hash = run_git(dir, &["rev-parse", "--short=12", "HEAD"])?;
     let dirty = !run_git(dir, &["status", "--porcelain"])?.is_empty();
-    Some(if dirty { format!("{hash}*") } else { hash })
+    Some(if dirty { format!("{hash}+") } else { hash })
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -86,11 +86,11 @@ mod tests {
 
     #[test]
     fn no_features_is_just_the_commit() {
-        assert_eq!(join_mark("", "a1b2c3d4*"), "a1b2c3d4*");
+        assert_eq!(join_mark("", "0f63a4926303+"), "0f63a4926303+");
     }
 
     #[test]
     fn features_prefix_the_commit() {
-        assert_eq!(join_mark("csp", "a1b2c3d4*"), "csp/a1b2c3d4*");
+        assert_eq!(join_mark("crypto-opt", "0f63a4926303+"), "crypto-opt/0f63a4926303+");
     }
 }

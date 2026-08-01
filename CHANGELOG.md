@@ -15,7 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wants identity reporting without `esp-alloc` in the graph can enable just
   this.
 - **`identity` feature** (implies `app-desc`): makes `app_desc!()`'s version
-  field `<bin>/<features>/<hash><dirty>` (e.g. `display/csp/a1b2c3d4*`)
+  field `<bin>/<features>/<hash><dirty>` (e.g. `display/crypto-opt/0f63a4926303+`)
   instead of plain `CARGO_PKG_VERSION` — same call site, no application-code
   change. Forgetting the required `build.rs` wiring is a compile error
   (`env!()` has nothing to read), not a silent gap; a combination that

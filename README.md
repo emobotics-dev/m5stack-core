@@ -307,10 +307,17 @@ more than one `[[bin]]`, and only the per-binary compilation — where this
 macro expands — knows which one is being built. Whenever `app-desc` is on,
 `io::console::install` also logs the descriptor once, as the first
 BSP-emitted line, right after the transport comes up — before anything the
-application itself logs (real capture, CoreS3 HIL):
+application itself logs. Without `identity` (real capture, CoreS3 HIL):
 
 ```
-[00000.321 INFO ] [identity] display display/565d6052* sha256=038a1c0a794cbba1
+[00000.324 INFO ] identity: display 0.1.0 app_elf_sha256=62dfd06e294b
+```
+
+With `identity` on (real capture, CoreS3 HIL) — the git mark already carries
+the binary name, so it isn't repeated separately:
+
+```
+[00000.325 INFO ] identity: display/544084f89418+ app_elf_sha256=7966ca9868ea
 ```
 
 (`markers::IDENTITY`, grep-able like `markers::PANIC`/`PREV_PANIC`.) This
@@ -321,9 +328,9 @@ reference to `esp_app_desc`), not a missing log line.
 
 By default the version field is plain `CARGO_PKG_VERSION`. The **`identity`**
 feature (implies `app-desc`) makes it `<bin>/<features>/<hash><dirty>`
-instead (e.g. `display/csp/a1b2c3d4*`, or `display/a1b2c3d4*` with no
-features tag) — same call site, no application-code change — and turns
-"forgot to wire this up" into a compile error rather than a silent gap:
+instead (e.g. `display/crypto-opt/0f63a4926303+`, or `display/0f63a4926303+`
+with no features tag) — same call site, no application-code change — and
+turns "forgot to wire this up" into a compile error rather than a silent gap:
 
 1. Add [`m5stack-core-build`](m5stack-core-build) as a `[build-dependencies]` entry.
 2. Call it once from your own `build.rs`, with a short features tag (or `""`
@@ -331,12 +338,12 @@ features tag) — same call site, no application-code change — and turns
    Cargo features matter, that's your call):
    ```rust
    fn main() {
-       m5stack_core_build::emit_identity_env("csp");
+       m5stack_core_build::emit_identity_env("crypto-opt");
    }
    ```
 3. Enable the `identity` feature. `app_desc!()`'s call site is unchanged, but
    its expansion now requires `M5STACK_CORE_BUILD_MARK` (`<features>/<hash><dirty>`,
-   an 8-hex-char abbreviated commit hash plus a `*` if the tree is dirty) — if
+   a 12-hex-char abbreviated commit hash plus a `+` if the tree is dirty) — if
    step 1 or 2 was skipped, that's `env!()` failing to compile *in your own
    crate*, pointing straight at the `app_desc!()` line, not a silently-plain
    version field.

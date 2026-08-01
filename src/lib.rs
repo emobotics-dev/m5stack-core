@@ -114,10 +114,11 @@ pub fn app_elf_sha256() -> &'static [u8; 32] {
     app_desc().app_elf_sha256()
 }
 
-/// Logs the descriptor's project name, version (plain `CARGO_PKG_VERSION`, or
-/// the enforced git mark under `identity`) and an 8-byte `app_elf_sha256`
-/// prefix, once, as early as possible on boot — called by
-/// [`io::console::install`], not meant to be called directly. Like
+/// Logs the descriptor's version (plain `CARGO_PKG_VERSION`, or the enforced
+/// `<bin>/<features>/<hash><dirty>` git mark under `identity` — which already
+/// carries the binary name, so it isn't repeated separately there) and a
+/// 6-byte `app_elf_sha256` prefix, once, as early as possible on boot —
+/// called by [`io::console::install`], not meant to be called directly. Like
 /// [`app_elf_sha256`], requires [`app_desc!`] to have been invoked somewhere
 /// in the binary (a link error otherwise, not a silent no-op): any binary
 /// enabling `app-desc` — directly, or via `heap` — is expected to call
@@ -128,12 +129,15 @@ pub(crate) fn log_boot_identity() {
 
     let desc = app_desc();
     let sha = desc.app_elf_sha256();
-    let mut hex = heapless::String::<16>::new();
-    for byte in &sha[..8] {
+    let mut hex = heapless::String::<12>::new();
+    for byte in &sha[..6] {
         let _ = write!(hex, "{byte:02x}");
     }
+    #[cfg(feature = "identity")]
+    log::info!("{} {} app_elf_sha256={hex}", io::console::markers::IDENTITY, desc.version());
+    #[cfg(not(feature = "identity"))]
     log::info!(
-        "{} {} {} sha256={hex}",
+        "{} {} {} app_elf_sha256={hex}",
         io::console::markers::IDENTITY,
         desc.project_name(),
         desc.version()
@@ -177,7 +181,7 @@ macro_rules! app_desc {
 
 /// See the non-`identity` [`app_desc!`] above — same call site. The version
 /// field becomes `CARGO_BIN_NAME` joined with the git mark
-/// (`<bin>/<features>/<hash><dirty>`, e.g. `display/csp/a1b2c3d4*`) — binary
+/// (`<bin>/<features>/<hash><dirty>`, e.g. `display/crypto-opt/0f63a4926303+`) — binary
 /// name included for the same reason as `project_name` above, joined here
 /// (rather than by `m5stack-core-build`) because only this per-binary
 /// compilation knows `CARGO_BIN_NAME`; a `build.rs` runs once per *package*
