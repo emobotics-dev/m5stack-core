@@ -13,6 +13,9 @@
 //! arguable. The last one matters most: cost tracks the number of draw tasks,
 //! so eight bars cost ~7x one while drawing *fewer* pixels.
 //!
+//! To *copy* the pattern rather than measure it, see `lvgl_threads.rs` — the
+//! same model without the instrumentation.
+//!
 //! Findings and the resulting design rules: `docs/lvgl-ui-performance.md`.
 //!
 //! Three modes, selected by feature so the build fingerprint changes and a stale

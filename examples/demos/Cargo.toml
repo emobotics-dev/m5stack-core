@@ -66,6 +66,16 @@ required-features = ["lvgl"]
 
 # SD card over the shared SPI2 bus (display + SD): mount the FAT filesystem and
 # list the root directory. Gated by `sd` (pulls the sdspi/embedded-fatfs fork).
+# The LVGL threading pattern on its own — the version to copy. Needs the thread
+# features because that IS the pattern; `lvgl_sched` is the harness that
+# measured it.
+[[bin]]
+name = "lvgl_threads"
+path = "src/bin/lvgl_threads.rs"
+test = false
+bench = false
+required-features = ["lvgl", "ui-flush-thread"]
+
 # LVGL scheduling A/B (#63): the same gauge load under three placements of the
 # render loop and flush. See the bin's module docs for the feature matrix.
 [[bin]]

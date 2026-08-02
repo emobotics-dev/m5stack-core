@@ -13,6 +13,11 @@ The profiles vary one thing each — nothing, a plain fill, text, a small arc, t
 same arc enlarged, a full-screen invalidate, and eight independent objects — so
 the cost model below is read off the hardware rather than argued.
 
+**To copy the pattern, read `examples/demos/src/bin/lvgl_threads.rs` instead** —
+the same threading model with none of the measurement apparatus: two threads, the
+priority ladder, the semaphore flush wait, and a stand-in application task. The
+harness is the evidence; that one is the reference.
+
 Context: issue #63, PR #64.
 
 ## The rules, in one screen
