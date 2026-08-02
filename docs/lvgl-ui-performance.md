@@ -41,6 +41,44 @@ Context: issue #63, PR #64.
 5. **Run the render loop on its own thread, below the latency-sensitive work.**
    Not on the shared executor, and not on an interrupt executor.
 
+## Two regimes, and how to tell which one you are in
+
+A UI lands in one of two places, and the levers are disjoint — pulling the wrong
+one does nothing. **Read the render thread's `wait` figure to know which:**
+
+| | `wait` | fps limited by | symptom |
+|---|---|---|---|
+| **DMA-bound** | high (15-31 %) | the SPI bus | large dirty areas, few draw tasks, throughput near the bus ceiling |
+| **CPU-bound** | ~0 % | rasterisation | many draw tasks, small areas, the core saturates first |
+
+`wait` is time the render thread spent blocked on a flush. High means it is
+waiting for the panel; zero means the panel is waiting for it.
+
+Both from the harness sweep, at 31 fps unless noted:
+
+| | fps | draw | wait | px/s | draw tasks/s |
+|---|---|---|---|---|---|
+| `fullscreen` (CoreS3) — **DMA-bound** | 22 | 44 % | **31 %** | 1 705 600 | 133 |
+| `many-objects` (CoreS3) — **CPU-bound** | 31 | 55 % | **0 %** | 70 000 | **250** |
+
+Note they are near-opposites: the DMA-bound case pushes **24x the pixels** with
+**half** the draw tasks.
+
+**If you are DMA-bound**, the bus is the ceiling — 40 MHz, ~5 MB/s, and not
+raisable (see below). Redraw less *area*, or less often. Faster drawing code
+buys nothing; we confirmed that from the other side, when putting LVGL's hot
+code in IRAM made rendering faster and `wait` went *up* (29 % -> 34 %) while the
+frame rate did not move.
+
+**If you are CPU-bound**, the bus is idle and object count is the ceiling.
+Stagger update rates, drop animated widgets, or pick cheaper widget types. A
+faster panel bus would change nothing.
+
+The same UI can be in different regimes on different boards. `many-objects` runs
+at 55 % of a core on CoreS3 and **73 % on Fire27, where it also misses 30 Hz
+(27 fps)** — so a design that fits comfortably on ESP32-S3 can be saturated on
+ESP32.
+
 ## Where the time actually goes
 
 Per draw task, CoreS3, measured with LVGL's own profiler:
@@ -138,6 +176,46 @@ Each was implemented and measured. They are recorded so they are not retried.
 | LVGL caches (circle/style/image), stride alignment | No measurable effect on this workload. |
 | `-O3` for LVGL's C | ~1–2 % for **+111 kB** of flash. The size-tuned profile is the better default. |
 | Larger render buffer | Blocked by DMA descriptor sizing, not memory — an 80-line buffer panics `InsufficientDescriptors`. |
+
+## Reference measurements
+
+Full harness sweep, both boards, 31 fps target, profiler off. CoreS3 runs the
+render loop on the APP core; Fire27 runs render and flush on PRO (`ui-app-core`
+hangs there — issue #65). Useful for sizing a UI against something real.
+
+**CoreS3 (ESP32-S3)**
+
+| profile | fps | PRO | APP | draw | wait | px/s | tasks/s |
+|---|---|---|---|---|---|---|---|
+| idle | 0 | 1 % | 1 % | 0 % | 0 % | — | 1 |
+| bar | 30 | 3 % | 10 % | 7 % | 0 % | 103 488 | 30 |
+| text | 31 | 4 % | 16 % | 11 % | 0 % | 18 126 | 31 |
+| arc-small | 31 | 4 % | 12 % | 7 % | 0 % | 21 272 | 31 |
+| arc-large | 31 | 4 % | 12 % | 7 % | 0 % | 25 513 | 31 |
+| fullscreen | 22 | 15 % | 47 % | 44 % | 31 % | 1 705 600 | 133 |
+| many-objects | 31 | 28 % | 58 % | 55 % | 0 % | 70 000 | 250 |
+
+**Fire27 (ESP32)**
+
+| profile | fps | PRO | draw | wait | px/s | tasks/s |
+|---|---|---|---|---|---|---|
+| idle | 0 | 1 % | 0 % | 0 % | — | 1 |
+| bar | 31 | 14 % | 11 % | 0 % | 103 600 | 30 |
+| text | 31 | 22 % | 17 % | 0 % | 18 156 | 31 |
+| arc-small | 31 | 18 % | 12 % | 0 % | 21 155 | 31 |
+| arc-large | 31 | 18 % | 12 % | 0 % | 25 462 | 31 |
+| fullscreen | 21 | 68 % | 62 % | 15 % | 1 651 200 | 129 |
+| many-objects | **27** | **73 %** | 70 % | 0 % | 60 830 | 217 |
+
+Three things to read off these:
+
+- `arc-small` and `arc-large` cost the *same* despite 20 % more pixels — area
+  does not matter. `bar` draws **5x** arc-small's pixels for the same cost.
+- **Fire27 costs roughly 2x CoreS3 for identical work** (18 % vs 4 % on arcs),
+  and is the only configuration that misses 30 Hz.
+- Under every profile on both boards the latency probe kept **100/100 wakeups
+  and zero misses over 5 ms**, worst mean 131 us. The scheduling model holds
+  under full-screen and eight-object load, not just the easy cases.
 
 ## Profiling your own UI
 
