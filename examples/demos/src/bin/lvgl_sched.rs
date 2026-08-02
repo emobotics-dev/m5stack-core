@@ -43,6 +43,16 @@ use static_cell::make_static;
 
 m5stack_core::app_desc!();
 
+// Reproducible hang on ESP32: the render loop makes exactly one
+// `lv_timer_handler` call and then blocks in `wait_cb` — the flush never
+// completes with render on APP and flush on PRO. Works on ESP32-S3. Not
+// diagnosed; a build error beats a silent freeze.
+#[cfg(all(feature = "ui-app-core", feature = "fire27"))]
+compile_error!(
+    "ui-app-core hangs on fire27: render on APP + flush on PRO never completes a \
+     flush (confirmed twice on hardware). Use ui-flush-thread on ESP32."
+);
+
 #[cfg(all(feature = "ui-flush-thread", not(feature = "ui-thread")))]
 compile_error!(
     "ui-flush-thread requires ui-thread: a flush thread above a render loop that \
