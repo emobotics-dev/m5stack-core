@@ -7,6 +7,7 @@
 pub mod driver;
 pub mod gauge;
 pub mod input;
+pub mod lvasm;
 pub mod lvos;
 pub mod lvprof;
 pub mod metrics;

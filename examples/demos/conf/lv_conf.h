@@ -91,7 +91,14 @@
         #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
     #endif
 
+    /* Our own blend hooks live in demos::ui::lvasm and are OFF: measured at
+     * parity with LVGL's own loop, never better (828-857 vs 828-838 cyc/px over
+     * four iterations). Switch to LV_DRAW_SW_ASM_CUSTOM to re-enable them —
+     * they still carry the per-hook call counters, which is how the mask path
+     * was identified as the hot one. See the module docs for the numbers. */
     #define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_NONE
+    //#define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_CUSTOM
+    //#define  LV_DRAW_SW_ASM_CUSTOM_INCLUDE "m5_lv_asm.h"
     #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS    1
 #endif
 

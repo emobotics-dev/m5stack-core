@@ -166,6 +166,7 @@ async fn stats_task() -> ! {
             l.over_20ms,
         );
         demos::ui::lvprof::report(1_000_000, 12);
+        demos::ui::lvasm::report();
         STATS.signal((frames, l.max_us / 1000));
     }
 }
