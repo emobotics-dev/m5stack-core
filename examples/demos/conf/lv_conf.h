@@ -185,7 +185,7 @@ void demos_lv_assert_handler(void);
 #define LV_ATTRIBUTE_MEM_ALIGN  __attribute__((aligned(4)))
 #define LV_ATTRIBUTE_LARGE_CONST
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY
-#define LV_ATTRIBUTE_FAST_MEM
+#define LV_ATTRIBUTE_FAST_MEM __attribute__((section(".rwtext")))
 
 #define LV_EXPORT_CONST_INT(int_value) struct _silence_gcc_warning
 #define LV_ATTRIBUTE_EXTERN_DATA
