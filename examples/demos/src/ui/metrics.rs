@@ -19,6 +19,11 @@ pub static LATENCY: Latency = Latency::new();
 /// Microseconds inside `lv_timer_handler`, and of those, microseconds blocked
 /// waiting for a flush. The difference is LVGL's actual draw cost.
 pub static HANDLER_US: AtomicU32 = AtomicU32::new(0);
+/// How many times `lv_timer_handler` was called, and how many of those actually
+/// submitted a flush. If cost tracks calls rather than pixels, the render loop's
+/// polling rate is the lever, not the drawing.
+pub static HANDLER_CALLS: AtomicU32 = AtomicU32::new(0);
+pub static SUBMITS: AtomicU32 = AtomicU32::new(0);
 pub static WAIT_US: AtomicU32 = AtomicU32::new(0);
 
 /// Microseconds spent with nothing ready to run, per core. Indexed by CPU

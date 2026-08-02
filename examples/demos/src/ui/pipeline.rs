@@ -90,6 +90,7 @@ unsafe extern "C" fn flush_cb(disp: *mut lv_display_t, area: *const lv_area_t, p
     // after the flush side has consumed this slice.
     let data = unsafe { core::slice::from_raw_parts(px_map as *const u8, len) };
 
+    metrics::SUBMITS.fetch_add(1, Relaxed);
     let op = DrawOp { data, x: a.x1 as u16, y: a.y1 as u16, w, h };
     // Capacity 1 and LVGL waits for completion before the next flush, so a full
     // channel means the protocol was violated, not back-pressure.

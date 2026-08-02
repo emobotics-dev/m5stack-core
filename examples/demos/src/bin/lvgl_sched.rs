@@ -25,11 +25,11 @@
 
 #[cfg(feature = "ui-thread")]
 use core::ffi::c_void;
-use core::sync::atomic::Ordering::Relaxed;
+use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use demos::board;
 use demos::shim;
-use demos::ui::gauge::Gauge;
+use demos::ui::gauge::{Gauge, Load};
 use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, metrics, pipeline};
 #[cfg(feature = "ui-thread")]
 use demos::ui::sched;
@@ -67,6 +67,12 @@ const REFRESH_MS: u32 = 32;
 
 /// Carries the display from `main` to whichever context runs the flush.
 static DRIVER: Channel<CriticalSectionRawMutex, demos::ui::DisplayDriver, 1> = Channel::new();
+/// Which load profile is running, so the stats line can name it.
+static PROFILE: AtomicUsize = AtomicUsize::new(0);
+/// Seconds each profile runs. The first second after a switch is discarded when
+/// reading results — the resize itself dirties the screen once.
+const PROFILE_SECS: u64 = 6;
+
 /// Last interval's `(fps, worst latency ms)`, for the on-screen readout.
 static STATS: Signal<CriticalSectionRawMutex, (u32, u32)> = Signal::new();
 
@@ -125,14 +131,22 @@ async fn stats_task() -> ! {
         let _ = app_col.push_str("off");
         let handler = metrics::HANDLER_US.swap(0, Relaxed);
         let wait = metrics::WAIT_US.swap(0, Relaxed);
+        let calls = metrics::HANDLER_CALLS.swap(0, Relaxed).max(1);
+        let px = (d_bytes / 2).max(1);
+        let cycles_px = (handler - wait) as u64 * 240 / px as u64;
         log::info!(
-            "[{}] fps={} pro={}% app={} draw={}% wait={}% flush={}ops {}kB/s | probe n={} mean={}us max={}us >5ms={} >20ms={}",
+            "[{}/{}] fps={} pro={}% app={} draw={}% wait={}% {}px/s {}cyc/px calls={} us/call={} flush={}ops {}kB/s | probe n={} mean={}us max={}us >5ms={} >20ms={}",
             MODE,
+            Load::ALL[PROFILE.load(Relaxed)].name(),
             frames,
             busy,
             app_col,
             (handler - wait) / 10_000,
             wait / 10_000,
+            px,
+            cycles_px,
+            calls,
+            (handler - wait) / calls,
             d_ops,
             d_bytes / 1024,
             l.count,
@@ -160,21 +174,33 @@ async fn render_loop() -> ! {
 
     let mut gauge = Gauge::new(MODE).expect("gauge create");
     let mut last = Instant::now();
+    let mut profile_since = Instant::now();
+    let mut profile = 0usize;
+    gauge.set_load(Load::ALL[profile]);
     loop {
         let now = Instant::now();
         let dt = (now - last).as_millis() as u32;
         last = now;
-        gauge.step(dt);
-        if let Some((fps, lat)) = STATS.try_take() {
-            gauge.show_stats(fps, lat);
+
+        if (now - profile_since).as_secs() >= PROFILE_SECS {
+            profile = (profile + 1) % Load::ALL.len();
+            gauge.set_load(Load::ALL[profile]);
+            PROFILE.store(profile, Relaxed);
+            profile_since = now;
         }
+        gauge.step(dt, Load::ALL[profile]);
+        // The on-screen readout is deliberately not updated while profiling: it
+        // is itself a per-frame redraw and would be charged to whichever profile
+        // happened to be running.
+        let _ = &STATS;
 
         // One frame == one refresh that actually flushed, however LVGL split it.
-        let before = metrics::FLUSH_OPS.load(Relaxed);
+        let before = metrics::SUBMITS.load(Relaxed);
         let t0 = esp_radio_rtos_driver::now();
         let delay = driver.timer_handler();
+        metrics::HANDLER_CALLS.fetch_add(1, Relaxed);
         metrics::HANDLER_US.fetch_add((esp_radio_rtos_driver::now() - t0) as u32, Relaxed);
-        if metrics::FLUSH_OPS.load(Relaxed) != before {
+        if metrics::SUBMITS.load(Relaxed) != before {
             metrics::FRAMES.fetch_add(1, Relaxed);
         }
         Timer::after(Duration::from_millis(delay.clamp(1, 10) as u64)).await;
