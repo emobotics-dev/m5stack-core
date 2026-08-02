@@ -229,6 +229,9 @@ extern "C" fn flush_thread(_: *mut c_void) {
 async fn main(spawner: Spawner) {
     let p = board::init();
     let board = board::Board::split(p);
+    // HeapProfile::Lvgl is enough here. Enabling LV_USE_OS is not: a software
+    // draw unit allocates its own layer state and that 50 kB reclaimed-ROM pool
+    // runs out (OOM at 51192 used, 8 free), so Default is needed for that.
     shim::init_heap_lvgl();
     esp_rtos::start_with_idle_hook(
         board.system.timer0_0,

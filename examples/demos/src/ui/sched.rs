@@ -34,7 +34,7 @@ pub fn raise_app_executor() {
 /// thread sits on, moving the rasterisation cost off PRO.
 #[cfg(feature = "ui-app-core")]
 pub const RENDER_CORE: u32 = 1;
-#[cfg(all(feature = "ui-thread", not(feature = "ui-app-core")))]
+#[cfg(all(not(feature = "ui-app-core")))]
 pub const RENDER_CORE: u32 = 0;
 
 /// Spawn a native thread pinned to `core`.

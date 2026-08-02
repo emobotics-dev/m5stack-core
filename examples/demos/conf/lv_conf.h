@@ -38,7 +38,21 @@
 /*=================
  * OPERATING SYSTEM
  *=================*/
+/* esp-rtos is a real RTOS; there is no reason to tell LVGL otherwise. The port
+ * is demos::ui::lvos. This is what unlocks LV_DRAW_SW_DRAW_UNIT_CNT > 1, which
+ * matters because render cost is per draw *task* (#63), not per pixel.
+ *
+ * Note the port clamps every LVGL thread to the render rung of the priority
+ * ladder — LVGL asks for LV_THREAD_PRIO_HIGH, and honouring that would put
+ * rasterisation above the latency-sensitive work the model exists to protect. */
 #define LV_USE_OS   LV_OS_NONE
+/* Switch to LV_OS_CUSTOM to use it. Measured on CoreS3 and NOT worth it for
+ * this workload: +5 points of render-core CPU at DRAW_UNIT_CNT=1, and at 2 the
+ * frame rate does not move at all while the second core picks up 30 points.
+ * The heavy case is DMA-bound (3.4 MB/s of a ~5 MB/s SPI) and the light case
+ * has too few draw tasks to split. Needs a bigger heap than HeapProfile::Lvgl. */
+//#define LV_USE_OS   LV_OS_CUSTOM
+//#define LV_OS_CUSTOM_INCLUDE "m5_lv_os.h"
 
 /*========================
  * RENDERING CONFIGURATION
