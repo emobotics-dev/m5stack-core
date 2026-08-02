@@ -2,15 +2,36 @@
 # LVGL UI performance on m5stack-core
 
 Everything here is measured on the bench, both boards, and reproducible with
-`examples/demos/src/bin/lvgl_sched.rs`. Context: issue #63, PR #64.
+**`examples/demos/src/bin/lvgl_sched.rs`** — which is a *pipeline stress
+harness*, not a UI demo. It exists to load the render/flush path in known ways
+and report what that costs: a sweeping gauge for redraw load, a 10 ms-period
+probe task standing in for latency-sensitive application work, and load profiles
+cycled at runtime so every number comes from one flash under identical
+conditions.
+
+The profiles vary one thing each — nothing, a plain fill, text, a small arc, the
+same arc enlarged, a full-screen invalidate, and eight independent objects — so
+the cost model below is read off the hardware rather than argued.
+
+Context: issue #63, PR #64.
 
 ## The rules, in one screen
 
 1. **Cost scales with the number of *animated objects per frame*, not with
    pixels.** A dense screen with three moving elements costs the same as a
    sparse one with three moving elements. Making a widget *bigger* is nearly
-   free; adding another animated one is not.
-2. **Budget ~6 animated widgets at 30 Hz per core**, ~12 to saturate one.
+   free; adding another animated one is not. Measured directly — one animated
+   bar against eight, on the same screen:
+
+   | | draw | pixels/s | draw tasks |
+   |---|---:|---:|---:|
+   | 1 bar | 7-8 % | 104 160 | 31/s |
+   | 8 bars | **54-57 %** | **69 720** | **249/s** |
+
+   Eight times the objects, eight times the draw tasks, ~7x the cost — while
+   drawing *fewer* pixels.
+2. **Budget ~6 animated widgets at 30 Hz per half a core**, ~14 to saturate
+   one (8 measured at ~55 %).
 3. **Stagger update rates.** Cost is linear in draw tasks per *second*, so a
    widget refreshed at 5 Hz costs a sixth of one at 30 Hz. Most dashboard
    values do not change at 30 Hz. This is where the headroom is.

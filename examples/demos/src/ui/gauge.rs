@@ -31,16 +31,21 @@ pub enum Load {
     /// Whole screen invalidated every frame: the many-chunk case, where the
     /// per-chunk cost is paid as often as the buffer forces.
     FullScreen,
+    /// Eight small bars animating together. The one profile that varies the
+    /// thing the cost model says dominates — object *count* — while holding
+    /// pixels roughly constant.
+    ManyObjects,
 }
 
 impl Load {
-    pub const ALL: [Load; 6] = [
+    pub const ALL: [Load; 7] = [
         Load::Idle,
         Load::Bar,
         Load::Text,
         Load::ArcSmall,
         Load::ArcLarge,
         Load::FullScreen,
+        Load::ManyObjects,
     ];
 
     pub fn name(self) -> &'static str {
@@ -51,12 +56,14 @@ impl Load {
             Load::ArcSmall => "arc-small",
             Load::ArcLarge => "arc-large",
             Load::FullScreen => "fullscreen",
+            Load::ManyObjects => "many-objects",
         }
     }
 }
 
 pub struct Gauge {
     screen: Screen,
+    many: heapless::Vec<Bar<'static>, 8>,
     arc: Arc<'static>,
     bar: Bar<'static>,
     readout: Label<'static>,
@@ -95,7 +102,19 @@ impl Gauge {
         let stats = Label::new(&screen)?;
         stats.text("fps --").align(Align::BottomMid, 0, -6);
 
-        Ok(Self { screen, arc, bar, readout, stats, value: 0, dir: 1 })
+        // Eight independent bars for the object-count profile. Untouched by the
+        // other profiles, and an untouched widget is never invalidated, so they
+        // cost nothing when idle.
+        let mut many: heapless::Vec<Bar<'static>, 8> = heapless::Vec::new();
+        for i in 0..8 {
+            let bar = Bar::new(&screen)?;
+            bar.size(28, 10).align(Align::TopLeft, 6 + (i as i32) * 38, 24);
+            bar.set_range_raw(0, 100);
+            bar.set_value_raw(0, false);
+            let _ = many.push(bar);
+        }
+
+        Ok(Self { screen, many, arc, bar, readout, stats, value: 0, dir: 1 })
     }
 
     /// Resize the arc for the current profile. Only called on a profile change,
@@ -140,6 +159,13 @@ impl Gauge {
             }
             Load::ArcSmall | Load::ArcLarge => {
                 self.arc.set_value_raw(self.value);
+            }
+            Load::ManyObjects => {
+                // Each bar gets a different phase so all eight really change.
+                for (i, b) in self.many.iter().enumerate() {
+                    let v = (self.value + (i as i32) * 12) % 101;
+                    b.set_value_raw(v, false);
+                }
             }
             Load::FullScreen => {
                 self.bar.set_value_raw(self.value, false);

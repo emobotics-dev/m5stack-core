@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! LVGL scheduling A/B: where the render loop and the flush run, and what that
-//! costs work that shares the core (#63).
+//! LVGL render/flush **pipeline stress harness** — not a UI demo (#63).
 //!
-//! A sweeping gauge provides a constant redraw load while a probe task measures
-//! how late it is woken against its own deadline. Both numbers are logged every
-//! second and mirrored on-screen, so a camera frame carries the result.
+//! It loads the pipeline in known ways and reports what that costs. A sweeping
+//! gauge supplies redraw load, a 10 ms-period probe task stands in for
+//! latency-sensitive application work and records how late it was actually
+//! woken, and load profiles cycle at runtime so every number comes from one
+//! flash under identical conditions.
+//!
+//! The profiles each vary one thing — nothing, a plain fill, text, a small arc,
+//! the same arc enlarged, a full-screen invalidate, and eight independent
+//! objects — which is what makes the cost model measurable rather than
+//! arguable. The last one matters most: cost tracks the number of draw tasks,
+//! so eight bars cost ~7x one while drawing *fewer* pixels.
+//!
+//! Findings and the resulting design rules: `docs/lvgl-ui-performance.md`.
 //!
 //! Three modes, selected by feature so the build fingerprint changes and a stale
 //! binary cannot be measured by mistake:
