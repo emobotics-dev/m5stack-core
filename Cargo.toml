@@ -195,6 +195,10 @@ esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git",
 esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["unstable"] }
 esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["log-04", "colors", "timestamp"], default-features = false }
 esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["embassy", "esp-radio"] }
+# Native threads and semaphores. esp-rtos exposes neither on its own surface —
+# these are the primitives esp-radio's WiFi/BT internals use, registered by
+# `esp_rtos::start()`. Examples only: the library must stay crates.io-resolvable.
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 # CoreS3 logging/panic (USB-Serial-JTAG)
 panic-halt           = "1.0.0"

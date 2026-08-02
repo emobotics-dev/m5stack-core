@@ -358,7 +358,7 @@ void demos_lv_assert_handler(void);
 #define LV_USE_SYSMON   1
 #if LV_USE_SYSMON
 //    #define LV_SYSMON_GET_IDLE lv_timer_get_idle
-    #define LV_USE_PERF_MONITOR 1
+    #define LV_USE_PERF_MONITOR 0
     #if LV_USE_PERF_MONITOR
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_TOP_LEFT
         #define LV_USE_PERF_MONITOR_LOG_MODE 0

@@ -66,6 +66,15 @@ required-features = ["lvgl"]
 
 # SD card over the shared SPI2 bus (display + SD): mount the FAT filesystem and
 # list the root directory. Gated by `sd` (pulls the sdspi/embedded-fatfs fork).
+# LVGL scheduling A/B (#63): the same gauge load under three placements of the
+# render loop and flush. See the bin's module docs for the feature matrix.
+[[bin]]
+name = "lvgl_sched"
+path = "src/bin/lvgl_sched.rs"
+test = false
+bench = false
+required-features = ["lvgl"]
+
 [[bin]]
 name = "sd"
 path = "src/bin/sd.rs"
@@ -191,6 +200,17 @@ cores3 = [
 # build. oxivgl-sys compiles LVGL at build time (needs network + libclang and
 # the `DEP_LV_CONFIG_PATH` env in .cargo/config.toml → examples/demos/conf).
 lvgl = ["dep:oxivgl", "dep:oxivgl-sys"]
+# Scheduling variants of the `lvgl_sched` bin (#63). Features, not an env var, so
+# the crate fingerprint changes and a stale binary cannot be measured by mistake.
+# `ui-thread` moves the render loop to its own esp-rtos thread and raises the app
+# executor above it; `ui-flush-thread` additionally moves the flush off the
+# interrupt executor, so the UI can no longer preempt anything via hardware.
+ui-thread = []
+ui-flush-thread = ["ui-thread"]
+# Put the render thread on the APP core, leaving PRO to the app/protocol work.
+# LVGL stays single-threaded — every LVGL call is made by that one thread, it
+# simply lives on the other core.
+ui-app-core = ["ui-flush-thread"]
 # WiFi+BLE coexistence (the `coex` bin only). Build with `--bin coex` — see the
 # coex [[bin]] note. Pulls the BLE host stack + the radio coex feature.
 coex = ["m5stack-core/coex", "m5stack-core/ble", "dep:trouble-host", "dep:embassy-futures"]
@@ -229,6 +249,7 @@ esp-bootloader-esp-idf = { workspace = true }
 esp-hal              = { workspace = true }
 esp-println          = { workspace = true, optional = true }
 esp-rtos             = { workspace = true }
+esp-radio-rtos-driver = { workspace = true }
 esp-sync             = { workspace = true }
 panic-halt           = { workspace = true, optional = true }
 rtt-target           = { workspace = true, optional = true }
