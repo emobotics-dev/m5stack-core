@@ -154,10 +154,11 @@ async fn stats_task() -> ! {
         let px = (d_bytes / 2).max(1);
         let cycles_px = (handler - wait) as u64 * 240 / px as u64;
         log::info!(
-            "[{}/{}] fps={} pro={}% app={} draw={}% wait={}% {}px/s {}cyc/px calls={} us/call={} flush={}ops {}kB/s | probe n={} mean={}us max={}us >5ms={} >20ms={}",
+            "[{}/{}] fps={} {} pro={}% app={} draw={}% wait={}% {}px/s {}cyc/px calls={} us/call={} flush={}ops {}kB/s | probe n={} mean={}us max={}us >5ms={} >20ms={}",
             MODE,
             Load::ALL[PROFILE.load(Relaxed)].name(),
             frames,
+            metrics::regime((handler - wait) / 10_000, wait / 10_000),
             busy,
             app_col,
             (handler - wait) / 10_000,

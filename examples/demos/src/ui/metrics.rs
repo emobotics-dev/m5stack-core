@@ -119,6 +119,20 @@ impl Latency {
     }
 }
 
+/// Which ceiling the pipeline is currently against, from the same numbers a
+/// user would read. `wait` is time the render thread spent blocked on a flush:
+/// high means it is waiting for the panel, zero means the panel is waiting for
+/// it. This is the diagnostic the docs describe, applied to itself.
+pub fn regime(draw_pct: u32, wait_pct: u32) -> &'static str {
+    if wait_pct >= 15 {
+        "DMA-bound"
+    } else if draw_pct >= 30 {
+        "CPU-bound"
+    } else {
+        "headroom"
+    }
+}
+
 /// Read and reset the frame counters, returning `(frames, bytes, ops)`.
 pub fn take_frames(prev_bytes: &mut u32, prev_ops: &mut u32) -> (u32, u32, u32) {
     let bytes = FLUSH_BYTES.load(Relaxed);
