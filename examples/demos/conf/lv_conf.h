@@ -365,7 +365,27 @@ void demos_lv_assert_handler(void);
     #endif
     #define LV_USE_MEM_MONITOR 0
 #endif
+/* Route LVGL's own instrumentation into demos::ui::lvprof rather than the
+ * builtin profiler, which wants a filesystem and a printf.
+ *
+ * OFF by default: the hooks cost ~2 points of draw, so this is a diagnostic,
+ * not a shipping setting. Flip LV_USE_PROFILER to 1 to get the per-tag
+ * breakdown on the stats line. LV_PROFILER_DRAW needs lvprof's MAX_TAGS to be
+ * large enough — it warns and refuses to be read if tags were dropped. */
 #define LV_USE_PROFILER 0
+#define LV_USE_PROFILER_BUILTIN 0
+#define LV_PROFILER_INCLUDE "m5_profiler.h"
+#define LV_PROFILER_BEGIN_TAG(tag) m5_prof_begin(tag)
+#define LV_PROFILER_END_TAG(tag)   m5_prof_end(tag)
+#define LV_PROFILER_BEGIN          m5_prof_begin(__func__)
+#define LV_PROFILER_END            m5_prof_end(__func__)
+#define LV_PROFILER_REFR   1
+#define LV_PROFILER_LAYOUT 1
+#define LV_PROFILER_DRAW   1
+#define LV_PROFILER_INDEV  0
+#define LV_PROFILER_DECODER 0
+#define LV_PROFILER_FONT   0
+#define LV_PROFILER_STYLE  0
 #define LV_USE_MONKEY 0
 #define LV_USE_GRIDNAV 1
 #define LV_USE_FRAGMENT 0
