@@ -19,7 +19,7 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
 - Before releasing, verify **both halves** of the gate:
   1. `cargo package --no-verify`, then confirm the packaged `Cargo.toml` has no
      `git =` / `[patch]` (only the `[lib]` `path = "src/lib.rs"`).
-  2. `cargo package --list` shows **exactly 50 files** — `src/`, `tools/` and the
+  2. `cargo package --list` shows **exactly 51 files** — `src/`, `tools/`, `docs/` and the
      named top-level assets. A surprise means `[package] include` needs a
      deliberate edit, never a `--allow-dirty` shrug (#59).
 
