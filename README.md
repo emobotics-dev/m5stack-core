@@ -14,6 +14,12 @@ the stock rust-lang toolchain, which has no Xtensa backend, and both supported
 boards are Xtensa (ESP32 / ESP32-S3). The link above is the self-hosted
 substitute, the same approach `esp-idf-hal` takes.
 
+**[LVGL UI performance](docs/lvgl-ui-performance.md)** — what a UI costs on
+these boards and why: the scheduling model that keeps a render loop from
+delaying latency-sensitive work, a budget for how many animated widgets fit in
+30 Hz, and the list of optimisations that were measured and did *not* pay, so
+they are not retried.
+
 ## Features
 
 | Feature | Target | Chip |

@@ -5,7 +5,14 @@
 //! unified front-panel events into the LVGL keypad (both boards).
 
 pub mod driver;
+pub mod gauge;
 pub mod input;
+pub mod lvasm;
+pub mod lvos;
+pub mod lvprof;
+pub mod metrics;
+pub mod pipeline;
+pub mod sched;
 pub mod view;
 
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};

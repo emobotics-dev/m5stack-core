@@ -38,7 +38,21 @@
 /*=================
  * OPERATING SYSTEM
  *=================*/
+/* esp-rtos is a real RTOS; there is no reason to tell LVGL otherwise. The port
+ * is demos::ui::lvos. This is what unlocks LV_DRAW_SW_DRAW_UNIT_CNT > 1, which
+ * matters because render cost is per draw *task* (#63), not per pixel.
+ *
+ * Note the port clamps every LVGL thread to the render rung of the priority
+ * ladder — LVGL asks for LV_THREAD_PRIO_HIGH, and honouring that would put
+ * rasterisation above the latency-sensitive work the model exists to protect. */
 #define LV_USE_OS   LV_OS_NONE
+/* Switch to LV_OS_CUSTOM to use it. Measured on CoreS3 and NOT worth it for
+ * this workload: +5 points of render-core CPU at DRAW_UNIT_CNT=1, and at 2 the
+ * frame rate does not move at all while the second core picks up 30 points.
+ * The heavy case is DMA-bound (3.4 MB/s of a ~5 MB/s SPI) and the light case
+ * has too few draw tasks to split. Needs a bigger heap than HeapProfile::Lvgl. */
+//#define LV_USE_OS   LV_OS_CUSTOM
+//#define LV_OS_CUSTOM_INCLUDE "m5_lv_os.h"
 
 /*========================
  * RENDERING CONFIGURATION
@@ -77,7 +91,14 @@
         #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
     #endif
 
+    /* Our own blend hooks live in demos::ui::lvasm and are OFF: measured at
+     * parity with LVGL's own loop, never better (828-857 vs 828-838 cyc/px over
+     * four iterations). Switch to LV_DRAW_SW_ASM_CUSTOM to re-enable them —
+     * they still carry the per-hook call counters, which is how the mask path
+     * was identified as the hot one. See the module docs for the numbers. */
     #define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_NONE
+    //#define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_CUSTOM
+    //#define  LV_DRAW_SW_ASM_CUSTOM_INCLUDE "m5_lv_asm.h"
     #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS    1
 #endif
 
@@ -171,7 +192,7 @@ void demos_lv_assert_handler(void);
 #define LV_ATTRIBUTE_MEM_ALIGN  __attribute__((aligned(4)))
 #define LV_ATTRIBUTE_LARGE_CONST
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY
-#define LV_ATTRIBUTE_FAST_MEM
+#define LV_ATTRIBUTE_FAST_MEM __attribute__((section(".rwtext")))
 
 #define LV_EXPORT_CONST_INT(int_value) struct _silence_gcc_warning
 #define LV_ATTRIBUTE_EXTERN_DATA
@@ -358,14 +379,34 @@ void demos_lv_assert_handler(void);
 #define LV_USE_SYSMON   1
 #if LV_USE_SYSMON
 //    #define LV_SYSMON_GET_IDLE lv_timer_get_idle
-    #define LV_USE_PERF_MONITOR 1
+    #define LV_USE_PERF_MONITOR 0
     #if LV_USE_PERF_MONITOR
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_TOP_LEFT
         #define LV_USE_PERF_MONITOR_LOG_MODE 0
     #endif
     #define LV_USE_MEM_MONITOR 0
 #endif
+/* Route LVGL's own instrumentation into demos::ui::lvprof rather than the
+ * builtin profiler, which wants a filesystem and a printf.
+ *
+ * OFF by default: the hooks cost ~2 points of draw, so this is a diagnostic,
+ * not a shipping setting. Flip LV_USE_PROFILER to 1 to get the per-tag
+ * breakdown on the stats line. LV_PROFILER_DRAW needs lvprof's MAX_TAGS to be
+ * large enough — it warns and refuses to be read if tags were dropped. */
 #define LV_USE_PROFILER 0
+#define LV_USE_PROFILER_BUILTIN 0
+#define LV_PROFILER_INCLUDE "m5_profiler.h"
+#define LV_PROFILER_BEGIN_TAG(tag) m5_prof_begin(tag)
+#define LV_PROFILER_END_TAG(tag)   m5_prof_end(tag)
+#define LV_PROFILER_BEGIN          m5_prof_begin(__func__)
+#define LV_PROFILER_END            m5_prof_end(__func__)
+#define LV_PROFILER_REFR   1
+#define LV_PROFILER_LAYOUT 1
+#define LV_PROFILER_DRAW   1
+#define LV_PROFILER_INDEV  0
+#define LV_PROFILER_DECODER 0
+#define LV_PROFILER_FONT   0
+#define LV_PROFILER_STYLE  0
 #define LV_USE_MONKEY 0
 #define LV_USE_GRIDNAV 1
 #define LV_USE_FRAGMENT 0
