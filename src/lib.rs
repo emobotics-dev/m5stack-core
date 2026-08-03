@@ -38,6 +38,9 @@
 // in a psram-free `heap` build and would warn unless the gate is active. The
 // crate is nightly-only regardless, so enable it unconditionally.
 #![feature(auto_traits, negative_impls)]
+// `PsramSafe`'s negative impl names `Atomic<T>`. A library feature, so unlike
+// the syntax gate above the `psram` cfg suffices.
+#![cfg_attr(feature = "psram", feature(generic_atomic))]
 // `board::run_app_core`'s APP-core idle loop uses the Xtensa `waiti` instruction
 // via inline asm, which is still unstable for this architecture.
 #![cfg_attr(feature = "multicore", feature(asm_experimental_arch))]
