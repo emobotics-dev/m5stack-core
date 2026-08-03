@@ -36,7 +36,6 @@
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]
-#![feature(type_alias_impl_trait)]
 
 use core::sync::atomic::{AtomicU32, Ordering};
 

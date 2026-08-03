@@ -4,6 +4,11 @@ linker = "xtensa-esp32-elf-gcc"
 rustflags = [
   "-C", "force-frame-pointers=yes",
   "-C", "link-arg=-nostartfiles",
+  # binutils warns once per binary that a LOAD segment is RWX. That is a
+  # hosted-ELF hardening check: on these chips IRAM is executable *and*
+  # written at runtime by design, so the layout is correct and the warning
+  # is noise the linker scripts cannot avoid.
+  "-C", "link-arg=-Wl,--no-warn-rwx-segments",
 ]
 
 [target.xtensa-esp32s3-none-elf]
@@ -12,6 +17,11 @@ linker = "xtensa-esp32s3-elf-gcc"
 rustflags = [
   "-C", "force-frame-pointers=yes",
   "-C", "link-arg=-nostartfiles",
+  # binutils warns once per binary that a LOAD segment is RWX. That is a
+  # hosted-ELF hardening check: on these chips IRAM is executable *and*
+  # written at runtime by design, so the layout is correct and the warning
+  # is noise the linker scripts cannot avoid.
+  "-C", "link-arg=-Wl,--no-warn-rwx-segments",
 ]
 
 [build]

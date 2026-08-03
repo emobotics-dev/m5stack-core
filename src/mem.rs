@@ -78,6 +78,7 @@
 
 use allocator_api2::vec::Vec;
 pub use esp_alloc::{AnyMemory, ExternalMemory, InternalMemory};
+#[cfg(feature = "psram")]
 use esp_hal::peripherals::PSRAM;
 use esp_hal::ram;
 
