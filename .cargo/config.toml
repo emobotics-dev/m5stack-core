@@ -31,8 +31,8 @@ target = "xtensa-esp32-none-elf"
 build-std = ["alloc", "core"]
 
 [env]
-# Required by the `demos` crate's `lvgl` feature: oxivgl-sys compiles LVGL at
+# Required by the `ex-lvgl` examples: oxivgl-sys compiles LVGL at
 # build time and the application owns its `lv_conf.h`. Points at
-# examples/demos/conf/. Harmless for builds that don't enable `lvgl` (oxivgl-sys
+# examples/conf/. Harmless for builds that don't enable `lvgl` (oxivgl-sys
 # isn't compiled then). Resolved relative to this config file's directory.
-DEP_LV_CONFIG_PATH = { value = "examples/demos/conf", relative = true }
+DEP_LV_CONFIG_PATH = { value = "examples/conf", relative = true }

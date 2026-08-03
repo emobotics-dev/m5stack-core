@@ -11,6 +11,9 @@
 //! if someone deliberately pins a per-package profile override for this crate.
 
 fn main() {
+    // Applies to example targets only, so a consumer linking this crate is
+    // unaffected. The examples are firmware images and need esp-hal's script.
+    println!("cargo:rustc-link-arg-examples=-Tlinkall.x");
     let psram = std::env::var_os("CARGO_FEATURE_PSRAM").is_some();
     let opt0 = std::env::var("OPT_LEVEL").as_deref() == Ok("0");
     if psram && opt0 {

@@ -88,14 +88,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      # `coex` is built on its own (`--bin coex --features coex`): esp-radio's
-      # coexist blob can't link into the non-BLE bins, so the coex feature must
-      # not be enabled while building them. `lvgl` is gated (skips the LVGL C
-      # build otherwise); `onewire` is auto-excluded on CoreS3.
+      # `coex` is built on its own (`--example coex`): esp-radio's coexist blob
+      # can't link into the non-BLE examples, so `ex-coex` must not be enabled
+      # while building them. `ex-fire27`/`ex-cores3` are the board aggregates —
+      # `required-features` can only gate an example, never enable anything.
       - name: Build examples (fire27 / ESP32)
         run: |
-          cargo build --release -p demos --features lvgl
-          cargo build --release -p demos --bin coex --features coex
+          cargo build --release --examples --no-default-features \
+            --features "ex-fire27,ex-lvgl,ex-sd,ex-multicore"
+          cargo build --release --example coex --no-default-features \
+            --features "ex-fire27,ex-coex"
+          cargo build --release --example probe_spi_cmd --no-default-features \
+            --features "ex-fire27,ex-probes"
 
   # ── cores3 / ESP32-S3 ───────────────────────────────────────────────────────
   cores3-lib:
@@ -128,8 +132,12 @@ jobs:
       # See the coex / lvgl note on the fire27 examples leg.
       - name: Build examples (cores3 / ESP32-S3)
         run: |
-          cargo build --release -p demos --no-default-features --features cores3,lvgl --target xtensa-esp32s3-none-elf
-          cargo build --release -p demos --bin coex --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
+          cargo build --release --examples --no-default-features \
+            --features "ex-cores3,ex-lvgl,ex-sd,ex-multicore" --target xtensa-esp32s3-none-elf
+          cargo build --release --example coex --no-default-features \
+            --features "ex-cores3,ex-coex" --target xtensa-esp32s3-none-elf
+          cargo build --release --example probe_gdma_eof --no-default-features \
+            --features "ex-cores3,ex-probes" --target xtensa-esp32s3-none-elf
 
   # ── host crates ─────────────────────────────────────────────────────────────
   host:

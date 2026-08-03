@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Live LVGL plumbing — the part every LVGL example needs, and nothing else.
+//!
+//! [`driver`] is the oxivgl flush glue over the BSP's DMA display and [`input`]
+//! maps the unified front-panel events into the LVGL keypad (both boards).
+//! Widgets and measurement apparatus belong to a single example and live beside
+//! it: the demo screen in `examples/lvgl/`, the harness gauge, counters,
+//! profiler and blend hooks in `examples/lvgl_sched/`. Thread placement is not
+//! LVGL-specific and sits one level up, in [`sched`](crate::common::sched).
+
+pub mod driver;
+pub mod input;
+
+use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
+use esp_hal::dma_buffers;
+use oxivgl::display::COLOR_BUF_LINES;
+
+pub use driver::{DisplayDriver, flush_task};
+
+pub use m5stack_core::board::display::{SCREEN_H, SCREEN_W};
+
+/// LVGL render-buffer size in bytes: full width × `COLOR_BUF_LINES` lines ×
+/// 2 bytes/pixel (RGB565). Two such buffers are double-buffered by LVGL.
+pub const LVGL_BUF_BYTES: usize = SCREEN_W as usize * COLOR_BUF_LINES * 2;
+
+/// Allocate the flush bus's DMA buffers: RX unused (write-only panel), TX holds
+/// one LVGL render stripe.
+pub fn dma_bufs() -> (DmaRxBuf, DmaTxBuf) {
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(64, LVGL_BUF_BYTES);
+    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("DMA rx buf alloc failed");
+    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("DMA tx buf alloc failed");
+    (dma_rx_buf, dma_tx_buf)
+}

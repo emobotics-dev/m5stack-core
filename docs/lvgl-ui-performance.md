@@ -2,7 +2,7 @@
 # LVGL UI performance on m5stack-core
 
 Everything here is measured on the bench, both boards, and reproducible with
-**`examples/demos/src/bin/lvgl_sched.rs`** — which is a *pipeline stress
+**`examples/lvgl_sched/`** — which is a *pipeline stress
 harness*, not a UI demo. It exists to load the render/flush path in known ways
 and report what that costs: a sweeping gauge for redraw load, a 10 ms-period
 probe task standing in for latency-sensitive application work, and load profiles
@@ -13,7 +13,7 @@ The profiles vary one thing each — nothing, a plain fill, text, a small arc, t
 same arc enlarged, a full-screen invalidate, and eight independent objects — so
 the cost model below is read off the hardware rather than argued.
 
-**To copy the pattern, read `examples/demos/src/bin/lvgl_threads.rs` instead** —
+**To copy the pattern, read `examples/lvgl_threads.rs` instead** —
 the same threading model with none of the measurement apparatus: two threads, the
 priority ladder, the semaphore flush wait, and a stand-in application task. The
 harness is the evidence; that one is the reference.
