@@ -190,6 +190,27 @@ Each was implemented and measured. They are recorded so they are not retried.
 | `-O3` for LVGL's C | ~1–2 % for **+111 kB** of flash. The size-tuned profile is the better default. |
 | Larger render buffer | Blocked by DMA descriptor sizing, not memory — an 80-line buffer panics `InsufficientDescriptors`. |
 
+## The move to oxivgl's pipeline, verified equivalent
+
+The pipeline above was prototyped here and then upstreamed (oxivgl#3). Adopting
+it back was checked by reflashing both pipelines alternately on the same boards
+and averaging the same profiles — three runs each, because a single run per
+configuration cannot resolve what was being asked of it.
+
+Frame rate is **identical** on every profile and both boards. Mean probe latency
+rises by 2–8 us, against a run-to-run spread of ±1 us, so the difference is real
+rather than noise. Zero wakeups over 5 ms either way.
+
+Part of that is the harness's own `TimedFlushSync`, which the pattern does not
+use: dropping it puts the light profiles back on the old numbers exactly. The
+remainder correlates with nothing in the pipeline — *not* flush count, which
+falsifies the obvious "extra dispatch per transfer" story: `many-objects` has the
+most transfers and the smallest delta. Unexplained; the leading candidate is code
+layout (the new binary is +592 B of `.text`, which is i-cached from flash), and
+the test that would settle it is to pad `.text` and see whether the delta follows
+the padding. Not worth doing for 8 us against a 10 ms deadline — recorded so the
+question is not reopened from scratch.
+
 ## Reference measurements
 
 Full harness sweep, both boards, 31 fps target, profiler off. CoreS3 runs the
