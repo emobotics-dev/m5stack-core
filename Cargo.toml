@@ -308,6 +308,11 @@ path = "examples/multicore.rs"
 required-features = ["ex-multicore"]
 
 [[example]]
+name = "probe_sd_read"
+path = "examples/probe_sd_read.rs"
+required-features = ["ex-probes", "ex-sd"]
+
+[[example]]
 name = "probe_spi_cmd"
 path = "examples/probe_spi_cmd.rs"
 required-features = ["ex-probes"]
@@ -350,6 +355,7 @@ trouble-host         = { workspace = true }
 sdspi                 = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9", features = ["log"] }
 embedded-fatfs        = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9", default-features = false, features = ["alloc", "lfn", "log"] }
 block-device-adapters = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9" }
+block-device-driver   = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9" }
 aligned               = "0.4.2"
 embedded-hal-async    = "1"
 oxivgl               = { workspace = true }
