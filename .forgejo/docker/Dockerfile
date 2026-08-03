@@ -35,7 +35,9 @@
 # v6: the system-wide `llvm-cov`/`llvm-profdata` (unversioned, on PATH) also
 # point at that same v21 copy instead of the libclang/bindgen `llvm` install's
 # default LLVM 14 — a bare `llvm-cov --version` sanity check used to look like
-# the fix hadn't landed.
+# the fix hadn't landed. As of v7: the Xtensa toolchain is 1.97.0.0, the first
+# esp release carrying the generic `Atomic<T>` that `mem::PsramSafe` needs; its
+# embedded LLVM is still 21, so the coverage pin below is unaffected.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -74,7 +76,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         sh -s -- -y --no-modify-path --default-toolchain stable && \
     cargo install espup && \
     espup install --targets esp32,esp32s3 \
-        --toolchain-version 1.95.0.0 \
+        --toolchain-version 1.97.0.0 \
         --export-file /dev/null && \
     find "$RUSTUP_HOME/toolchains/esp" -maxdepth 8 \( -name "libclang.so" -o -name "libclang.so.*" \) \
         | head -1 | xargs -I{} dirname {} > /opt/esp_libclang_path && \
