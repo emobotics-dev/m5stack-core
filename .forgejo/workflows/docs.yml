@@ -25,6 +25,12 @@ name: docs
 on:
   push:
     branches: [master]
+  # Also on PRs: without this the doc build first runs post-merge, so a change
+  # that breaks it lands green and turns master red. No base filter, for the
+  # reason ci.yml spells out. The publish step is guarded on `refs/heads/master`
+  # already, so a PR run builds and pushes nothing.
+  pull_request:
+    branches: ['**']
   workflow_dispatch:
 
 concurrency:
