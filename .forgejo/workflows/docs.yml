@@ -50,7 +50,7 @@ jobs:
   docs:
     name: rustdoc (ESP32 + ESP32-S3)
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
 
     steps:
       - name: Checkout
