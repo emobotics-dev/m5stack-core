@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! oxivgl flush glue over the BSP's DMA display ([`board::spi2::DisplayBus`]).
 
+use core::sync::atomic::Ordering;
+
 use esp_hal::ram;
 use m5stack_core::board::spi2::{DisplayBus, DisplayOnlyType};
 use oxivgl::flush_pipeline::{DisplayOutput, UiError, flush_frame_buffer};
@@ -42,10 +44,16 @@ impl DisplayOutput for DisplayDriver {
         h: u16,
         data: &[u8],
     ) -> Result<(), UiError> {
-        self.display
+        let r = self
+            .display
             .show_raw_data(x, y, w, h, data)
             .await
-            .map_err(|_| UiError::Display)
+            .map_err(|_| UiError::Display);
+        // Counted here because this is the last place the bytes are ours: the
+        // rest of the pipeline is oxivgl's.
+        super::metrics::FLUSH_BYTES.fetch_add(data.len() as u32, Ordering::Relaxed);
+        super::metrics::FLUSH_OPS.fetch_add(1, Ordering::Relaxed);
+        r
     }
 }
 

@@ -5,23 +5,25 @@
 //! delayed by either. `lvgl_sched.rs` measures this same pipeline under load;
 //! this one exists to be read.
 //!
-//! Three things carry it, and all three are easy to get subtly wrong:
+//! # Converting an existing application
 //!
-//! 1. **Threads, not another `InterruptExecutor`.** An interrupt executor makes
-//!    the UI preempt *everything*, which is backwards — latency-sensitive work
-//!    has to win.
-//! 2. **Raise the app executor.** `#[esp_rtos::main]` starts at priority
-//!    **zero, the lowest**, so a render thread at any priority outranks the work
-//!    it exists to yield to. Skip this line and the change makes things *worse*.
-//! 3. **Block on a semaphore, not `waiti`.** `demos::ui::pipeline` registers its
-//!    own LVGL flush callbacks for this: the render thread leaves the run queue
-//!    for the whole transfer instead of parking the core. LVGL still stays
-//!    single-threaded — the flush side only moves bytes, and
-//!    `lv_display_flush_ready` is called from the render thread — so
-//!    `LV_USE_OS LV_OS_NONE` remains correct.
+//! The [`View`] below is ordinary oxivgl code and knows nothing about threads —
+//! that is the point. Adopting this is a change to `main` only:
 //!
-//! Ladder: app 3 > flush 2 > render 1, all inside 1..=3 so esp-radio's blob
-//! threads (far above) can never be starved by the UI.
+//! 1. `set_flush_sync(SemaphoreFlushSync::leak_thread())` — block the flush wait
+//!    in the scheduler. The default parks the core in `waiti 0` for the whole
+//!    15-30 ms panel transfer, during which *nothing runs but ISRs*.
+//! 2. [`sched::raise_app_executor`] — `#[esp_rtos::main]` starts at priority
+//!    **zero, the lowest**, so the UI threads would otherwise outrank the work
+//!    they exist to yield to. Skip this and the change makes latency *worse*.
+//! 3. Spawn the render loop and the flush on threads, not on the shared
+//!    executor and not on an `InterruptExecutor` — an interrupt executor makes
+//!    the UI preempt everything, which is backwards.
+//!
+//! A `run_app(…)` call becomes [`Ui::init`] on the render thread followed by
+//! [`Ui::run`]; nothing else about the view changes. Ladder: app 3 > flush 2 >
+//! render 1, all inside 1..=3 so esp-radio's blob threads can never be starved
+//! by the UI.
 //!
 //! Costs and design rules: `docs/lvgl-ui-performance.md`.
 #![no_std]
@@ -31,23 +33,26 @@
 
 use core::ffi::c_void;
 
-use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, pipeline, sched};
+use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, sched};
 use demos::{board, shim};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use oxivgl::display::LvglBuffers;
-use oxivgl::widgets::{Align, Arc, Label, Screen};
+use oxivgl::flush_pipeline::{SemaphoreFlushSync, flush_frame_buffer, set_flush_sync};
+use oxivgl::view::{NavAction, RenderConfig, Ui, View};
+use oxivgl::widgets::{Align, Arc, Label, Obj, WidgetError};
 use static_cell::make_static;
 
 m5stack_core::app_desc!();
 
-/// Refresh period. The stock 32 ms caps the frame rate at 31 fps *before* any
-/// render cost, so set it deliberately rather than inheriting it.
-const REFRESH_MS: u32 = 32;
+/// Frame-rate target. The stock 32 ms refresh period caps the rate at 31 fps
+/// *before* any render cost, so set it deliberately rather than inheriting it.
+const TARGET_FPS: u32 = 30;
 
-/// Carries the display from `main` to the flush thread.
+/// Carries the display from `main` to the flush thread — a thread entry is an
+/// `extern "C" fn` and cannot capture.
 static DISPLAY: Channel<CriticalSectionRawMutex, demos::ui::DisplayDriver, 1> = Channel::new();
 
 /// Route LVGL assertions through the Rust panic handler (#57).
@@ -56,55 +61,48 @@ pub extern "C" fn demos_lv_assert_handler() {
     panic!("LVGL assertion failed — see the LV_LOG_ERROR line above");
 }
 
-// --- the UI: one sweeping arc, so there is something to look at ------------
+// --- the UI: ordinary oxivgl, unchanged by any of the above ----------------
 
-#[embassy_executor::task]
-async fn render_task() -> ! {
-    static mut BUFS: LvglBuffers<{ LVGL_BUF_BYTES }> = LvglBuffers::new();
-    // SAFETY: touched only here, before this thread takes sole ownership of
-    // LVGL for the rest of the program.
-    let bufs = unsafe { &mut *core::ptr::addr_of_mut!(BUFS) };
-
-    // SAFETY: first and only LVGL use, on the thread that keeps it.
-    let driver = unsafe { pipeline::init(SCREEN_W.into(), SCREEN_H.into(), bufs) };
-    pipeline::set_refresh_period(REFRESH_MS);
-    pipeline::READY.wait().await;
-
-    let screen = Screen::active().expect("no active screen");
-    screen.bg_color(0x0d1117).bg_opa(255).text_color(0xffffff);
-    let arc = Arc::new(&screen).expect("arc");
-    arc.size(150, 150).align(Align::Center, 0, 0);
-    arc.set_range_raw(0, 100);
-    let label = Label::new(&screen).expect("label");
-    label.text("threaded").align(Align::BottomMid, 0, -8);
-
-    let (mut value, mut dir) = (0i32, 1i32);
-    let mut last = Instant::now();
-    loop {
-        let now = Instant::now();
-        let dt = (now - last).as_millis() as i32;
-        last = now;
-
-        value += dir * (100 * dt) / 1000;
-        if value >= 100 {
-            value = 100;
-            dir = -1;
-        } else if value <= 0 {
-            value = 0;
-            dir = 1;
-        }
-        arc.set_value_raw(value);
-
-        // LVGL says when it next wants attention; honour it rather than spin.
-        let delay = driver.timer_handler();
-        Timer::after(Duration::from_millis(delay.clamp(1, 10) as u64)).await;
-    }
+/// One sweeping arc, so a stalled UI is visible without reading a log.
+///
+/// Every widget handle is kept, including the static label: a handle owns its
+/// LVGL object and deletes it on drop, so a widget built and not stored simply
+/// never appears — silently, with no error to notice.
+#[derive(Default)]
+struct Sweep {
+    arc: Option<Arc<'static>>,
+    label: Option<Label<'static>>,
+    value: i32,
+    dir: i32,
 }
 
-#[embassy_executor::task]
-async fn flush_task() -> ! {
-    let display = DISPLAY.receive().await;
-    pipeline::flush_worker(display).await
+impl View for Sweep {
+    fn create(&mut self, container: &Obj<'static>) -> Result<(), WidgetError> {
+        let arc = Arc::new(container)?;
+        arc.size(150, 150).align(Align::Center, 0, 0);
+        arc.set_range_raw(0, 100);
+        let label = Label::new(container)?;
+        label.text("threaded").align(Align::BottomMid, 0, -8);
+        self.arc = Some(arc);
+        self.label = Some(label);
+        self.dir = 1;
+        Ok(())
+    }
+
+    fn update(&mut self) -> Result<NavAction, WidgetError> {
+        self.value += self.dir * 3;
+        if self.value >= 100 {
+            self.value = 100;
+            self.dir = -1;
+        } else if self.value <= 0 {
+            self.value = 0;
+            self.dir = 1;
+        }
+        if let Some(arc) = &self.arc {
+            arc.set_value_raw(self.value);
+        }
+        Ok(NavAction::None)
+    }
 }
 
 /// Stand-in for the work that must not be delayed by the UI. In a real
@@ -122,6 +120,24 @@ async fn app_task() -> ! {
 }
 
 // --- thread entries: each runs an executor and never returns ---------------
+
+#[embassy_executor::task]
+async fn render_task() -> ! {
+    static mut BUFS: LvglBuffers<{ LVGL_BUF_BYTES }> = LvglBuffers::new();
+    // SAFETY: touched only here, before this thread takes sole ownership of
+    // LVGL for the rest of the program.
+    let bufs = unsafe { &mut *core::ptr::addr_of_mut!(BUFS) };
+
+    // `Ui::init` must run on this thread: every later LVGL call happens here.
+    Ui::init(SCREEN_W.into(), SCREEN_H.into(), bufs)
+        .run(Sweep::default(), RenderConfig::default().with_target_fps(TARGET_FPS))
+        .await
+}
+
+#[embassy_executor::task]
+async fn flush_task() -> ! {
+    flush_frame_buffer(DISPLAY.receive().await).await
+}
 
 extern "C" fn render_thread(_: *mut c_void) {
     let exec = make_static!(esp_rtos::embassy::Executor::new());
@@ -154,10 +170,15 @@ async fn main(spawner: Spawner) {
     let (dbus, _i2c) = board::lvgl_bringup(board.spi2, board.i2c0, dma_rx, dma_tx).await;
     DISPLAY.try_send(demos::ui::DisplayDriver::new(dbus)).ok();
 
+    // (1) BEFORE the display is created — the registration is read by both the
+    // LVGL wait callback and the flush task. `leak_thread` because the flush
+    // below is a thread; an interrupt executor needs `leak_isr` instead.
+    set_flush_sync(SemaphoreFlushSync::leak_thread());
+
     // (2) BEFORE the UI threads exist. Without it they outrank the app task.
     sched::raise_app_executor();
 
-    // (1) Threads, at the flush > render rungs of the ladder.
+    // (3) Threads, at the flush > render rungs of the ladder.
     // SAFETY: both entries run an executor and never return.
     unsafe {
         sched::spawn("ui-flush", flush_thread, sched::PRIO_FLUSH, sched::FLUSH_STACK, 0);

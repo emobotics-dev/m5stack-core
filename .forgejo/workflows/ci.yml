@@ -88,10 +88,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      # `lvgl_threads` is built explicitly: its `required-features` include the
-      # thread features (that IS the pattern it demonstrates), so a plain
-      # `--features lvgl` build silently skips it.
-      #
       # `coex` is built on its own (`--bin coex --features coex`): esp-radio's
       # coexist blob can't link into the non-BLE bins, so the coex feature must
       # not be enabled while building them. `lvgl` is gated (skips the LVGL C
@@ -99,7 +95,6 @@ jobs:
       - name: Build examples (fire27 / ESP32)
         run: |
           cargo build --release -p demos --features lvgl
-          cargo build --release -p demos --bin lvgl_threads --features "lvgl,ui-flush-thread"
           cargo build --release -p demos --bin coex --features coex
 
   # ── cores3 / ESP32-S3 ───────────────────────────────────────────────────────
@@ -134,7 +129,6 @@ jobs:
       - name: Build examples (cores3 / ESP32-S3)
         run: |
           cargo build --release -p demos --no-default-features --features cores3,lvgl --target xtensa-esp32s3-none-elf
-          cargo build --release -p demos --bin lvgl_threads --no-default-features --features cores3,lvgl,ui-flush-thread --target xtensa-esp32s3-none-elf
           cargo build --release -p demos --bin coex --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
 
   # ── host crates ─────────────────────────────────────────────────────────────

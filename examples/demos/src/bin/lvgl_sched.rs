@@ -42,7 +42,7 @@ use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use demos::board;
 use demos::shim;
 use demos::ui::gauge::{Gauge, Load};
-use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, metrics, pipeline};
+use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, metrics};
 #[cfg(feature = "ui-thread")]
 use demos::ui::sched;
 use embassy_executor::Spawner;
@@ -51,6 +51,8 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use oxivgl::display::LvglBuffers;
+use oxivgl::flush_pipeline::{SemaphoreFlushSync, flush_frame_buffer, set_flush_sync};
+use oxivgl::view::Ui;
 use static_cell::make_static;
 
 m5stack_core::app_desc!();
@@ -107,8 +109,7 @@ pub extern "C" fn demos_lv_assert_handler() {
 
 #[embassy_executor::task]
 async fn flush_task() -> ! {
-    let driver = DRIVER.receive().await;
-    pipeline::flush_worker(driver).await
+    flush_frame_buffer(DRIVER.receive().await).await
 }
 
 /// The latency-sensitive work the UI must not disturb: wake on a fixed period
@@ -191,10 +192,13 @@ async fn render_loop() -> ! {
     // ownership for the rest of the program.
     let bufs = unsafe { &mut *core::ptr::addr_of_mut!(LVGL_BUFS) };
 
-    // SAFETY: first and only LVGL use, and this is the thread that keeps it.
-    let driver = unsafe { pipeline::init(SCREEN_W.into(), SCREEN_H.into(), bufs) };
-    pipeline::set_refresh_period(REFRESH_MS);
-    pipeline::READY.wait().await;
+    // `Ui::init` rather than `Ui::run`: the harness needs its own loop to time
+    // each `lv_timer_handler` call and to switch load profiles.
+    let ui = Ui::init(SCREEN_W.into(), SCREEN_H.into(), bufs);
+    // SAFETY: on the render thread, after `Ui::init` created the display.
+    unsafe { metrics::count_frames_on_refresh() };
+    ui.wait_ready().await;
+    oxivgl::display::set_refresh_period(REFRESH_MS);
     log::info!("display ready — mode: {}", MODE);
 
     let mut gauge = Gauge::new(MODE).expect("gauge create");
@@ -219,15 +223,13 @@ async fn render_loop() -> ! {
         // happened to be running.
         let _ = &STATS;
 
-        // One frame == one refresh that actually flushed, however LVGL split it.
-        let before = metrics::SUBMITS.load(Relaxed);
         let t0 = esp_radio_rtos_driver::now();
-        let delay = driver.timer_handler();
+        let delay = ui.timer_handler();
         metrics::HANDLER_CALLS.fetch_add(1, Relaxed);
         metrics::HANDLER_US.fetch_add((esp_radio_rtos_driver::now() - t0) as u32, Relaxed);
-        if metrics::SUBMITS.load(Relaxed) != before {
-            metrics::FRAMES.fetch_add(1, Relaxed);
-        }
+
+        // FRAMES is raised by LVGL's own refresh event; see
+        // `metrics::count_frames_on_refresh`.
         Timer::after(Duration::from_millis(delay.clamp(1, 10) as u64)).await;
     }
 }
@@ -276,6 +278,15 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "cores3")]
     let (dbus, _i2c) = board::lvgl_bringup(board.spi2, board.i2c0, dma_rx, dma_tx).await;
     DRIVER.try_send(demos::ui::DisplayDriver::new(dbus)).ok();
+
+    // Which constructor is not a style choice: an interrupt-executor flush gives
+    // the semaphore from interrupt context, where only the `_from_isr` form is
+    // legal. Wrapped so the harness can time the block (`WAIT_US`).
+    #[cfg(feature = "ui-flush-thread")]
+    let sem = SemaphoreFlushSync::leak_thread();
+    #[cfg(not(feature = "ui-flush-thread"))]
+    let sem = SemaphoreFlushSync::leak_isr();
+    set_flush_sync(make_static!(metrics::TimedFlushSync::new(sem)));
 
     // Lift the app executor above the UI *before* the UI threads exist. Without
     // this the render thread (prio 1) would outrank it, since `#[esp_rtos::main]`

@@ -4,8 +4,9 @@
 
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
-/// Completed LVGL refreshes. Incremented where `lv_timer_handler` is driven, so
-/// one count is one frame however LVGL split it into dirty areas.
+use oxivgl::flush_pipeline::{FlushSync, SemaphoreFlushSync};
+
+/// Completed LVGL refreshes, counted by [`count_frames_on_refresh`].
 pub static FRAMES: AtomicU32 = AtomicU32::new(0);
 /// Pixel bytes and transfers handed to the panel. These wrap after ~15 min at
 /// full rate; every reader takes a wrapping delta, so wrapping is harmless.
@@ -19,12 +20,63 @@ pub static LATENCY: Latency = Latency::new();
 /// Microseconds inside `lv_timer_handler`, and of those, microseconds blocked
 /// waiting for a flush. The difference is LVGL's actual draw cost.
 pub static HANDLER_US: AtomicU32 = AtomicU32::new(0);
-/// How many times `lv_timer_handler` was called, and how many of those actually
-/// submitted a flush. If cost tracks calls rather than pixels, the render loop's
-/// polling rate is the lever, not the drawing.
+/// How many times `lv_timer_handler` was called. If cost tracks calls rather
+/// than pixels, the render loop's polling rate is the lever, not the drawing.
 pub static HANDLER_CALLS: AtomicU32 = AtomicU32::new(0);
-pub static SUBMITS: AtomicU32 = AtomicU32::new(0);
 pub static WAIT_US: AtomicU32 = AtomicU32::new(0);
+
+/// Count one [`FRAMES`] per completed refresh, from LVGL's own event.
+///
+/// Ask LVGL rather than infer from the flush counters. A refresh becomes as many
+/// transfers as the dirty areas need, and with double buffering they complete
+/// *after* the `lv_timer_handler` call that submitted them — so counting
+/// transfers reports 0 fps for a one-area load and several times the refresh
+/// rate for an eight-object one. `LV_EVENT_REFR_READY` is one refresh, fired on
+/// the render thread, however LVGL split it.
+///
+/// # Safety
+/// Call once, on the render thread, after the display exists.
+pub unsafe fn count_frames_on_refresh() {
+    unsafe extern "C" fn on_refr_ready(_e: *mut oxivgl_sys::lv_event_t) {
+        FRAMES.fetch_add(1, Relaxed);
+    }
+    unsafe {
+        let disp = oxivgl_sys::lv_display_get_default();
+        assert!(!disp.is_null(), "no default display");
+        oxivgl_sys::lv_display_add_event_cb(
+            disp,
+            Some(on_refr_ready),
+            oxivgl_sys::lv_event_code_t_LV_EVENT_REFR_READY,
+            core::ptr::null_mut(),
+        );
+    }
+}
+
+/// oxivgl's flush handoff, timed.
+///
+/// The block happens inside LVGL's C wait callback, where nothing outside the
+/// pipeline can observe it — [`FlushSync`] being an application-supplied trait
+/// is the entire reason `wait` is measurable at all. Wrapping rather than
+/// reimplementing keeps the harness measuring the shipped path.
+pub struct TimedFlushSync(&'static SemaphoreFlushSync);
+
+impl TimedFlushSync {
+    pub const fn new(inner: &'static SemaphoreFlushSync) -> Self {
+        Self(inner)
+    }
+}
+
+impl FlushSync for TimedFlushSync {
+    fn wait(&self) {
+        let t0 = esp_radio_rtos_driver::now();
+        self.0.wait();
+        WAIT_US.fetch_add((esp_radio_rtos_driver::now() - t0) as u32, Relaxed);
+    }
+
+    fn signal(&self) {
+        self.0.signal();
+    }
+}
 
 /// Microseconds spent with nothing ready to run, per core. Indexed by CPU
 /// because the idle hook is installed for whichever core enters it — with the

@@ -8,6 +8,12 @@
 //! The per-board bring-up lives in `board::lvgl_bringup`; the flush glue, view,
 //! and input adapter live in `demos::ui`, so this `main` only wires them. Build
 //! with `--features lvgl`.
+//!
+//! Render and flush share one executor here, which is the arrangement #63 was
+//! filed against: it holds ~30 fps but makes everything else on that executor
+//! wait milliseconds for a panel transfer. Kept as the input/widget demo it
+//! always was — for the pipeline a real application should use, see
+//! `lvgl_threads.rs` and `docs/lvgl-ui-performance.md`.
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]

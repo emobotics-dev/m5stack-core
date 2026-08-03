@@ -11,7 +11,6 @@ pub mod lvasm;
 pub mod lvos;
 pub mod lvprof;
 pub mod metrics;
-pub mod pipeline;
 pub mod sched;
 pub mod view;
 

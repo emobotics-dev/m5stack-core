@@ -177,6 +177,10 @@ esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fc
 esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+# oxivgl's `rtos-sem` asks for the crates.io release; the examples use the fork.
+# Without this they resolve to two crates and the semaphore handle oxivgl returns
+# is a different type from the one esp-rtos registers.
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 
 [workspace]
 members = ["examples/common", "examples/demos"]
@@ -253,13 +257,17 @@ lcd-async            = "0.1.3"
 # `esp-hal ~1.1.0`). There is nothing newer to move to yet; re-check esp-radio,
 # not esp-hal, when revisiting this.
 trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu-255", "scan", "derive"] }
-# LVGL (lvgl feature, demos only). Exact-pinned as a matched pair: oxivgl-sys
-# 0.2.3+ emits `oxivgl_render_scratch_*` C→Rust hooks whose Rust side only exists
-# in oxivgl 0.6.x, so a floating `^` on either half drifts them apart and the
-# lvgl example fails to link (Cargo.lock is gitignored → every fresh resolve). Bump
-# both together when adopting a newer oxivgl.
-oxivgl               = { version = "=0.6.1", features = ["esp-hal", "log-04"] }
-oxivgl-sys           = { version = "=0.2.4", default-features = false }
+# LVGL (lvgl feature, demos only). Taken as a matched pair from one source:
+# oxivgl-sys emits `oxivgl_render_scratch_*` C→Rust hooks whose Rust side lives in
+# oxivgl, so resolving the two halves separately drifts them apart and the lvgl
+# example fails to link (Cargo.lock is gitignored → every fresh resolve).
+#
+# Temporarily on git, not crates.io: `Ui`/`RenderConfig`/`FlushSync` landed in
+# oxivgl#3 *after* 0.7.0 was published, and the demos here are built on them.
+# Swap both back to `version = "=0.8.0"` once that release exists (oxivgl#4);
+# examples-only, so the library's crates.io gate is untouched either way.
+oxivgl               = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", features = ["esp-hal", "log-04", "rtos-sem"] }
+oxivgl-sys           = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", default-features = false }
 # misc
 embedded-hal         = "1.0.0"
 heapless             = "0.9.3"

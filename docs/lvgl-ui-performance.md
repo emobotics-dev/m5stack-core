@@ -18,7 +18,13 @@ the same threading model with none of the measurement apparatus: two threads, th
 priority ladder, the semaphore flush wait, and a stand-in application task. The
 harness is the evidence; that one is the reference.
 
-Context: issue #63, PR #64.
+The pipeline itself is **oxivgl's** (`FlushSync`, `Ui::init`/`Ui::run`,
+`RenderConfig`), so adopting this in an application is a change to `main`, not to
+any `View`. What stays application-side is *placement* — thread creation, the
+priority ladder, core pinning — because only the application knows what the UI
+must yield to.
+
+Context: issue #63, PR #64, oxivgl#1/#3.
 
 ## The rules, in one screen
 
@@ -125,10 +131,12 @@ Two details are load-bearing:
 
 - **Threads, not another `InterruptExecutor`.** An interrupt executor makes the
   UI preempt *everything*, which is backwards.
-- **Block on an RTOS semaphore, not `waiti`.** `oxivgl`'s stock flush-wait parks
-  the core until an interrupt: the scheduler is never entered, so for the whole
-  15–30 ms transfer **nothing else runs at all**. That single change is the
-  largest part of the result below.
+- **Block on an RTOS semaphore, not `waiti`.** Parking the core until an
+  interrupt never enters the scheduler, so for the whole 15–30 ms transfer
+  **nothing else runs at all**. That single change is the largest part of the
+  result below. Register it explicitly —
+  `set_flush_sync(SemaphoreFlushSync::leak_thread())` — because oxivgl still
+  defaults to the parking wait for applications that link no scheduler.
 
 Measured, 12 one-second samples per mode, against a 10 ms-period probe task:
 
@@ -148,9 +156,9 @@ one.
 
 ## Knobs that work
 
-**Frame rate is the CPU knob.** Set the refresh period at runtime through the
-display's own timer (`lv_display_get_refr_timer` + `lv_timer_set_period`) rather
-than `lv_conf.h`, so it stays per-application. Holding 31 fps instead of 59
+**Frame rate is the CPU knob.** Set it at runtime with
+`RenderConfig::with_target_fps` rather than in `lv_conf.h`, so it stays
+per-application. Holding 31 fps instead of 59
 halves the render work: 74 % → 42 % on CoreS3, 96 % → 58 % on Fire27.
 
 **Render on the APP core** if the application can spare it: PRO 42 % → 12 %, for
