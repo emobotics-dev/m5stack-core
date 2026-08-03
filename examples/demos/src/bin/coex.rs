@@ -19,7 +19,7 @@ extern crate alloc;
 
 use common::{STRIP_BYTES, draw_panel};
 use demos::board::{self, NAME};
-use demos::{ble, net, shim};
+use demos::{ble, net};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use m5stack_core::driver::radio::ble::BleRadio;
@@ -37,15 +37,7 @@ const WIFI_PASSWORD: Option<&str> = option_env!("WIFI_PASSWORD");
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_coex();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Coex);
 
     // --- WiFi (STA + DHCP) ---
     let mut wifi_stack: Option<embassy_net::Stack<'static>> = None;

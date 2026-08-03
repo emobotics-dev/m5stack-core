@@ -15,7 +15,6 @@ extern crate alloc;
 
 use common::{STRIP_BYTES, draw_panel, wheel};
 use demos::board::{self, NAME};
-use demos::shim;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use m5stack_core::driver::sk6812::{Rgb, Sk6812Driver};
@@ -27,15 +26,7 @@ m5stack_core::app_desc!();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_default();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Default);
 
     let (mut display, i2c) = board::init_display(board.spi2, board.i2c0).await;
 

@@ -20,8 +20,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 
 use common::{STRIP_BYTES, draw_panel};
-use demos::board::{self, NAME};
-use demos::shim;
+use demos::board::NAME;
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{
@@ -101,20 +100,12 @@ where
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_default();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Default);
 
     // CoreS3: reset/power the panel over I2C before the display init in finish().
     #[cfg(feature = "cores3")]
     {
-        let i2c = board::init_i2c_shared(board.i2c0);
+        let i2c = demos::board::init_i2c_shared(board.i2c0);
         m5stack_core::board::cores3::power_display_reset(i2c).await;
     }
 

@@ -16,11 +16,9 @@
 
 extern crate alloc;
 
-use demos::board;
-use demos::shim;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use m5stack_core::mem::{self, HeapProfile};
+use m5stack_core::mem;
 
 m5stack_core::app_desc!();
 
@@ -33,19 +31,9 @@ const EXT_PROBE: usize = 256 * 1024;
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
     // DRAM heap only — `init_heap` never touches PSRAM. PSRAM is handed to
     // `psram_split` below instead.
-    mem::init_heap(HeapProfile::Default);
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console = shim::init_console(
-        spawner,
-        board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx),
-    );
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Default);
 
     log::info!("[psram] split: reserving {} KiB private", RESERVE / 1024);
     let ok = match mem::psram_split(board.psram, RESERVE) {

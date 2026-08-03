@@ -7,7 +7,7 @@
 
 use embassy_executor::Spawner;
 use m5stack_core::io::console::{self, Config, Console, SerialResources};
-use m5stack_core::mem::{self, HeapProfile};
+use m5stack_core::mem;
 
 /// Bring the BSP console up (`log` backend + transport + drain) and report any
 /// previous-run panic breadcrumb. Replaces the old esp-println / RTT glue.
@@ -24,23 +24,19 @@ pub fn init_console(spawner: Spawner, serial: SerialResources) -> Console {
     console
 }
 
-// Heap setup now lives in the BSP: `mem::init_heap(profile)` owns the esp-alloc
-// DRAM regions + per-board sizes (#35 C1), so these are thin profile picks. None
-// of these demos put PSRAM in front of the global allocator — it never touches
-// the plain Vec<String>/String allocations these bins actually do (see #41);
-// a bin that wants PSRAM calls `mem::psram_map` / `mem::psram_split` itself.
-
-/// Display / I2C / WiFi bins: the Default profile (reclaimed + plain DRAM).
-pub fn init_heaps_default() {
-    mem::init_heap(HeapProfile::Default);
-}
-
-/// Coex (WiFi + BLE) needs more controller heap: the Coex profile.
-pub fn init_heaps_coex() {
-    mem::init_heap(HeapProfile::Coex);
-}
-
-/// LVGL bin: the Lvgl profile (reclaimed-ROM only).
-pub fn init_heap_lvgl() {
-    mem::init_heap(HeapProfile::Lvgl);
+pub use m5stack_core::mem::HeapProfile;
+/// Take the peripherals, split them into the board's pin map, and install the
+/// heap. The first half of [`boot!`](crate::boot) — the half that needs no
+/// macro, kept a function so the ordering is stated once.
+///
+/// Heap setup itself lives in the BSP: `mem::init_heap(profile)` owns the
+/// esp-alloc DRAM regions and the per-board sizes (#35 C1). None of these demos
+/// put PSRAM in front of the global allocator — it never touches the plain
+/// `Vec`/`String` allocations they actually do (see #41); a bin that wants PSRAM
+/// calls `mem::psram_map` / `mem::psram_split` itself.
+pub fn boot_board(profile: HeapProfile) -> crate::board::Board {
+    let p = crate::board::init();
+    let board = crate::board::Board::split(p);
+    mem::init_heap(profile);
+    board
 }

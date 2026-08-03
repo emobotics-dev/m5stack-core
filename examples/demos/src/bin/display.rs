@@ -13,7 +13,6 @@ extern crate alloc;
 
 use common::{STRIP_BYTES, draw_panel};
 use demos::board::{self, ButtonAction, ButtonId, INPUT_KIND, NAME};
-use demos::shim;
 use embassy_executor::Spawner;
 use static_cell::make_static;
 
@@ -23,15 +22,7 @@ m5stack_core::app_desc!();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_default();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Default);
 
     let (mut display, _i2c) = board::init_display(board.spi2, board.i2c0).await;
 

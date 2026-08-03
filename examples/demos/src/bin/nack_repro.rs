@@ -25,7 +25,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use demos::board;
-use demos::{ble, net, shim};
+use demos::{ble, net};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::system::Cpu;
@@ -79,15 +79,7 @@ async fn heartbeat() {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_coex();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Coex);
     log::info!("nack_repro-irq: main (PRO thread-mode) core = {:?}", Cpu::current());
 
     // --- WiFi STA + net activity: full coex load (the original #10 context) ---

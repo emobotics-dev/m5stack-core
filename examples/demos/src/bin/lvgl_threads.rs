@@ -34,7 +34,7 @@
 use core::ffi::c_void;
 
 use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, sched};
-use demos::{board, shim};
+use demos::board;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -151,17 +151,7 @@ extern "C" fn flush_thread(_: *mut c_void) {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heap_lvgl();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console = shim::init_console(
-        spawner,
-        board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx),
-    );
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Lvgl);
 
     let (dma_rx, dma_tx) = demos::ui::dma_bufs();
     #[cfg(feature = "fire27")]

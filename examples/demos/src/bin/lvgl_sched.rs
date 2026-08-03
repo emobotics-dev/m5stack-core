@@ -40,7 +40,6 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use demos::board;
-use demos::shim;
 use demos::ui::gauge::{Gauge, Load};
 use demos::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W, metrics};
 #[cfg(feature = "ui-thread")]
@@ -253,24 +252,10 @@ extern "C" fn flush_thread(_: *mut c_void) {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
     // HeapProfile::Lvgl is enough here. Enabling LV_USE_OS is not: a software
     // draw unit allocates its own layer state and that 50 kB reclaimed-ROM pool
     // runs out (OOM at 51192 used, 8 free), so Default is needed for that.
-    shim::init_heap_lvgl();
-    esp_rtos::start_with_idle_hook(
-        board.system.timer0_0,
-        board.system.sw_int.software_interrupt0,
-        metrics::idle_hook,
-    );
-    #[cfg(feature = "fire27")]
-    let _console = shim::init_console(
-        spawner,
-        board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx),
-    );
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Lvgl, idle_hook = metrics::idle_hook);
 
     let (dma_rx, dma_tx) = demos::ui::dma_bufs();
     #[cfg(feature = "fire27")]

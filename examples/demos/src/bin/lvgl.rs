@@ -20,7 +20,6 @@
 #![feature(type_alias_impl_trait)]
 
 use demos::board;
-use demos::shim;
 use demos::ui::{self, DisplayDriver, LVGL_BUF_BYTES, MenuView, SCREEN_H, SCREEN_W};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -71,15 +70,7 @@ async fn heap_stats_task() {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heap_lvgl();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Lvgl);
     log::info!("Embassy initialized");
 
     // Bring up the display (DMA bus, no SD) + the input. Fire27 = three buttons.

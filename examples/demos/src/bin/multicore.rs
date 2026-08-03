@@ -15,8 +15,6 @@
 
 extern crate alloc;
 
-use demos::board;
-use demos::shim;
 use embassy_executor::{SendSpawner, Spawner};
 use embassy_time::{Duration, Timer};
 use esp_hal::interrupt::Priority;
@@ -38,15 +36,7 @@ async fn app_core_task() {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    let p = board::init();
-    let board = board::Board::split(p);
-    shim::init_heaps_default();
-    esp_rtos::start(board.system.timer0_0, board.system.sw_int.software_interrupt0);
-    #[cfg(feature = "fire27")]
-    let _console =
-        shim::init_console(spawner, board::console_serial(board.uart0, board.uart0_rx, board.uart0_tx));
-    #[cfg(feature = "cores3")]
-    let _console = shim::init_console(spawner, board::console_serial(board.usb_device));
+    demos::boot!(spawner, board, Default);
 
     // Park + start the APP core on its own InterruptExecutor (SWI1) and spawn a
     // task there. The guard must outlive the program (dropping it stops the core).
