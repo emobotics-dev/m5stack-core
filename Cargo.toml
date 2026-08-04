@@ -179,7 +179,15 @@ esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git",
 esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 
 [workspace]
-members = ["examples/common", "examples/demos", "m5stack-core-build"]
+members = ["examples/common", "examples/demos"]
+# `m5stack-core-build` is a HOST crate, and a member — including an implicit one,
+# which a path dependency otherwise becomes — is built for the workspace's
+# target. So every `--workspace` command carrying a board target compiled it for
+# Xtensa and died on missing `std`; rust-analyzer's build-script pass is one such
+# command, and reported it only as "failed to run build scripts". Excluding it
+# costs nothing: `examples/demos` still uses it as an optional build-dependency,
+# and build dependencies are compiled for the host regardless.
+exclude = ["m5stack-core-build"]
 
 # Shared example dependencies — referenced by the example crates via
 # `<dep>.workspace = true` so the esp-hal fork rev (and the rest) is stated
