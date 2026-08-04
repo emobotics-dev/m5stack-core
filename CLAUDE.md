@@ -166,10 +166,25 @@ and self-hosts too; that's the precedent. See #36.)
   global heap + PSRAM. `src/driver/` — onewire, radio, etc.
 - `examples/demos/` — one crate, one bin per subsystem, board via cargo feature.
 - `m5stack-core-build/` — **host** build-script helper for the `identity`
-  feature (`emit_identity_env`). Its own `.cargo/config.toml` pins the host
-  target, without which `cargo test` cross-compiles it to the board and cannot
-  build; run its tests from inside the crate directory, never `-p` from the
-  root.
+  feature (`emit_identity_env`). Workspace-**excluded** and carrying its own
+  `.cargo/config.toml` host-target pin, both because the root config pins an
+  Xtensa target and a member is built for it: as a member, every `cargo …
+  --workspace` from the root compiled it for the board and died on missing
+  `std`. Run its tests from inside the crate directory.
+
+## Editor setup (rust-analyzer)
+
+A featureless check dies in `esp-rom-sys`/`esp-sync`'s build scripts, and the
+client reports only *"Failed to run build scripts of some packages"* — so an
+editor needs a board feature named explicitly, plus a matching `cargo.target`
+for CoreS3, and `allTargets = false` (a test target needs the `test` crate,
+which no `no_std` board target has).
+
+Configure this **per developer**, not in the repo: `rust-analyzer.toml`
+outranks client settings (`config.rs` resolves crate ratoml → workspace ratoml
+→ client → user), so a committed one would pin everyone to one board with no
+way to override it from an editor. This crate is dual-board; the choice belongs
+to whoever is editing.
 - Development is hosted on the self-hosted **Forgejo** instance
   (`http://forgejo:3000/emobotics/m5stack-core`, SSH `ssh://git@forgejo:222`);
   the public `github.com/emobotics-dev/m5stack-core` is the outward mirror

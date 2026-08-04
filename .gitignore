@@ -1,6 +1,9 @@
 /target/
 /examples/*/target/
 /m5stack-core-hil/target/
+# …and the build helper's: excluded from the workspace (it is host-only), so
+# it no longer shares the root target dir.
+/m5stack-core-build/target/
 Cargo.lock
 # …except the HIL harness's. It is a host *binary* with real dependencies, and
 # its own workspace, so a committed lock is what makes two people's runs — and
