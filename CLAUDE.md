@@ -54,8 +54,9 @@ assumed** — attempt the bump and record what actually breaks. Re-verified
 | `trouble-host` 0.6 | 0.7 | cargo *does* resolve it, compiling bt-hci 0.8.1 **and** 0.9.0 side by side. Port `ble.rs` first (0.7 moved the controller into `HostResources`' first generic, and `build()` yields a `Stack`) — the pre-port errors are misleading. The real blocker then shows plainly: `BleConnector: bt_hci::transport::Transport` unsatisfied, with *"expected `FromHciBytesError`, found `FromHciBytesError`"* — the two-versions signature. Gated on **esp-radio**, not esp-hal: 0.18.0 wants `esp-hal ~1.1.0-rc.0` (1.1.1 satisfies it), and **no published esp-radio uses bt-hci 0.9**, not even `1.0.0-beta.0` |
 
 `cargo update --workspace` locking 0 packages is the quick check that nothing
-else has drifted. MSRV tracks the esp-hal family's (**1.88**), not something
-lower — claiming lower is a promise the crate cannot keep.
+else has drifted. MSRV is **1.96** — the first version with the generic
+`Atomic<T>` that `mem::PsramSafe`'s negative impl names. That is above the
+esp-hal family's 1.88; claiming lower is a promise the crate cannot keep.
 
 ## HIL (hardware-in-the-loop)
 

@@ -4,6 +4,20 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **MSRV raised to 1.96**, and `mem::PsramSafe` now denies atomics through the
+  generic `Atomic<T>` rather than the ten aliases. From 1.96 every atomic is an
+  alias of that one type, so `impl !PsramSafe for AtomicU32` reads as an impl on
+  `Atomic<u32>` — a specialization, which negative impls forbid (`E0366`), and
+  the crate no longer built on 1.96 or later at all. The rule it replaces was
+  also incomplete: `AtomicI64`/`AtomicU64` were never listed, so on a target
+  that has them the check failed open. Behaviour is otherwise unchanged —
+  `UnsafeCell`, `Cell` and `RefCell` stay `PsramSafe`, and a reference or
+  pointer to an atomic still is too.
+
 ## [0.5.0] - 2026-08-01
 
 Version 0.4.3 was prepared but never released — it was bumped and given a

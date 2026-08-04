@@ -78,6 +78,7 @@
 
 use allocator_api2::vec::Vec;
 pub use esp_alloc::{AnyMemory, ExternalMemory, InternalMemory};
+#[cfg(feature = "psram")]
 use esp_hal::peripherals::PSRAM;
 use esp_hal::ram;
 
@@ -321,21 +322,12 @@ pub unsafe auto trait PsramSafe {}
 #[cfg(feature = "psram")]
 mod psram_safe_impls {
     use super::PsramSafe;
-    use core::sync::atomic::{
-        AtomicBool, AtomicI8, AtomicI16, AtomicI32, AtomicIsize, AtomicPtr, AtomicU8, AtomicU16,
-        AtomicU32, AtomicUsize,
-    };
+    use core::sync::atomic::Atomic;
 
-    impl !PsramSafe for AtomicBool {}
-    impl !PsramSafe for AtomicI8 {}
-    impl !PsramSafe for AtomicU8 {}
-    impl !PsramSafe for AtomicI16 {}
-    impl !PsramSafe for AtomicU16 {}
-    impl !PsramSafe for AtomicI32 {}
-    impl !PsramSafe for AtomicU32 {}
-    impl !PsramSafe for AtomicIsize {}
-    impl !PsramSafe for AtomicUsize {}
-    impl<T> !PsramSafe for AtomicPtr<T> {}
+    // Every atomic aliases `Atomic<T>`. Enumerating the aliases instead is
+    // incomplete, and illegal since each names a concrete `Atomic<..>` — a
+    // negative impl may not specialize (E0366).
+    impl<T> !PsramSafe for Atomic<T> {}
 
     // A pointer/reference to an atomic is fine — the atomic lives elsewhere.
     // (Mirrors `unsafe impl<T: ?Sized> Send for &T` in std.)

@@ -476,7 +476,7 @@ mod tests {
 mod ontarget {
     use std::path::PathBuf;
 
-    use super::{Ensured, FlashConfig, ensure_image};
+    use super::{Ensured, ensure_image};
     use crate::{
         board::{
             self, IDENTITY_BUDGET,

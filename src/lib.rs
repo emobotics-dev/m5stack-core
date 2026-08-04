@@ -30,14 +30,22 @@
 //! `multicore` are orthogonal opt-ins. See the README for the full feature
 //! matrix and usage examples.
 #![no_std]
-#![feature(impl_trait_in_assoc_type)]
-#![feature(type_alias_impl_trait)]
-// `PsramSafe` (mem::, `psram` feature) is a Send/Sync-style auto trait with
-// negative impls for the atomic types. The item is `#[cfg(psram)]`, but cfg
-// stripping happens *after* parsing, so the `auto trait` syntax is parsed even
-// in a psram-free `heap` build and would warn unless the gate is active. The
-// crate is nightly-only regardless, so enable it unconditionally.
-#![feature(auto_traits, negative_impls)]
+// `#[embassy_executor::task]` expands to an associated-type `impl Trait`. Only
+// the two tasks need it — `console::drain_task` and `wifi::sta::wifi_task` — so
+// gating on their features keeps every other build free of an unused-feature
+// warning.
+#![cfg_attr(
+    any(feature = "console-serial", feature = "wifi-sta"),
+    feature(impl_trait_in_assoc_type)
+)]
+// `PsramSafe` (mem::, `psram` feature) is a Send/Sync-style auto trait with a
+// negative impl. The item is `#[cfg(psram)]`, but cfg stripping happens after
+// parsing, so the syntax is still seen in a psram-free `heap` build — hence the
+// gate follows `heap`, the feature that pulls the module in at all.
+#![cfg_attr(feature = "heap", feature(auto_traits, negative_impls))]
+// `PsramSafe`'s negative impl names `Atomic<T>`. A library feature, so unlike
+// the syntax gate above the `psram` cfg suffices.
+#![cfg_attr(feature = "psram", feature(generic_atomic))]
 // `board::run_app_core`'s APP-core idle loop uses the Xtensa `waiti` instruction
 // via inline asm, which is still unstable for this architecture.
 #![cfg_attr(feature = "multicore", feature(asm_experimental_arch))]

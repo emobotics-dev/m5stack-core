@@ -25,6 +25,12 @@ name: docs
 on:
   push:
     branches: [master]
+  # Also on PRs: without this the doc build first runs post-merge, so a change
+  # that breaks it lands green and turns master red. No base filter, for the
+  # reason ci.yml spells out. The publish step is guarded on `refs/heads/master`
+  # already, so a PR run builds and pushes nothing.
+  pull_request:
+    branches: ['**']
   workflow_dispatch:
 
 concurrency:
@@ -50,7 +56,7 @@ jobs:
   docs:
     name: rustdoc (ESP32 + ESP32-S3)
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
 
     steps:
       - name: Checkout

@@ -114,6 +114,10 @@ pub struct Spi2Resources<'a> {
 /// The constructed bus + display pins, between [`Spi2Resources::into_parts`]
 /// and [`Spi2Parts::finish`]. `bus` is still exclusive here — the window for
 /// the app's SD pre-init (see the module docs).
+// Only `finish` consumes the display pins, and it needs the `display` feature;
+// without it they are still held, keeping the pins owned at the levels
+// `into_parts` drove them to.
+#[cfg_attr(not(feature = "display"), allow(dead_code))]
 pub struct Spi2Parts {
     /// Exclusive DMA bus (not yet shared) for `sdspi::sd_init`.
     pub bus: SpiBusType,

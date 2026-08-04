@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
 #
-# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6 — this
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7 — this
 # repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
 # from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
 # toolchain (esp32 + esp32s3) and — as of v3 — exports the full ESP cross-build
@@ -56,7 +56,7 @@ env:
 jobs:
   # ── fire27 / ESP32 ──────────────────────────────────────────────────────────
   #
-  # No toolchain-plumbing step in any leg: the m5stack-core-ci:v6 image exports
+  # No toolchain-plumbing step in any leg: the m5stack-core-ci:v7 image exports
   # PATH (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself.
   # These green builds ARE the regression test that the image's exported env is
   # complete — if it weren't, they would fail with `linker not found` or bindgen
@@ -64,7 +64,7 @@ jobs:
   fire27-lib:
     name: fire27 lib
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
   fire27-full:
     name: fire27 all features
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,7 +84,7 @@ jobs:
   fire27-examples:
     name: fire27 examples
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +106,7 @@ jobs:
   cores3-lib:
     name: cores3 lib
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,7 +116,7 @@ jobs:
   cores3-full:
     name: cores3 all features
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,7 +126,7 @@ jobs:
   cores3-examples:
     name: cores3 examples
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
   host:
     name: host crates
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -181,7 +181,7 @@ jobs:
       - cores3-examples
       - host
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v6
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
     steps:
       - name: Verify every leg succeeded
         env:
