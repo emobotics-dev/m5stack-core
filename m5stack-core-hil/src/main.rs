@@ -381,8 +381,44 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     let wants_identity = cli.read_identity || cli.expect_image.is_some() || cli.ensure_image.is_some();
     if wants_identity {
-        let capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
+        // A console hole is a property of the CAPTURE, not of the image. The
+        // CoreS3's USB-Serial-JTAG ring overruns whenever no reader is attached
+        // — which is exactly the flash/reset gap — so a holed capture says
+        // nothing about what the board is running.
+        //
+        // Treating it as "nothing is proved" and reaching for `--ensure-image`'s
+        // 40 s write does not converge: the write creates another gap, which
+        // holes the next capture, which orders another write. Observed
+        // oscillating between two boards across four consecutive runs, spending
+        // a flash cycle per lap on NOR that has a finite erase budget, and never
+        // producing a usable measurement.
+        //
+        // So RE-CAPTURE first — reset and read again, which is the remedy
+        // oxivgl's `docs/render-pipeline.md` already prescribes for this exact
+        // symptom. Only a hole that survives every attempt is reported, and the
+        // decision logic below is unchanged: this weakens no invariant, it just
+        // stops a transient overrun from being read as evidence about the image.
+        const CAPTURE_TRIES: usize = 3;
+        let mut capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
             .map_err(|m| format!("{}: {m}", target.board.port))?;
+        for attempt in 2..=CAPTURE_TRIES {
+            let Some(marker) = board::console_hole(&l) else { break };
+            note(
+                quiet,
+                &format!(
+                    "m5stack-hil: capture {} of {CAPTURE_TRIES} has a hole ({marker}) — re-reading \
+                     rather than flashing, the hole is the console's, not the image's",
+                    attempt - 1,
+                ),
+            );
+            // The `Isolation` verdict is deliberately dropped here: the caller
+            // above already warned if this board cannot have its boots told
+            // apart, and repeating that per retry would bury the hole message
+            // this loop exists to surface.
+            let _ = board::reset_attached(&target.board, &mut l)?;
+            capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
+                .map_err(|m| format!("{}: {m}", target.board.port))?;
+        }
 
         // "Never reached the application" is a hard stop for the modes that only
         // VERIFY — nothing was observed, so nothing can be checked. It is
