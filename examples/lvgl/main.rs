@@ -13,7 +13,7 @@
 //! filed against: it holds ~30 fps but makes everything else on that executor
 //! wait milliseconds for a panel transfer. Kept as the input/widget demo it
 //! always was — for the pipeline a real application should use, see
-//! `lvgl_threads.rs` and `docs/lvgl-ui-performance.md`.
+//! `docs/lvgl-render-pipeline.md` and `lvgl_threads.rs`.
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]

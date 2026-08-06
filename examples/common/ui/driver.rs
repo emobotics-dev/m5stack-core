@@ -49,8 +49,13 @@ impl DisplayOutput for DisplayDriver {
     }
 }
 
-/// High-priority flush task: drains oxivgl's draw channel and pushes pixels to
-/// the panel. Placed in RAM so it never stalls on flash access.
+/// Flush task for the **shared-executor** pipeline (`examples/lvgl/`): drains
+/// oxivgl's draw channel and pushes pixels to the panel from an
+/// `InterruptExecutor`. Placed in RAM so it never stalls on flash access.
+///
+/// A new UI should run the flush on its own thread instead — see
+/// `docs/lvgl-render-pipeline.md`; that path calls `flush_frame_buffer`
+/// directly and does not need this task.
 #[embassy_executor::task]
 #[ram]
 pub async fn flush_task(driver: DisplayDriver) -> ! {

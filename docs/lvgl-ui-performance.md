@@ -13,16 +13,10 @@ The profiles vary one thing each — nothing, a plain fill, text, a small arc, t
 same arc enlarged, a full-screen invalidate, and eight independent objects — so
 the cost model below is read off the hardware rather than argued.
 
-**To copy the pattern, read `examples/lvgl_threads.rs` instead** —
-the same threading model with none of the measurement apparatus: two threads, the
-priority ladder, the semaphore flush wait, and a stand-in application task. The
-harness is the evidence; that one is the reference.
-
-The pipeline itself is **oxivgl's** (`FlushSync`, `Ui::init`/`Ui::run`,
-`RenderConfig`), so adopting this in an application is a change to `main`, not to
-any `View`. What stays application-side is *placement* — thread creation, the
-priority ladder, core pinning — because only the application knows what the UI
-must yield to.
+**To adopt the pattern, read [the render pipeline](lvgl-render-pipeline.md)** —
+the model itself, in one screen — and copy `examples/lvgl_threads.rs`, which is
+that model with none of the measurement apparatus. The harness is the evidence;
+those two are the reference.
 
 Context: issue #63, PR #64, oxivgl#1/#3.
 

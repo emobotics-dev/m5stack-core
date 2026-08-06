@@ -25,7 +25,8 @@
 //! render 1, all inside 1..=3 so esp-radio's blob threads can never be starved
 //! by the UI.
 //!
-//! Costs and design rules: `docs/lvgl-ui-performance.md`.
+//! The model in prose: `docs/lvgl-render-pipeline.md`. Costs and design rules:
+//! `docs/lvgl-ui-performance.md`.
 #![no_std]
 #![no_main]
 #![feature(impl_trait_in_assoc_type)]

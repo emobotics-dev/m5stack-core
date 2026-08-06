@@ -27,7 +27,8 @@
 //! | `ui-thread` | own thread, prio 1 | interrupt executor |
 //! | `ui-thread,ui-flush-thread` | own thread, prio 1 | own thread, prio 2 |
 //!
-//! The first is today's `lvgl.rs` pattern. The other two also raise the app
+//! The first is the shared-executor pattern `examples/lvgl/` still uses; the
+//! last is the one to adopt (`docs/lvgl-render-pipeline.md`). The other two also raise the app
 //! executor to priority 3, without which the UI threads would outrank the
 //! latency-sensitive work they exist to yield to.
 #![no_std]

@@ -14,6 +14,10 @@ the stock rust-lang toolchain, which has no Xtensa backend, and both supported
 boards are Xtensa (ESP32 / ESP32-S3). The link above is the self-hosted
 substitute, the same approach `esp-idf-hal` takes.
 
+**[The LVGL render pipeline](docs/lvgl-render-pipeline.md)** — the render/flush
+threading model a UI should use: two threads, the priority ladder, and the three
+lines of `main` that adopt it.
+
 **[LVGL UI performance](docs/lvgl-ui-performance.md)** — what a UI costs on
 these boards and why: the scheduling model that keeps a render loop from
 delaying latency-sensitive work, a budget for how many animated widgets fit in
@@ -514,8 +518,8 @@ per target directory.
 | `m5go`     | SK6812 LED colour-wheel (M-Bus pin 23) + battery readout        | M5GO bottom attached |
 | `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                            | `WIFI_SSID`/`WIFI_PASSWORD` |
 | `onewire`  | DS18B20 1-Wire temperature read over RMT (G26)                  | **Fire27 only** |
-| `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter | `ex-lvgl` |
-| `lvgl_threads` | the LVGL render/flush threading pattern to copy (#63)      | `ex-lvgl` |
+| `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter (**shared-executor pipeline** — input demo, not the model to copy) | `ex-lvgl` |
+| `lvgl_threads` | **the render/flush threading pattern to copy** (#63) — see [docs](docs/lvgl-render-pipeline.md) | `ex-lvgl` |
 | `lvgl_sched` | LVGL pipeline stress harness — measures the above           | `ex-lvgl` |
 | `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--example coex`, `ex-coex`, `--release` |
 | `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `ex-sd` |
@@ -576,10 +580,16 @@ AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 ### The `lvgl` bin
 
 Drives the panel with **[oxivgl](https://github.com/emobotics-dev/oxivgl)**
-(safe LVGL 9 bindings) instead of `embedded-graphics`, with the SPI flush on a
-high-priority `InterruptExecutor` so the UI stays smooth while the main task
-works. It's **interactive**: three focusable buttons that you navigate from the
-front panel — `PREV`/`NEXT` move focus, `ENTER` clicks (a counter ticks up).
+(safe LVGL 9 bindings) instead of `embedded-graphics`. It's **interactive**:
+three focusable buttons that you navigate from the front panel — `PREV`/`NEXT`
+move focus, `ENTER` clicks (a counter ticks up).
+
+It is the **input/widget** demo, not the pipeline one: render and flush share
+one executor here (flush on a high-priority `InterruptExecutor`), which is the
+arrangement #63 was filed against — it holds ~30 fps but makes everything else on
+that executor wait milliseconds for a panel transfer. For the pipeline an
+application should use, see [the render
+pipeline](docs/lvgl-render-pipeline.md) and `lvgl_threads`.
 
 The input path is **identical on both boards** and is the point of the demo: the
 unified `io::buttons::ButtonEvent` (Fire27 physical buttons / CoreS3 FT6336U
