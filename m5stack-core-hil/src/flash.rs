@@ -11,11 +11,18 @@
 //! *what do we believe we flashed?* and is wrong whenever a flash went around
 //! the guard — [`crate::identity`] argues that at length.
 //!
-//! The hash is computed here rather than read from the ELF: the descriptor's
-//! `app_elf_sha256` is **all-zero in a linked ELF**, since `espflash` computes
-//! it over the file and patches it in at flash time. That the two agree is a
-//! property of `espflash`, and is checked rather than assumed — a verification
-//! reporting a different hash fails loudly instead of being written off.
+//! The hash is computed here rather than read from the ELF, because the
+//! descriptor's `app_elf_sha256` is all-zero in a linked ELF. The premise that
+//! `espflash` then computes it over the file and patches it in at flash time
+//! is **false for espflash 4.x**: it patches nothing, so the field is still
+//! thirty-two zero bytes in the image that reaches the board. Verified by
+//! hexdump of `espflash save-image` output — descriptor magic `0xABCD5432` at
+//! `0x20`, hash field at `0xb0` all zero.
+//!
+//! [`ExpectedImage::matched_by`] therefore compares the hash only when the
+//! board reports a nonzero one, and says what that costs. Do not restore the
+//! unconditional comparison without first checking that a flashed image
+//! actually carries a hash.
 
 use std::{
     path::{Path, PathBuf},
@@ -58,13 +65,45 @@ pub struct ExpectedImage {
 impl ExpectedImage {
     /// Does `have` describe this image?
     ///
-    /// The hash must always match — it is the only half that can see an
-    /// uncommitted edit. The name half is accepted in **either** of the two
-    /// shapes above, and in the plain shape the reported `version=` is checked
-    /// too, so a match still pins both descriptor fields rather than one.
+    /// The name half is accepted in **either** of the two shapes above, and in
+    /// the plain shape the reported `version=` is checked too, so a match pins
+    /// both descriptor fields rather than one.
+    ///
+    /// # The hash is compared only when the board reports one
+    ///
+    /// `espflash` 4.x does **not** populate `app_elf_sha256`: in the image it
+    /// writes, the descriptor magic is correct at `0x20` and the hash field at
+    /// `0xb0` is thirty-two zero bytes. A board therefore reports
+    /// `app_elf_sha256=000000000000` truthfully, while [`identity_of_elf`]
+    /// computes `sha256` over the ELF *file* — two different things that can
+    /// never be equal. Comparing them unconditionally failed every
+    /// verification with "flash did not take" on an image that had just been
+    /// written correctly (`m5stack-core#68`; hit independently on ESP32 and
+    /// ESP32-S3).
+    ///
+    /// So an all-zero reported hash means *the board has no content hash to
+    /// offer*, and the comparison rests on the mark. A **nonzero** hash is
+    /// still compared, so this re-tightens by itself if `espflash` starts
+    /// patching the field again — no code change needed, and no version sniff.
+    ///
+    /// State the cost plainly, and **for both shapes `matched_by` accepts, not
+    /// just one**: while the field stays zero, the gate cannot see two
+    /// different builds sharing the same mark.
+    ///
+    /// For an `identity` build that gap is narrow — the mark carries
+    /// pkg/bin/feature-arm/commit and a `+` for an uncommitted tree, so only
+    /// two builds of the *same commit with the same dirty state* are
+    /// indistinguishable. For a **plain** build the mark is just the binary
+    /// name and `version=` is the crate's own `Cargo.toml` version, neither of
+    /// which moves with a source edit that leaves the version string
+    /// unbumped — the ordinary case in development. So a plain build's gap is
+    /// wide: any two builds sharing a binary name and version string match,
+    /// with nothing left to tell them apart. Reason enough that it is not
+    /// nothing, and it is why this is a bug against `espflash` rather than a
+    /// design choice here.
     #[must_use]
     pub fn matched_by(&self, have: &Identity) -> bool {
-        if have.sha256_prefix != self.sha256_prefix {
+        if !have.hash_is_unpatched() && have.sha256_prefix != self.sha256_prefix {
             return false;
         }
         // `identity` build: the mark IS the descriptor's version field.
@@ -370,6 +409,32 @@ mod tests {
     #[test]
     fn an_identity_build_matches_on_the_mark() {
         assert!(want_identity().matched_by(&ident("demos/display/a30fbf+", "0.1.0", "d862a888b3f7")));
+    }
+
+    /// THE case that failed on real hardware, twice, on two different chips
+    /// (`m5stack-core#68`). `espflash` 4.x leaves `app_elf_sha256` as zeros in
+    /// the image it writes, so the board reports zeros truthfully while this
+    /// side computes `sha256` of the ELF file. Compared unconditionally, that
+    /// is a guaranteed mismatch: every verification said "flash did not take"
+    /// about an image that had just been written correctly.
+    #[test]
+    fn a_board_reporting_no_hash_matches_on_the_mark_alone() {
+        assert!(want_identity().matched_by(&ident("demos/display/a30fbf+", "0.1.0", "000000000000")));
+        assert!(want_plain().matched_by(&ident("display", "0.1.0", "000000000000")));
+    }
+
+    /// The mark still has to agree. A zero hash relaxes the hash check only —
+    /// it must not turn into "anything matches".
+    #[test]
+    fn a_zero_hash_does_not_excuse_a_wrong_mark() {
+        assert!(!want_identity().matched_by(&ident("demos/display/deadbee+", "0.1.0", "000000000000")));
+    }
+
+    /// If `espflash` ever populates the field again, the check tightens by
+    /// itself — a nonzero hash that disagrees is still a mismatch.
+    #[test]
+    fn a_nonzero_hash_is_still_compared() {
+        assert!(!want_identity().matched_by(&ident("demos/display/a30fbf+", "0.1.0", "ffffffffffff")));
     }
 
     /// THE case that failed on real hardware. Without the `identity` feature

@@ -62,6 +62,21 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Is the hash the board reported the unpatched initialiser?
+    ///
+    /// The board-side counterpart of [`AppDesc::hash_is_unpatched`] — the same
+    /// fact, read off the hex a board printed rather than the bytes in a file.
+    /// Both exist because the zero hash shows up on both sides of the
+    /// comparison, and a caller that meets it on only one of them writes the
+    /// check twice.
+    ///
+    /// An empty prefix is **not** unpatched: it means the board printed no
+    /// hash at all, which is a parse question and not this one.
+    #[must_use]
+    pub fn hash_is_unpatched(&self) -> bool {
+        !self.sha256_prefix.is_empty() && self.sha256_prefix.chars().all(|c| c == '0')
+    }
+
     /// How many hex characters of the content hash a comparison uses.
     ///
     /// Not a constant of this crate: the board decides how much it prints, and
@@ -429,6 +444,27 @@ app_elf_sha256=d862a888b3f7";
     fn an_unflashed_elf_reports_its_hash_as_unpatched() {
         let d = desc("0.4.3", "display", [0u8; 32]);
         assert!(from_elf(&d).expect("found").hash_is_unpatched());
+    }
+
+    /// The board side of the same fact. `espflash` 4.x never patches the
+    /// field, so this is what every real board reports (`m5stack-core#68`).
+    #[test]
+    fn a_board_hash_of_all_zeros_is_unpatched() {
+        let id = Identity { mark: "m".into(), version: "0.1.0".into(), sha256_prefix: "000000000000".into() };
+        assert!(id.hash_is_unpatched());
+    }
+
+    #[test]
+    fn a_real_board_hash_is_not_unpatched() {
+        let id = Identity { mark: "m".into(), version: "0.1.0".into(), sha256_prefix: "d862a888b3f7".into() };
+        assert!(!id.hash_is_unpatched());
+    }
+
+    /// A missing hash is a parse question, not an "unpatched" one.
+    #[test]
+    fn an_empty_board_hash_is_not_unpatched() {
+        let id = Identity { mark: "m".into(), version: "0.1.0".into(), sha256_prefix: String::new() };
+        assert!(!id.hash_is_unpatched());
     }
 
     #[test]
