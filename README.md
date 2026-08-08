@@ -14,6 +14,10 @@ the stock rust-lang toolchain, which has no Xtensa backend, and both supported
 boards are Xtensa (ESP32 / ESP32-S3). The link above is the self-hosted
 substitute, the same approach `esp-idf-hal` takes.
 
+**[The LVGL render pipeline](docs/lvgl-render-pipeline.md)** — the render/flush
+threading model a UI should use: two threads, the priority ladder, and the three
+lines of `main` that adopt it.
+
 **[LVGL UI performance](docs/lvgl-ui-performance.md)** — what a UI costs on
 these boards and why: the scheduling model that keeps a render loop from
 delaying latency-sensitive work, a budget for how many animated widgets fit in
@@ -473,25 +477,39 @@ pub async fn ow_loop(resources: OnewireResources<'static>, on_temperatures: fn(&
 
 ## Examples
 
-All examples live in **one** crate, `examples/demos` — small, single-topic
-binaries (one subsystem each) that build for **both boards**, with the board
-selected by a cargo feature: `fire27` (default) or `cores3`. Each bin leans on
-the BSP's `Board::split` + `board::display` + `io` loops, so the board-specific
-wiring lives in the BSP and the per-board duplication is gone; the per-bin glue
-that remains is concentrated in `examples/demos/src/board.rs`. Chip-agnostic
-drawing helpers (colour wheel, splash/status rendering, I2C scan) stay in the
-shared `examples/common` crate.
+Examples are **cargo-native examples of this crate**, under `examples/`: a
+single-topic file per subsystem (`examples/display.rs`), or a directory with a
+`main.rs` when one needs companion modules (`examples/lvgl_sched/`). They build
+for **both boards**, and each leans on the BSP's `Board::split` +
+`board::display` + `io` loops, so the board-specific wiring lives in the BSP.
 
-Select a board by feature and a bin with `--bin <name>`:
+The shared framework is `examples/common/` — per-board bring-up, console/heap,
+the LVGL plumbing, the UI priority ladder, and the `boot!` macro. It has no
+`main.rs`, so cargo does not treat it as an example; each example pulls it in
+with one line (`#[path = "common/mod.rs"] mod common;`). Anything that belongs
+to a single example lives beside that example instead.
+
+`examples/probe_*.rs` are **not** demos: they are issue-repro apparatus that
+drives esp-hal *below* the BSP, and they are gated behind `ex-probes`.
+
+Every example needs a board aggregate — `ex-fire27` or `ex-cores3`. These turn
+on the library features the examples need (including `panic-handler` and
+`console-serial`, which an application supplies itself); **never enable `ex-*`
+in an application**. They are needed on the command line because
+`required-features` can only *gate* an example, never enable anything.
 
 ```bash
-# Fire27 (ESP32) — the default board; default target is xtensa-esp32-none-elf
-cargo +esp run --release -p demos --bin <name>
+# Fire27 (ESP32) — default target is xtensa-esp32-none-elf
+cargo +esp run --release --example <name> --no-default-features --features ex-fire27
 
 # CoreS3 (ESP32-S3)
-cargo +esp run --release -p demos --bin <name> \
-  --no-default-features --features cores3 --target xtensa-esp32s3-none-elf
+cargo +esp run --release --example <name> \
+  --no-default-features --features ex-cores3 --target xtensa-esp32s3-none-elf
 ```
+
+Cargo forbids optional dev-dependencies, so oxivgl/sdspi/trouble-host are built
+for **any** example target — building even `display` pays the LVGL C build once
+per target directory.
 
 | bin        | what it shows                                                  | needs |
 |------------|----------------------------------------------------------------|-------|
@@ -500,10 +518,12 @@ cargo +esp run --release -p demos --bin <name> \
 | `m5go`     | SK6812 LED colour-wheel (M-Bus pin 23) + battery readout        | M5GO bottom attached |
 | `wifi_sta` | WiFi STA + DHCP + AP scan, IP on LCD                            | `WIFI_SSID`/`WIFI_PASSWORD` |
 | `onewire`  | DS18B20 1-Wire temperature read over RMT (G26)                  | **Fire27 only** |
-| `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter | `--features lvgl` |
-| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--bin coex --features coex`, `--release` |
-| `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `--features sd` |
-| `multicore`| runs a task on the APP core via `board::run_app_core` (interleaved PRO/APP ticks) | `--features multicore` |
+| `lvgl`     | LVGL (oxivgl) UI: 3 focusable buttons navigated by the front panel + frame counter (**shared-executor pipeline** — input demo, not the model to copy) | `ex-lvgl` |
+| `lvgl_threads` | **the render/flush threading pattern to copy** (#63) — see [docs](docs/lvgl-render-pipeline.md) | `ex-lvgl` |
+| `lvgl_sched` | LVGL pipeline stress harness — measures the above           | `ex-lvgl` |
+| `coex`     | `wifi_sta` plus a BLE peer-MAC scanner                          | `--example coex`, `ex-coex`, `--release` |
+| `sd`       | mount the SD card on the shared SPI2 bus + list the root dir (read-only) | `ex-sd` |
+| `multicore`| runs a task on the APP core via `board::run_app_core` (interleaved PRO/APP ticks) | `ex-multicore` |
 
 Notes on building:
 
@@ -511,18 +531,16 @@ Notes on building:
   and the display still runs. The `m5go` bin needs the M5GO Battery Bottom
   attached to do anything visible.
 - `onewire` is **Fire27-only** (`required-features = ["fire27"]`); a CoreS3
-  build skips it automatically. `lvgl` and `coex` are gated by
-  `required-features` so a plain `cargo build -p demos` (and `--workspace`)
-  skips them (and the LVGL C build).
-- **Build `coex` on its own** — `cargo build -p demos --bin coex --features coex`.
+  build skips it automatically.
+- **Build `coex` on its own** — `cargo build --example coex --features "ex-fire27,ex-coex"`.
   esp-radio's WiFi/BLE coexist blob is a *crate-global* link dependency that
   only the BLE-initialising `coex` bin can satisfy, so enabling `--features
   coex` while building the *other* (non-BLE) bins fails to link with a cryptic
   `btdm_rf_bb_reg_init`. Because the bin is gated by `required-features`, the
-  `coex` feature stays off for every normal build (`cargo build`,
-  `--workspace`, `-p demos`, per-bin) — only an explicit `--features coex`
-  without `--bin coex` hits it, which is why the coex bin is always built alone.
-- **The `sd` bin** is gated by `--features sd` (it pulls the `sdspi` +
+  `ex-coex` feature stays off for every normal build — only an explicit
+  `--features ex-coex` without `--example coex` hits it, which is why the coex
+  example is always built alone.
+- **The `sd` example** is gated by `ex-sd` (it pulls the `sdspi` +
   `embedded-fatfs` fork, which isn't on crates.io, so it's example-only). It's
   the one demo that exercises `board::spi2::finish_sd` — the display + SD shared
   bus, including the CoreS3 GPIO35 MISO/DC mux. It mounts **read-only** (never
@@ -546,11 +564,11 @@ Notes on building:
   `lvgl` keep their own rendering.
 
 ```bash
-WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release -p demos --bin wifi_sta
-cargo +esp run --release -p demos --bin lvgl --features lvgl
-cargo +esp run --release -p demos --bin coex --features coex
+WIFI_SSID=myssid WIFI_PASSWORD=secret cargo +esp run --release --example wifi_sta --features ex-fire27
+cargo +esp run --release --example lvgl --features "ex-fire27,ex-lvgl"
+cargo +esp run --release --example coex --features "ex-fire27,ex-coex"
 # CoreS3:
-cargo +esp run --release -p demos --bin coex \
+cargo +esp run --release --example coex \
   --no-default-features --features cores3,coex --target xtensa-esp32s3-none-elf
 ```
 
@@ -562,10 +580,16 @@ AW9523B, BL via AXP2101 DLDO1, M5GO LEDs=13, AXP2101@0x34.
 ### The `lvgl` bin
 
 Drives the panel with **[oxivgl](https://github.com/emobotics-dev/oxivgl)**
-(safe LVGL 9 bindings) instead of `embedded-graphics`, with the SPI flush on a
-high-priority `InterruptExecutor` so the UI stays smooth while the main task
-works. It's **interactive**: three focusable buttons that you navigate from the
-front panel — `PREV`/`NEXT` move focus, `ENTER` clicks (a counter ticks up).
+(safe LVGL 9 bindings) instead of `embedded-graphics`. It's **interactive**:
+three focusable buttons that you navigate from the front panel — `PREV`/`NEXT`
+move focus, `ENTER` clicks (a counter ticks up).
+
+It is the **input/widget** demo, not the pipeline one: render and flush share
+one executor here (flush on a high-priority `InterruptExecutor`), which is the
+arrangement #63 was filed against — it holds ~30 fps but makes everything else on
+that executor wait milliseconds for a panel transfer. For the pipeline an
+application should use, see [the render
+pipeline](docs/lvgl-render-pipeline.md) and `lvgl_threads`.
 
 The input path is **identical on both boards** and is the point of the demo: the
 unified `io::buttons::ButtonEvent` (Fire27 physical buttons / CoreS3 FT6336U
@@ -573,7 +597,7 @@ touch zones) is mapped to LVGL navigation keys feeding an oxivgl `KeypadState`,
 which `run_app_nav_keypad_events` reads and routes to the view's focus group.
 Per-board bring-up is `board::lvgl_bringup` (display via
 `board::spi2::into_display_only` + the right `Input`); the flush glue, view, and
-the input adapters live in `examples/demos/src/ui/`, so `src/bin/lvgl.rs` is
+the input adapters live in `examples/common/ui/`, so `examples/lvgl/main.rs` is
 only the wiring. **CoreS3 additionally drives a direct-touch POINTER indev**
 (oxivgl 0.5 `PointerIndev`, fed by an async FT6336U poll task that bridges the
 I2C read into the indev's sync read callback), so on-screen widgets can be

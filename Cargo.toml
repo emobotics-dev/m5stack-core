@@ -109,6 +109,47 @@ wifi-sta = ["wifi", "dep:embassy-net"] # STA + DHCP embassy_net::Stack
 wifi-ap  = ["wifi", "dep:embassy-net"] # reserved for AP mode (not yet implemented)
 coex     = ["esp-radio/coex", "wifi", "ble"]                  # software WiFi/BLE coexistence (extra RAM)
 
+# --- Example-only (`ex-*`) — never enable these in an application ------------
+# They exist because `required-features` can only *gate* an example, never turn
+# anything on: the examples in `examples/` need library features (and chip
+# features on the dev-dependencies) that no application should inherit. `ex-*`
+# forces `panic-handler` and `console-serial` on, which a real application
+# provides itself — enabling them downstream is a duplicate-symbol error, not a
+# preference.
+#
+# They gate *code*, not dependencies: Cargo forbids optional dev-dependencies,
+# so oxivgl/sdspi/trouble-host are built for any example target regardless.
+# That is why building even a light example pays the LVGL C build once.
+# `esp-rtos/esp-radio` is what registers the `esp_rtos_semaphore_*` symbols that
+# oxivgl's blocking flush wait links against — without it every example fails to
+# link, not just the LVGL ones, because oxivgl is an unconditional dev-dep.
+ex-common = [
+    "display", "psram", "wifi-sta", "console-serial", "panic-handler", "app-desc",
+    "dep:esp-rtos", "esp-rtos/embassy", "esp-rtos/esp-radio",
+    "esp-alloc/internal-heap-stats",
+]
+ex-fire27 = [
+    "ex-common", "fire27", "buttons",
+    "esp-rtos/esp32", "esp-sync/esp32", "esp-bootloader-esp-idf/esp32",
+]
+ex-cores3 = [
+    "ex-common", "cores3",
+    "esp-rtos/esp32s3", "esp-rtos/log-04",
+    "esp-sync/esp32s3", "esp-sync/log-04",
+    "esp-bootloader-esp-idf/esp32s3",
+    "embassy-executor/log", "embassy-time/log",
+]
+# Per-example extras, named by `required-features` on the [[example]] entries.
+ex-lvgl      = []
+ex-sd        = []
+ex-coex      = ["coex"]
+ex-multicore = ["multicore"]
+ex-probes    = []
+# Scheduling variants of the lvgl_sched harness (#63) — see docs/lvgl-ui-performance.md.
+ex-ui-thread       = []
+ex-ui-flush-thread = ["ex-ui-thread"]
+ex-ui-app-core     = ["ex-ui-flush-thread"]
+
 [dependencies]
 # esp-hal family — stock crates.io versions so the crate publishes. The whole
 # family is version-locked together, so they are pinned exactly; local and
@@ -177,16 +218,19 @@ esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fc
 esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+# oxivgl's `rtos-sem` asks for the crates.io release; the examples use the fork.
+# Without this they resolve to two crates and the semaphore handle oxivgl returns
+# is a different type from the one esp-rtos registers.
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
 
 [workspace]
-members = ["examples/common", "examples/demos"]
 # `m5stack-core-build` is a HOST crate, and a member — including an implicit one,
 # which a path dependency otherwise becomes — is built for the workspace's
 # target. So every `--workspace` command carrying a board target compiled it for
 # Xtensa and died on missing `std`; rust-analyzer's build-script pass is one such
 # command, and reported it only as "failed to run build scripts". Excluding it
-# costs nothing: `examples/demos` still uses it as an optional build-dependency,
-# and build dependencies are compiled for the host regardless.
+# costs nothing: this crate still uses it as an optional build-dependency, and
+# build dependencies are compiled for the host regardless.
 exclude = ["m5stack-core-build"]
 
 # Shared example dependencies — referenced by the example crates via
@@ -196,6 +240,128 @@ exclude = ["m5stack-core-build"]
 # esp-hal redirected by [patch.crates-io]; the examples pull fork crates that
 # are not on the patch list (esp-rtos, esp-bootloader-esp-idf, esp-backtrace,
 # esp-println), so they declare the fork explicitly.
+# --- Example targets ---------------------------------------------------------
+# Auto-discovery finds every `examples/*.rs` and `examples/*/main.rs`;
+# `examples/common/` has no `main.rs`, so cargo ignores it and it serves as the
+# shared framework (each example pulls it in with `#[path] mod common;`).
+# These entries exist only to add `required-features` — the paths are the ones
+# cargo would infer anyway.
+#
+# Every example additionally needs a board aggregate on the command line:
+#   cargo build --examples --features ex-fire27
+#   cargo build --examples --no-default-features --features ex-cores3 \
+#       --target xtensa-esp32s3-none-elf
+
+[[example]]
+name = "display"
+path = "examples/display.rs"
+
+[[example]]
+name = "i2c_scan"
+path = "examples/i2c_scan.rs"
+
+[[example]]
+name = "m5go"
+path = "examples/m5go.rs"
+
+[[example]]
+name = "wifi_sta"
+path = "examples/wifi_sta.rs"
+
+[[example]]
+name = "psram_split"
+path = "examples/psram_split.rs"
+
+[[example]]
+name = "onewire"
+path = "examples/onewire.rs"
+required-features = ["fire27"]
+
+[[example]]
+name = "lvgl"
+path = "examples/lvgl/main.rs"
+required-features = ["ex-lvgl"]
+
+[[example]]
+name = "lvgl_threads"
+path = "examples/lvgl_threads.rs"
+required-features = ["ex-lvgl"]
+
+[[example]]
+name = "lvgl_sched"
+path = "examples/lvgl_sched/main.rs"
+required-features = ["ex-lvgl"]
+
+[[example]]
+name = "sd"
+path = "examples/sd.rs"
+required-features = ["ex-sd"]
+
+[[example]]
+name = "coex"
+path = "examples/coex.rs"
+required-features = ["ex-coex"]
+
+[[example]]
+name = "multicore"
+path = "examples/multicore.rs"
+required-features = ["ex-multicore"]
+
+[[example]]
+name = "probe_sd_read"
+path = "examples/probe_sd_read.rs"
+required-features = ["ex-probes", "ex-sd"]
+
+[[example]]
+name = "probe_spi_cmd"
+path = "examples/probe_spi_cmd.rs"
+required-features = ["ex-probes"]
+
+[[example]]
+name = "probe_gdma_eof"
+path = "examples/probe_gdma_eof.rs"
+required-features = ["ex-probes", "cores3"]
+
+[[example]]
+name = "probe_spi2_gdma_fault"
+path = "examples/probe_spi2_gdma_fault.rs"
+required-features = ["ex-probes", "cores3"]
+
+[[example]]
+name = "probe_dma_int"
+path = "examples/probe_dma_int.rs"
+required-features = ["ex-probes", "cores3"]
+
+[[example]]
+name = "probe_nack"
+path = "examples/probe_nack.rs"
+required-features = ["ex-probes", "ex-coex"]
+
+# --- Examples ---------------------------------------------------------------
+# Everything under `examples/`. These are stripped from the published manifest
+# (cargo drops dev-dependencies that carry no `version` key), so the git forks
+# here never reach a consumer — verified with `cargo package`.
+#
+# Cargo forbids `optional = true` on a dev-dependency, so these cannot be
+# feature-gated: any example target builds all of them. See the `ex-*` features.
+[dev-dependencies]
+# Only what the library does not already depend on — a name may not resolve to
+# two different sources, and examples can use the package's own [dependencies].
+esp-radio-rtos-driver = { workspace = true }
+embedded-graphics    = { workspace = true }
+trouble-host         = { workspace = true }
+# SD: the sdspi/embedded-fatfs fork is git-only (not on crates.io). Examples
+# only — it must never reach [dependencies] or the crate stops publishing.
+sdspi                 = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9", features = ["log"] }
+embedded-fatfs        = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9", default-features = false, features = ["alloc", "lfn", "log"] }
+block-device-adapters = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9" }
+block-device-driver   = { git = "https://github.com/emobotics-dev/embedded-fatfs.git", rev = "4565a3e3358e1b03c12b7f1b8c04483facbc45b9" }
+aligned               = "0.4.2"
+embedded-hal-async    = "1"
+oxivgl               = { workspace = true }
+oxivgl-sys           = { workspace = true }
+
+
 [workspace.dependencies]
 # esp-hal family (emobotics fork, pinned rev)
 esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["internal-heap-stats"] }
@@ -253,13 +419,17 @@ lcd-async            = "0.1.3"
 # `esp-hal ~1.1.0`). There is nothing newer to move to yet; re-check esp-radio,
 # not esp-hal, when revisiting this.
 trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu-255", "scan", "derive"] }
-# LVGL (lvgl feature, demos only). Exact-pinned as a matched pair: oxivgl-sys
-# 0.2.3+ emits `oxivgl_render_scratch_*` C→Rust hooks whose Rust side only exists
-# in oxivgl 0.6.x, so a floating `^` on either half drifts them apart and the
-# lvgl example fails to link (Cargo.lock is gitignored → every fresh resolve). Bump
-# both together when adopting a newer oxivgl.
-oxivgl               = { version = "=0.6.1", features = ["esp-hal", "log-04"] }
-oxivgl-sys           = { version = "=0.2.4", default-features = false }
+# LVGL (lvgl feature, demos only). Taken as a matched pair from one source:
+# oxivgl-sys emits `oxivgl_render_scratch_*` C→Rust hooks whose Rust side lives in
+# oxivgl, so resolving the two halves separately drifts them apart and the lvgl
+# example fails to link (Cargo.lock is gitignored → every fresh resolve).
+#
+# Temporarily on git, not crates.io: `Ui`/`RenderConfig`/`FlushSync` landed in
+# oxivgl#3 *after* 0.7.0 was published, and the demos here are built on them.
+# Swap both back to `version = "=0.8.0"` once that release exists (oxivgl#4);
+# examples-only, so the library's crates.io gate is untouched either way.
+oxivgl               = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", features = ["esp-hal", "log-04", "rtos-sem"] }
+oxivgl-sys           = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", default-features = false }
 # misc
 embedded-hal         = "1.0.0"
 heapless             = "0.9.3"

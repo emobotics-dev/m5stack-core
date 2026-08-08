@@ -26,7 +26,7 @@
 #
 #   HIL_BOARD      board name in hil.toml            (default: the board kind)
 #   HIL_RIG        rig name in hil.toml              (default: its default_rig)
-#   DEMO_FEATURES  cargo features for the demo build (default: the board kind)
+#   DEMO_FEATURES  cargo features for the example build (default: ex-<kind>)
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,7 +34,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND="${1:-}"
 BIN="${2:-}"
 if [ -z "$KIND" ] || [ -z "$BIN" ]; then
-    echo "usage: $0 <cores3|fire27> <bin> [seconds] [extra m5stack-hil flags...]" >&2
+    echo "usage: $0 <cores3|fire27> <example> [seconds] [extra m5stack-hil flags...]" >&2
     exit 2
 fi
 shift 2
@@ -57,19 +57,22 @@ if [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
 fi
 
 BOARD="${HIL_BOARD:-$KIND}"
-FEATURES="${DEMO_FEATURES:-$KIND}"
+# `ex-<kind>` is the board aggregate the examples need — see the `ex-*` block in
+# the root Cargo.toml. `required-features` can only gate an example, never turn
+# anything on, so the feature set is always named here.
+FEATURES="${DEMO_FEATURES:-ex-$KIND}"
 
-# `--no-default-features` for both boards, including the one that IS the demos
-# crate's default: a build whose feature set depends on which board happens to
-# be the default is a build that changes meaning when that default moves.
+# `--no-default-features` for both boards: the library has no defaults, and a
+# build whose feature set depends on a default is a build that changes meaning
+# when that default moves.
 #
 # Build chatter goes to stderr, so `$(tools/demo-run.sh …)` still captures only
 # what the harness itself puts on stdout.
 cargo build --release --manifest-path "$root/Cargo.toml" \
-    -p demos --no-default-features --features "$FEATURES" \
-    --target "$TARGET" --bin "$BIN" >&2
+    --no-default-features --features "$FEATURES" \
+    --target "$TARGET" --example "$BIN" >&2
 
 exec "$root/tools/hil.sh" \
     --board "$BOARD" ${HIL_RIG:+--rig "$HIL_RIG"} \
-    --ensure-image "$root/target/$TARGET/release/$BIN" \
+    --ensure-image "$root/target/$TARGET/release/examples/$BIN" \
     --capture "$SECS" "$@"

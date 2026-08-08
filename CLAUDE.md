@@ -12,7 +12,9 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
   `[patch.crates-io]` redirects them to the emobotics esp-hal fork (a pinned rev)
   **only for local/example builds**. `cargo publish` ignores `[patch]`.
 - The `sdspi` / `embedded-fatfs` / `block-device-adapters` fork is **git-only**
-  (not on crates.io). It lives **only** in `examples/demos` behind the `sd`
+  (not on crates.io). It is a **dev-dependency** only (Cargo strips dev-deps
+  without a `version` from the published manifest — verified with
+  `cargo package`), reached only by the `sd` example behind the `ex-sd`
   feature. **Never** let it into the library graph — that breaks publishing.
   Consequence: SD *bring-up* (bus, CS, 74-clock idle, GPIO35 mux) is the BSP's;
   the SD *driver* (`SdSpi`, FAT) stays in the consumer/example.
@@ -164,7 +166,16 @@ and self-hosts too; that's the precedent. See #36.)
 - `src/board/` — per-board pin wiring + bring-up (`fire27`, `cores3`, `spi2`,
   `display`). `src/io/` — console, buttons, watchdog, sensor loops. `src/mem/` —
   global heap + PSRAM. `src/driver/` — onewire, radio, etc.
-- `examples/demos/` — one crate, one bin per subsystem, board via cargo feature.
+- `examples/` — cargo-native examples of *this* crate: `examples/<name>.rs` for
+  single-file ones, `examples/<name>/main.rs` for multi-file. `examples/common/`
+  has no `main.rs`, so cargo ignores it and it holds the shared framework, which
+  each example pulls in with `#[path] mod common;`. `probe_*` are issue-repro
+  apparatus, not demos, and are gated behind `ex-probes`.
+  Every example needs a board aggregate on the command line (`ex-fire27` /
+  `ex-cores3`): `required-features` can only *gate* an example, never enable
+  anything. Cargo also forbids optional dev-dependencies, so oxivgl/sdspi are
+  built for any example target — which is why even a light example pays the
+  LVGL C build once.
 - `m5stack-core-build/` — **host** build-script helper for the `identity`
   feature (`emit_identity_env`). Workspace-**excluded** and carrying its own
   `.cargo/config.toml` host-target pin, both because the root config pins an
