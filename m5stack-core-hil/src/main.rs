@@ -399,33 +399,30 @@ fn run(cli: &Cli) -> Result<(), String> {
         // decision logic below is unchanged: this weakens no invariant, it just
         // stops a transient overrun from being read as evidence about the image.
         const CAPTURE_TRIES: usize = 3;
-        let mut capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
-            .map_err(|m| format!("{}: {m}", target.board.port))?;
-        for attempt in 2..=CAPTURE_TRIES {
-            let Some(marker) = board::console_hole(&l) else { break };
-            note(
-                quiet,
-                &format!(
-                    "m5stack-hil: capture {} of {CAPTURE_TRIES} has a hole ({marker}) — re-reading \
-                     rather than flashing, the hole is the console's, not the image's",
-                    attempt - 1,
-                ),
-            );
-            // The `Isolation` verdict is deliberately dropped here: the caller
-            // above already warned if this board cannot have its boots told
-            // apart, and repeating that per retry would bury the hole message
-            // this loop exists to surface.
-            let _ = board::reset_attached(&target.board, &mut l)?;
-            capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
-                .map_err(|m| format!("{}: {m}", target.board.port))?;
-        }
+        let (capture, hole) = board::read_identity_past_holes(
+            &target.board,
+            &mut l,
+            target.banner.as_deref(),
+            board::IDENTITY_BUDGET,
+            CAPTURE_TRIES,
+            |attempt, marker| {
+                note(
+                    quiet,
+                    &format!(
+                        "m5stack-hil: capture {attempt} of {CAPTURE_TRIES} has a hole ({marker}) — \
+                         re-reading rather than flashing, the hole is the console's, not the image's",
+                    ),
+                );
+            },
+        )
+        .map_err(|m| format!("{}: {m}", target.board.port))?;
 
         // "Never reached the application" is a hard stop for the modes that only
         // VERIFY — nothing was observed, so nothing can be checked. It is
         // emphatically NOT a stop for --ensure-image: a bad or erased image is
         // precisely what flashing repairs.
         if cli.read_identity || cli.expect_image.is_some() {
-            board::no_holes(&l, &format!("board {}", target.board.id))?;
+            board::hole_result(&format!("board {}", target.board.id), hole.as_deref())?;
             if capture == Capture::NoApplication {
                 return Err(format!(
                     "board {} never reached the application within {:?} of a reset.\n\

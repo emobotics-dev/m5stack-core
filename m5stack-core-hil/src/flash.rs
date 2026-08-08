@@ -351,8 +351,18 @@ pub fn ensure_image(
     // Verify the write TOOK. A flash that reported success and left the board
     // running something else must not pass silently — that is the failure a
     // stamp file can never detect, and the whole reason for asking the board.
-    board::no_holes(l, "after flashing")?;
-    match board::read_identity(l, banner, board::IDENTITY_BUDGET)? {
+    //
+    // Re-capture on a hole rather than failing. This capture is the one MOST
+    // likely to be holed of any we take: the ring overran in the gap the flash
+    // we just performed created. Failing here is what sent the caller round to
+    // flash again, and the next flash opened the next gap — a loop that
+    // oscillated across both boards for four consecutive runs without ever
+    // converging, spending a flash cycle each lap.
+    const VERIFY_TRIES: usize = 3;
+    let (capture, hole) =
+        board::read_identity_past_holes(board, l, banner, board::IDENTITY_BUDGET, VERIFY_TRIES, |_, _| {})?;
+    board::hole_result("after flashing", hole.as_deref())?;
+    match capture {
         Capture::Identified(now) if want.matched_by(&now) => Ok(Ensured::Flashed { why, now }),
         Capture::Identified(now) => Err(format!(
             "flash did not take: board reports {now}, image is {want}.\n\
