@@ -326,6 +326,21 @@ pub fn hard_reset(board: &Board) -> Result<(), String> {
 /// ESP32. [`Reset::Espflash`] is the only route that must let go, and inherits
 /// the race; hence the other two are the defaults wherever they apply.
 ///
+/// # This is the one place a capture boundary is drawn
+///
+/// Every reset this function performs also calls [`Listener::begin_capture`],
+/// at the same point — right after quiescing, right before the physical
+/// reset — that it already calls [`Listener::discard_backlog`]. That used to
+/// be a caller's job, paired by hand at each of three call sites; two got the
+/// timing wrong (`begin_capture` called *before* this function, so `quiesce`'s
+/// own read could still land bytes from the old boot on the wrong side of the
+/// boundary) and one call — the very first reset of a run — never called it at
+/// all, so [`console_hole`] silently fell back to scanning the whole
+/// transcript for exactly the capture that mattered most. Both classes of bug
+/// are closed by owning the boundary here: there is now exactly one place that
+/// decides where a fresh capture starts, and it is the same place that decides
+/// where a fresh boot starts.
+///
 /// # Errors
 /// If the reset fails, or (on the espflash path) the board never comes back.
 pub fn reset_attached(board: &Board, l: &mut Listener<DrainedSource>) -> Result<Isolation, String> {
@@ -335,6 +350,7 @@ pub fn reset_attached(board: &Board, l: &mut Listener<DrainedSource>) -> Result<
     // discard the identity this reset exists to read.
     let isolation = if l.quiesce(QUIET_FOR, QUIESCE_BUDGET) { Isolation::Clean } else { Isolation::Chatty };
     l.discard_backlog();
+    l.begin_capture();
     match &board.reset {
         // The port is NOT released: that is the whole point.
         Reset::ProbeRs { .. } => hard_reset(board),
@@ -467,9 +483,36 @@ pub fn read_identity<S: Source>(
 /// a caller can quote it.
 #[must_use]
 pub fn console_hole<S: Source>(l: &Listener<S>) -> Option<String> {
-    let hay = String::from_utf8_lossy(l.bytes());
+    // `fresh_bytes`, not `bytes`: this judges the CURRENT capture. Scanning the
+    // whole transcript made a hole permanent — once one boot overran, every
+    // later check found the same marker, so re-reading could never clear it and
+    // a retry was inert. [`reset_attached`] is what draws that boundary now, on
+    // every reset it performs — a caller that reads a board without going
+    // through it (there is currently no such caller) would see the whole
+    // capture, exactly as before.
+    let hay = String::from_utf8_lossy(l.fresh_bytes());
     let at = hay.find(DROP_MARKER)?;
     Some(hay[at..].lines().next().unwrap_or(DROP_MARKER).trim().to_string())
+}
+
+/// [`console_hole`]'s message, for a caller that already has the marker (or
+/// its absence) rather than needing this to re-scan for it.
+///
+/// [`no_holes`] is this applied to a fresh scan; [`read_identity_past_holes`]
+/// already knows the answer for the capture it returns, and re-scanning it
+/// would just repeat the same string search for the same result.
+///
+/// # Errors
+/// If `marker` is `Some`.
+pub fn hole_result(what: &str, marker: Option<&str>) -> Result<(), String> {
+    match marker {
+        None => Ok(()),
+        Some(line) => Err(format!(
+            "{what}: the board's console ring overran and discarded output — {line}\n\
+             The ring overwrites the OLDEST bytes, so the earliest lines (the identity) are the \
+             ones lost. Nothing may be concluded from this capture."
+        )),
+    }
 }
 
 /// The same fact as a hard error, for callers that only ever *verify*.
@@ -480,14 +523,55 @@ pub fn console_hole<S: Source>(l: &Listener<S>) -> Option<String> {
 /// # Errors
 /// If the capture has a hole, with the marker quoted.
 pub fn no_holes<S: Source>(l: &Listener<S>, what: &str) -> Result<(), String> {
-    match console_hole(l) {
-        None => Ok(()),
-        Some(line) => Err(format!(
-            "{what}: the board's console ring overran and discarded output — {line}\n\
-             The ring overwrites the OLDEST bytes, so the earliest lines (the identity) are the \
-             ones lost. Nothing may be concluded from this capture."
-        )),
+    hole_result(what, console_hole(l).as_deref())
+}
+
+/// Read the identity, retrying through a console hole rather than failing on
+/// one — up to `tries` attempts in total, the first not counted as a retry.
+///
+/// A console hole is a property of *this capture*, not of the image: on the
+/// CoreS3 the ring overruns whenever no reader is attached, which is exactly
+/// the gap a reset opens — so a hole is grounds to reset and read again, not
+/// an immediate failure. Each retry resets through [`reset_attached`], which
+/// draws a fresh capture boundary, so a hole from the boot being re-read past
+/// cannot condemn the boot that follows it.
+///
+/// Returns the last capture taken and, alongside it, whatever
+/// [`console_hole`] finds for that same capture — checked here, once, rather
+/// than left for the caller to re-scan for; feed it to [`hole_result`] to turn
+/// it into the same error [`no_holes`] would report.
+///
+/// `report(attempt, marker)` is called before every retry (`attempt` counts
+/// from 1), so a caller can log progress; a `Chatty` retry reset is reported to
+/// stderr regardless of `report`, on its own line, so it is never buried
+/// inside a hole message that already explains why the retry is happening.
+///
+/// # Errors
+/// Whatever [`read_identity`] or [`reset_attached`] report.
+pub fn read_identity_past_holes(
+    board: &Board,
+    l: &mut Listener<DrainedSource>,
+    banner: Option<&str>,
+    budget: Duration,
+    tries: usize,
+    mut report: impl FnMut(usize, &str),
+) -> Result<(Capture, Option<String>), String> {
+    let mut capture = read_identity(l, banner, budget)?;
+    let mut hole = console_hole(l);
+    for attempt in 1..tries {
+        let Some(marker) = &hole else { break };
+        report(attempt, marker);
+        if reset_attached(board, l)? == Isolation::Chatty {
+            eprintln!(
+                "board {}: WARNING — never went quiet before a retry reset, so output from the \
+                 attempt just abandoned may still be matchable.",
+                board.id
+            );
+        }
+        capture = read_identity(l, banner, budget)?;
+        hole = console_hole(l);
     }
+    Ok((capture, hole))
 }
 
 #[cfg(test)]
@@ -619,6 +703,42 @@ mod tests {
         let mut l = Listener::new(Scripted::new(&[&boot(ID_LINE)]));
         let _ = read_identity(&mut l, Some(BANNER), SHORT);
         assert_eq!(no_holes(&l, "board X"), Ok(()));
+    }
+
+    /// The exact mechanism `reset_attached` now owns: a hole marker present
+    /// BEFORE a capture boundary must not poison a hole-check taken after it.
+    /// Without this, a retry is inert — every check keeps finding the SAME
+    /// stale marker forever, which is the bug the two-field
+    /// `cursor`/`capture_floor` split exists to prevent (`listen.rs`).
+    ///
+    /// This is what a caller pairing `begin_capture` at the wrong point, or
+    /// never calling it at all — both true of this crate before the fix that
+    /// centralised it inside `reset_attached` — silently loses: the very FIRST
+    /// hole-check of a run had no boundary drawn before it at all, so it saw
+    /// the whole transcript, exactly like this test's "before" assertion.
+    #[test]
+    fn a_hole_before_begin_capture_does_not_poison_the_capture_after_it() {
+        let mut l = Listener::new(Scripted::new(&[&format!("{DROP_MARKER} 512B]\n")]));
+        let _ = read_identity(&mut l, None, SHORT);
+        assert!(console_hole(&l).is_some(), "sanity: the marker is visible with no boundary drawn yet");
+        l.begin_capture();
+        assert_eq!(console_hole(&l), None, "a marker from BEFORE begin_capture must not poison this capture");
+    }
+
+    /// The other half of the same property: narrowing the window must not
+    /// blind it. A hole belonging to THIS capture — the one a retry is meant
+    /// to detect — has to remain visible after the boundary that excludes the
+    /// previous one.
+    #[test]
+    fn a_hole_after_begin_capture_is_still_visible() {
+        let mut l = Listener::new(Scripted::new(&[&boot(""), &format!("{DROP_MARKER} 512B]\n")]));
+        let _ = read_identity(&mut l, Some(BANNER), SHORT);
+        l.begin_capture();
+        assert_eq!(console_hole(&l), None, "nothing past the boundary has arrived yet");
+        // Absorbs the second chunk (the marker) without matching anything —
+        // exactly what a retry's own read does before finding a fresh hole.
+        let _ = l.wait_for("\u{0}no-such-pattern", SHORT);
+        assert!(console_hole(&l).is_some(), "a marker AFTER begin_capture must still be caught");
     }
 
     #[test]

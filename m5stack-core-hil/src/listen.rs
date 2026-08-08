@@ -93,12 +93,21 @@ pub struct Listener<S: Source> {
     /// used to hide that by destroying the history; keeping the history means
     /// staleness must be handled explicitly.
     cursor: usize,
+    /// Where the CURRENT capture starts, for judgements about it — distinct
+    /// from `cursor`, which waits advance as they scan.
+    ///
+    /// A console hole is such a judgement. Keying it off `cursor` was wrong:
+    /// merely *reading* a line moved the cursor past the marker, so a hole
+    /// stopped being visible the moment anything scanned past it. Keying it
+    /// off the whole buffer was also wrong: a hole then became permanent, so
+    /// re-reading could never clear one and a retry was inert.
+    capture_floor: usize,
 }
 
 impl<S: Source> Listener<S> {
     /// Start listening. The source is owned from here until the run ends.
     pub fn new(source: S) -> Self {
-        Self { source: Some(source), buffer: Vec::new(), cursor: 0, sink: None }
+        Self { source: Some(source), buffer: Vec::new(), cursor: 0, capture_floor: 0, sink: None }
     }
 
     /// Stream every arriving byte to `sink` as well as buffering it.
@@ -253,6 +262,37 @@ impl<S: Source> Listener<S> {
     /// boot — see [`Listener::quiesce`], which is what makes the line sound.
     pub fn discard_backlog(&mut self) {
         self.cursor = self.buffer.len();
+    }
+
+    /// The bytes still eligible to match — everything since the last
+    /// [`begin_capture`](Self::begin_capture), or the whole capture if there
+    /// has not been one.
+    ///
+    /// Distinct from [`bytes`](Self::bytes), which is the *transcript* and must
+    /// stay complete. A judgement about "this capture" wants this one: a
+    /// console hole belonging to a boot that was explicitly excluded should
+    /// not condemn the boot after it — the same kind of line
+    /// [`discard_backlog`](Self::discard_backlog) draws for waits, but a
+    /// distinct field, because merely *reading* past a marker (which moves the
+    /// cursor `discard_backlog` keys off) must not make a hole stop being
+    /// visible.
+    #[must_use]
+    pub(crate) fn fresh_bytes(&self) -> &[u8] {
+        &self.buffer[self.capture_floor.min(self.buffer.len())..]
+    }
+
+    /// Begin a new capture: judgements like [`board::console_hole`] stop
+    /// looking at anything received so far.
+    ///
+    /// Deliberately separate from [`discard_backlog`](Self::discard_backlog),
+    /// which governs what WAITS may match — the two questions are different
+    /// even though [`board::reset_attached`] is now the one place that answers
+    /// both, at the same instant, which is what earlier callers pairing them by
+    /// hand at three different call sites got wrong (see
+    /// `board::reset_attached` for what that cost). `pub(crate)`, not
+    /// `pub`: there is currently no reason to call this anywhere but there.
+    pub(crate) fn begin_capture(&mut self) {
+        self.capture_floor = self.buffer.len();
     }
 
     /// Read until the source has said nothing for `quiet_for`, or give up after

@@ -381,15 +381,48 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     let wants_identity = cli.read_identity || cli.expect_image.is_some() || cli.ensure_image.is_some();
     if wants_identity {
-        let capture = board::read_identity(&mut l, target.banner.as_deref(), board::IDENTITY_BUDGET)
-            .map_err(|m| format!("{}: {m}", target.board.port))?;
+        // A console hole is a property of the CAPTURE, not of the image. The
+        // CoreS3's USB-Serial-JTAG ring overruns whenever no reader is attached
+        // — which is exactly the flash/reset gap — so a holed capture says
+        // nothing about what the board is running.
+        //
+        // Treating it as "nothing is proved" and reaching for `--ensure-image`'s
+        // 40 s write does not converge: the write creates another gap, which
+        // holes the next capture, which orders another write. Observed
+        // oscillating between two boards across four consecutive runs, spending
+        // a flash cycle per lap on NOR that has a finite erase budget, and never
+        // producing a usable measurement.
+        //
+        // So RE-CAPTURE first — reset and read again, which is the remedy
+        // oxivgl's `docs/render-pipeline.md` already prescribes for this exact
+        // symptom. Only a hole that survives every attempt is reported, and the
+        // decision logic below is unchanged: this weakens no invariant, it just
+        // stops a transient overrun from being read as evidence about the image.
+        const CAPTURE_TRIES: usize = 3;
+        let (capture, hole) = board::read_identity_past_holes(
+            &target.board,
+            &mut l,
+            target.banner.as_deref(),
+            board::IDENTITY_BUDGET,
+            CAPTURE_TRIES,
+            |attempt, marker| {
+                note(
+                    quiet,
+                    &format!(
+                        "m5stack-hil: capture {attempt} of {CAPTURE_TRIES} has a hole ({marker}) — \
+                         re-reading rather than flashing, the hole is the console's, not the image's",
+                    ),
+                );
+            },
+        )
+        .map_err(|m| format!("{}: {m}", target.board.port))?;
 
         // "Never reached the application" is a hard stop for the modes that only
         // VERIFY — nothing was observed, so nothing can be checked. It is
         // emphatically NOT a stop for --ensure-image: a bad or erased image is
         // precisely what flashing repairs.
         if cli.read_identity || cli.expect_image.is_some() {
-            board::no_holes(&l, &format!("board {}", target.board.id))?;
+            board::hole_result(&format!("board {}", target.board.id), hole.as_deref())?;
             if capture == Capture::NoApplication {
                 return Err(format!(
                     "board {} never reached the application within {:?} of a reset.\n\
