@@ -11,6 +11,10 @@ pub struct PpsReadings {
     pub temperature: f32,
     pub input_voltage: f32,
     pub running_mode: PpsRunningMode,
+    /// Readings rejected as invalid since boot. Rides along on the next good
+    /// batch so a consumer can log it: rejections are otherwise visible only
+    /// on the console, which is not attached in the field.
+    pub rejected: u32,
 }
 
 pub struct PpsSetpoint {
@@ -41,6 +45,7 @@ async fn read_pps(pps: &mut PpsDriver) -> Result<PpsReadings, PpsError> {
         temperature,
         input_voltage,
         running_mode,
+        rejected: 0, // stamped by the caller, which owns the count
     })
 }
 
@@ -68,10 +73,12 @@ async fn poll_pps(
     pps: &mut PpsDriver,
     on_read: fn(&PpsReadings),
     get_setpoint: fn() -> PpsSetpoint,
+    rejected: u32,
 ) -> Result<(), PpsError> {
     let setpoint = get_setpoint();
     write_pps(pps, &setpoint).await?;
-    let readings = read_pps(pps).await?;
+    let mut readings = read_pps(pps).await?;
+    readings.rejected = rejected;
     on_read(&readings);
     Ok(())
 }
@@ -134,11 +141,12 @@ pub async fn pps_loop(
 
     let mut ticker = Ticker::every(Duration::from_millis(PPS_LOOP_TIME_MS));
     let mut error_count = 0;
+    let mut rejected: u32 = 0;
     loop {
         let loop_start = Instant::now();
         let timeout_result = with_timeout(
             Duration::from_millis(PPS_LOOP_TIME_MS * 3),
-            poll_pps(&mut pps, on_read, get_setpoint),
+            poll_pps(&mut pps, on_read, get_setpoint, rejected),
         )
         .await;
         match timeout_result {
@@ -149,7 +157,8 @@ pub async fn pps_loop(
                 // Off the budget: spending it here would turn a rare rejected
                 // sample into a permanently dead PPS task.
                 Err(err) if err.is_transient() => {
-                    warn!("PPS reading rejected: {}", err);
+                    rejected = rejected.saturating_add(1);
+                    warn!("PPS reading rejected ({} total): {}", rejected, err);
                 }
                 Err(err) => {
                     warn!("PPS error: {}", err);
