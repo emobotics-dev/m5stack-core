@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use embassy_time::{Duration, Instant, Ticker, with_timeout};
+use embassy_time::{Duration, Instant, Ticker, Timer, with_timeout};
 
 use crate::driver::pps::PpsDriver;
 pub use crate::driver::pps::{PpsError, PpsRunningMode};
@@ -24,6 +24,10 @@ pub struct PpsResources {
 }
 
 const PPS_LOOP_TIME_MS: u64 = 500;
+
+/// The first read can legitimately miss: nothing sequences our first
+/// transaction against the module's own power-up.
+const PROBE_ATTEMPTS: u32 = 3;
 
 async fn read_pps(pps: &mut PpsDriver) -> Result<PpsReadings, PpsError> {
     let voltage = pps.get_voltage().await?;
@@ -72,16 +76,26 @@ async fn poll_pps(
     Ok(())
 }
 
-/// Full PPS loop: 500ms ticker, 1500ms timeout, error counting (break after 10).
+/// Full PPS loop: 500ms ticker, 1500ms timeout, and a consecutive-error budget
+/// the task stops itself on.
 ///
-/// Expected behaviour on a bench / HIL rig **without** PPS hardware: the I2C
-/// probe at 0x35 NACKs on every cycle, `error_count` saturates within ~5 s,
-/// and the task logs:
+/// Expected behaviour on a bench / HIL rig **without** PPS hardware: nothing
+/// answers at 0x35, so the identity probe NACKs `PROBE_ATTEMPTS` times (one
+/// tick apart), and then the loop NACKs on every cycle until `error_count`
+/// passes 10. The task logs:
 ///
 /// ```text
-/// [WARN ] PPS error: I2C master error: AcknowledgeCheckFailed(Unknown)   x10
+/// [WARN ] PPS probe attempt 1/3 failed: I2C master error: AcknowledgeCheckFailed(Unknown)
+/// [WARN ] PPS probe attempt 2/3 failed: I2C master error: AcknowledgeCheckFailed(Unknown)
+/// [ERROR] PPS did not identify itself in 3 attempts: I2C master error: AcknowledgeCheckFailed(Unknown)
+/// [WARN ] PPS error: I2C master error: AcknowledgeCheckFailed(Unknown)   x11
 /// [ERROR] stopping PPS task after 10 consecutive errors
 /// ```
+///
+/// The last probe attempt reports at `error!` rather than `warn!` — the retry
+/// guard is `attempt < PROBE_ATTEMPTS`, so exhaustion is the error line, not a
+/// fourth warning. Eleven `PPS error` lines, not ten: the counter is tested
+/// after the increment (`error_count > 10`).
 ///
 /// Then the task exits cleanly. The board's other tasks (BLE, LVGL, logger,
 /// serial_cmd, control loop) keep running. **This is not a failure** —
@@ -97,6 +111,27 @@ pub async fn pps_loop(
     let mut pps = PpsDriver::new(resources.i2c, 0x35);
     pps.enable(false).await.ok();
 
+    // Not fatal on failure: the loop below reaches the same verdict via the
+    // normal error path. This just says why in one line instead of ten NACKs.
+    for attempt in 1..=PROBE_ATTEMPTS {
+        match pps.probe().await {
+            Ok(_) => break,
+            Err(err) if attempt < PROBE_ATTEMPTS => {
+                warn!(
+                    "PPS probe attempt {}/{} failed: {}",
+                    attempt, PROBE_ATTEMPTS, err
+                );
+                Timer::after(Duration::from_millis(PPS_LOOP_TIME_MS)).await;
+            }
+            Err(err) => {
+                error!(
+                    "PPS did not identify itself in {} attempts: {}",
+                    PROBE_ATTEMPTS, err
+                );
+            }
+        }
+    }
+
     let mut ticker = Ticker::every(Duration::from_millis(PPS_LOOP_TIME_MS));
     let mut error_count = 0;
     loop {
@@ -110,6 +145,11 @@ pub async fn pps_loop(
             Ok(poll_result) => match poll_result {
                 Ok(_) => {
                     error_count = 0;
+                }
+                // Off the budget: spending it here would turn a rare rejected
+                // sample into a permanently dead PPS task.
+                Err(err) if err.is_transient() => {
+                    warn!("PPS reading rejected: {}", err);
                 }
                 Err(err) => {
                     warn!("PPS error: {}", err);

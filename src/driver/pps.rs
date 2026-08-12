@@ -5,9 +5,10 @@
 //! followed by 1–4 byte payload. Voltage/current values are IEEE 754 f32 LE.
 //!
 //! Read register map:
-//!   0x00  ModuleId         2 bytes, u16 LE
+//!   0x00  ModuleId         2 bytes, u16 LE (always 0x1041, see `MODULE_ID`)
 //!   0x05  RunningMode      1 byte: 0=Off, 1=Voltage, 2=Current, 3=Unknown
-//!   0x07  DataFlag         1 byte
+//!   0x07  DataFlag         1 byte -- phantom: never populated by the module
+//!                          firmware, never read by the vendor driver
 //!   0x08  ReadbackVoltage  4 bytes, f32 LE (volts)
 //!   0x0C  ReadbackCurrent  4 bytes, f32 LE (amps)
 //!   0x10  Temperature      4 bytes, f32 LE (°C)
@@ -62,8 +63,52 @@ pub enum PpsError {
     #[error("Command not implemented")]
     UnsupportedCommand,
 
+    /// Module answered correctly but had no measurement (NaN readback).
+    /// Not a bus failure: it is healthy and will answer next cycle.
+    #[error("PPS reported no valid measurement")]
+    NotReady,
+
+    /// A finite reading outside any range the hardware can produce.
+    #[error("PPS reading {0} outside the plausible range for {1}")]
+    OutOfRange(f32, &'static str),
+
+    /// Something answered at the PPS address, but it is not a PPS module.
+    #[error("device reports module id {0:#06x}, not a PPS module")]
+    WrongDevice(u16),
+
     #[error("I2C master error: {0:?}")]
     I2cMasterError(#[from] esp_hal::i2c::master::Error),
+}
+
+impl PpsError {
+    /// Answered coherently, just no usable reading. Kept off the
+    /// consecutive-error budget, which exists to shut down a dead bus.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, PpsError::NotReady | PpsError::OutOfRange(..))
+    }
+}
+
+/// Module ID at registers 0x00/0x01, hardcoded by the module's own firmware
+/// (<https://github.com/m5stack/M5Module-PPS-Internal-FW> `Core/Src/i2c_comm.c`).
+pub const MODULE_ID: u16 = 0x1041;
+
+/// Plausibility bounds: reject only what the hardware cannot produce, never
+/// application limits. A tighter bound would eventually drop a real reading.
+/// Second net only, since a wrong-but-plausible value passes.
+const VOLTAGE_RANGE: (f32, f32) = (-1.0, 60.0); // V, module output + input rails
+const CURRENT_RANGE: (f32, f32) = (-1.0, 20.0); // A, module output
+const TEMPERATURE_RANGE: (f32, f32) = (-40.0, 150.0); // degC, sensor span
+
+/// Accept a reading only if finite and physically possible. Without this the
+/// module's own "no measurement" answer (NaN) is published as fact.
+fn checked(value: f32, range: (f32, f32), what: &'static str) -> Result<f32, PpsError> {
+    if !value.is_finite() {
+        return Err(PpsError::NotReady);
+    }
+    if value < range.0 || value > range.1 {
+        return Err(PpsError::OutOfRange(value, what));
+    }
+    Ok(value)
 }
 
 type I2cType = I2c<'static, Async>;
@@ -117,16 +162,26 @@ impl ReadCommand {
             ReadCommand::GetRunningMode => Ok(ReadResult::RunningMode(
                 PpsRunningMode::from_u8(buffer[0]).ok_or(PpsError::Unknown)?,
             )),
-            ReadCommand::ReadbackVoltage => {
-                Ok(ReadResult::ReadbackVoltage(f32::from_le_bytes(*buffer)))
-            }
-            ReadCommand::ReadbackCurrent => {
-                Ok(ReadResult::ReadbackCurrent(f32::from_le_bytes(*buffer)))
-            }
-            ReadCommand::GetTemperature => Ok(ReadResult::Temperature(f32::from_le_bytes(*buffer))),
-            ReadCommand::GetInputVoltage => {
-                Ok(ReadResult::InputVoltage(f32::from_le_bytes(*buffer)))
-            }
+            ReadCommand::ReadbackVoltage => Ok(ReadResult::ReadbackVoltage(checked(
+                f32::from_le_bytes(*buffer),
+                VOLTAGE_RANGE,
+                "readback voltage",
+            )?)),
+            ReadCommand::ReadbackCurrent => Ok(ReadResult::ReadbackCurrent(checked(
+                f32::from_le_bytes(*buffer),
+                CURRENT_RANGE,
+                "readback current",
+            )?)),
+            ReadCommand::GetTemperature => Ok(ReadResult::Temperature(checked(
+                f32::from_le_bytes(*buffer),
+                TEMPERATURE_RANGE,
+                "temperature",
+            )?)),
+            ReadCommand::GetInputVoltage => Ok(ReadResult::InputVoltage(checked(
+                f32::from_le_bytes(*buffer),
+                VOLTAGE_RANGE,
+                "input voltage",
+            )?)),
             _ => Err(PpsError::UnsupportedCommand),
         }
     }
@@ -268,7 +323,7 @@ impl PpsDriver {
         }
     }
 
-    #[allow(dead_code)]
+    /// Read the module ID (0x00/0x01).
     pub async fn get_module_id(&mut self) -> Result<u16, PpsError> {
         let mut bus = self.i2c.lock().await;
         match ReadCommand::ModuleId
@@ -278,5 +333,21 @@ impl PpsDriver {
             ReadResult::ModuleId(id) => Ok(id),
             _ => Err(PpsError::ReadError),
         }
+    }
+
+    /// Confirm the right device is answering. [`MODULE_ID`] does not depend on
+    /// a conversion, so it validates address, framing and byte order -- but not
+    /// sample validity, which is [`checked`]'s job on every read.
+    pub async fn probe(&mut self) -> Result<u16, PpsError> {
+        let id = self.get_module_id().await?;
+        if id != MODULE_ID {
+            warn!(
+                "PPS at {:#04x} reports id {:#06x}, expected {:#06x}",
+                self.address, id, MODULE_ID
+            );
+            return Err(PpsError::WrongDevice(id));
+        }
+        info!("PPS module id {:#06x} at address {:#04x}", id, self.address);
+        Ok(id)
     }
 }
