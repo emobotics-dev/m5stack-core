@@ -111,6 +111,29 @@ and never lets go of the port — that is what catches the identity line at
   you find yourself editing a runner script to do a run, that script is wrong —
   the varying part belongs on the command line or in `hil.toml`.
 
+## Miri covers the host crates — and only those
+
+CI's `miri` leg interprets `m5stack-core-build` and `m5stack-core-hil`. That is
+the **ceiling, not a staging post**: the library has no test target (`[lib]
+test = false`), and asking for one anyway dies in esp-hal, where `&*Self::PTR`
+on a peripheral address is `E0080` *"dangling reference … has no provenance"* —
+MMIO is not an allocation and cannot become one under Miri's model. Examples are
+`#![no_main]`, so they carry no harness either.
+
+Run it the way CI does, **from outside the repo**. Miri builds its MIR-only
+sysroot by running cargo in the current directory, so from inside it inherits
+`build-std` from `.cargo/config.toml`, stacks that on the sysroot's own `core`,
+and dies on `E0464` *"multiple candidates for `rmeta` dependency `core`"*:
+
+```sh
+cd /tmp && cargo +nightly miri test --manifest-path <repo>/m5stack-core-hil/Cargo.toml
+```
+
+`MIRIFLAGS=-Zmiri-disable-isolation` is required for the harness (a `flash` test
+opens a file); the build helper keeps the stricter default. Note what stays
+uncovered: the repo's only `unsafe` is `serial.rs`'s two ioctls, reachable solely
+through a real tty, so Miri executes none of it.
+
 ## No probabilistic fixes (hardware bugs)
 
 Reproduce first, then root-cause. Don't lower a knob to dodge a race/hang — raise
