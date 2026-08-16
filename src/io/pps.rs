@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use embassy_time::{Duration, Instant, Ticker, with_timeout};
+use embassy_time::{Duration, Instant, Ticker, Timer, with_timeout};
 
 use crate::driver::pps::PpsDriver;
 pub use crate::driver::pps::{PpsError, PpsRunningMode};
@@ -11,6 +11,10 @@ pub struct PpsReadings {
     pub temperature: f32,
     pub input_voltage: f32,
     pub running_mode: PpsRunningMode,
+    /// Readings rejected as invalid since boot. Rides along on the next good
+    /// batch so a consumer can log it: rejections are otherwise visible only
+    /// on the console, which is not attached in the field.
+    pub rejected: u32,
 }
 
 pub struct PpsSetpoint {
@@ -25,6 +29,10 @@ pub struct PpsResources {
 
 const PPS_LOOP_TIME_MS: u64 = 500;
 
+/// The first read can legitimately miss: nothing sequences our first
+/// transaction against the module's own power-up.
+const PROBE_ATTEMPTS: u32 = 3;
+
 async fn read_pps(pps: &mut PpsDriver) -> Result<PpsReadings, PpsError> {
     let voltage = pps.get_voltage().await?;
     let current = pps.get_current().await?;
@@ -37,6 +45,7 @@ async fn read_pps(pps: &mut PpsDriver) -> Result<PpsReadings, PpsError> {
         temperature,
         input_voltage,
         running_mode,
+        rejected: 0, // stamped by the caller, which owns the count
     })
 }
 
@@ -64,31 +73,27 @@ async fn poll_pps(
     pps: &mut PpsDriver,
     on_read: fn(&PpsReadings),
     get_setpoint: fn() -> PpsSetpoint,
+    rejected: u32,
 ) -> Result<(), PpsError> {
     let setpoint = get_setpoint();
     write_pps(pps, &setpoint).await?;
-    let readings = read_pps(pps).await?;
+    let mut readings = read_pps(pps).await?;
+    readings.rejected = rejected;
     on_read(&readings);
     Ok(())
 }
 
-/// Full PPS loop: 500ms ticker, 1500ms timeout, error counting (break after 10).
+/// Full PPS loop: 500ms ticker, 1500ms timeout, and a consecutive-error budget
+/// the task stops itself on.
 ///
-/// Expected behaviour on a bench / HIL rig **without** PPS hardware: the I2C
-/// probe at 0x35 NACKs on every cycle, `error_count` saturates within ~5 s,
-/// and the task logs:
+/// On a bench with no module the probe NACKs to exhaustion, the loop spends the
+/// budget, and the task returns. **Not a failure** — the budget exists so a
+/// wedged PPS cannot keep the bus hot forever; other tasks keep running.
+/// `examples/probe_pps.rs` drives exactly this.
 ///
-/// ```text
-/// [WARN ] PPS error: I2C master error: AcknowledgeCheckFailed(Unknown)   x10
-/// [ERROR] stopping PPS task after 10 consecutive errors
-/// ```
-///
-/// Then the task exits cleanly. The board's other tasks (BLE, LVGL, logger,
-/// serial_cmd, control loop) keep running. **This is not a failure** —
-/// during development and HIL testing the PPS module is absent, so the
-/// errors and the "stopping" log are expected and can be ignored. The check
-/// is there for production benches where a wedged PPS shouldn't keep the
-/// I2C bus hot forever.
+/// Counting the log lines: exhaustion reports at `error!` (the retry guard is
+/// `attempt < PROBE_ATTEMPTS`), and the budget ends one past its threshold
+/// because `error_count` is tested after the increment.
 pub async fn pps_loop(
     resources: PpsResources,
     on_read: fn(&PpsReadings),
@@ -97,19 +102,47 @@ pub async fn pps_loop(
     let mut pps = PpsDriver::new(resources.i2c, 0x35);
     pps.enable(false).await.ok();
 
+    // Not fatal on failure: the loop below reaches the same verdict via the
+    // normal error path. This just says why in one line instead of ten NACKs.
+    for attempt in 1..=PROBE_ATTEMPTS {
+        match pps.probe().await {
+            Ok(_) => break,
+            Err(err) if attempt < PROBE_ATTEMPTS => {
+                warn!(
+                    "PPS probe attempt {}/{} failed: {}",
+                    attempt, PROBE_ATTEMPTS, err
+                );
+                Timer::after(Duration::from_millis(PPS_LOOP_TIME_MS)).await;
+            }
+            Err(err) => {
+                error!(
+                    "PPS did not identify itself in {} attempts: {}",
+                    PROBE_ATTEMPTS, err
+                );
+            }
+        }
+    }
+
     let mut ticker = Ticker::every(Duration::from_millis(PPS_LOOP_TIME_MS));
     let mut error_count = 0;
+    let mut rejected: u32 = 0;
     loop {
         let loop_start = Instant::now();
         let timeout_result = with_timeout(
             Duration::from_millis(PPS_LOOP_TIME_MS * 3),
-            poll_pps(&mut pps, on_read, get_setpoint),
+            poll_pps(&mut pps, on_read, get_setpoint, rejected),
         )
         .await;
         match timeout_result {
             Ok(poll_result) => match poll_result {
                 Ok(_) => {
                     error_count = 0;
+                }
+                // Off the budget: spending it here would turn a rare rejected
+                // sample into a permanently dead PPS task.
+                Err(err) if err.is_transient() => {
+                    rejected = rejected.saturating_add(1);
+                    warn!("PPS reading rejected ({} total): {}", rejected, err);
                 }
                 Err(err) => {
                     warn!("PPS error: {}", err);

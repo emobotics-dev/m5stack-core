@@ -100,6 +100,8 @@ jobs:
             --features "ex-fire27,ex-coex"
           cargo build --release --example probe_spi_cmd --no-default-features \
             --features "ex-fire27,ex-probes"
+          cargo build --release --example probe_pps --no-default-features \
+            --features "ex-fire27,ex-probes"
 
   # ── cores3 / ESP32-S3 ───────────────────────────────────────────────────────
   cores3-lib:
@@ -137,6 +139,8 @@ jobs:
           cargo build --release --example coex --no-default-features \
             --features "ex-cores3,ex-coex" --target xtensa-esp32s3-none-elf
           cargo build --release --example probe_gdma_eof --no-default-features \
+            --features "ex-cores3,ex-probes" --target xtensa-esp32s3-none-elf
+          cargo build --release --example probe_pps --no-default-features \
             --features "ex-cores3,ex-probes" --target xtensa-esp32s3-none-elf
 
   # ── host crates ─────────────────────────────────────────────────────────────

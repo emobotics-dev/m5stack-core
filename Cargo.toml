@@ -318,6 +318,11 @@ path = "examples/probe_spi_cmd.rs"
 required-features = ["ex-probes"]
 
 [[example]]
+name = "probe_pps"
+path = "examples/probe_pps.rs"
+required-features = ["ex-probes"]
+
+[[example]]
 name = "probe_gdma_eof"
 path = "examples/probe_gdma_eof.rs"
 required-features = ["ex-probes", "cores3"]
