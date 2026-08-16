@@ -76,6 +76,11 @@ pub mod driver;
 pub mod io;
 #[cfg(feature = "heap")]
 pub mod mem;
+/// Re-exported so `init_heap_sized!` resolves `esp_alloc` and the `#[ram]`
+/// attribute at the caller's site, without the caller having to import either
+/// or depend on the exact versions this crate pins.
+#[cfg(feature = "heap")]
+pub use {esp_alloc, esp_hal};
 
 /// BSP-provided `#[panic_handler]` (opt in with the `panic-handler` feature).
 /// Body is [`io::console::on_panic`]: record the RTC breadcrumb, best-effort
