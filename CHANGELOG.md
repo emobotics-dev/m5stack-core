@@ -6,8 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **PPS identity probe** (#78): `driver::pps::MODULE_ID` and
+  `PpsDriver::probe()`, which reads registers 0x00/0x01 and requires `0x1041` —
+  the value the module's own firmware hardcodes. It is the only register whose
+  value does not depend on a conversion, so a coherent answer proves address,
+  framing and byte order before any reading is believed. `io::pps::pps_loop`
+  runs it at startup, retried 3× at the loop cadence; exhaustion logs and
+  carries on, because the loop reaches the same verdict through the normal
+  error path. The probe validates identity, not per-sample validity — a module
+  can pass it and still return a garbage batch seconds later.
+- `PpsError::is_transient()` — true for `NotReady` / `OutOfRange`, which are
+  kept off `pps_loop`'s consecutive-error budget. That budget exists to shut
+  down a bus with nothing on it; a module that is present and merely still
+  converting is healthy, and spending the budget on it would turn a rare bad
+  sample into a reliably dead PPS task.
+- `PpsReadings::rejected` — readings discarded since boot, riding along on the
+  next good batch. A rejection was otherwise visible only on the console, which
+  is not attached in a vehicle.
+
 ### Changed
 
+- **Breaking:** `PpsReadings` gained a public field and `PpsError` gained three
+  variants (`NotReady`, `OutOfRange`, `WrongDevice`). Neither type is
+  `#[non_exhaustive]`, so a consumer that writes a `PpsReadings` literal or
+  matches `PpsError` exhaustively must be updated — this release takes a minor
+  bump, not a patch.
 - **MSRV raised to 1.96**, and `mem::PsramSafe` now denies atomics through the
   generic `Atomic<T>` rather than the ten aliases. From 1.96 every atomic is an
   alias of that one type, so `impl !PsramSafe for AtomicU32` reads as an impl on
@@ -17,6 +42,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that has them the check failed open. Behaviour is otherwise unchanged —
   `UnsafeCell`, `Cell` and `RefCell` stay `PsramSafe`, and a reference or
   pointer to an atomic still is too.
+
+### Fixed
+
+- **A PPS reading the module never measured is no longer published as fact**
+  (#78). `evaluate_result` turned any four bytes into an `f32`, so a batch in
+  which the module answered perfectly at the I2C level while having nothing to
+  report was handed up as data. Seen in the field once in ~10 000 samples: four
+  NaNs plus a plausible-looking 31.36 V input voltage against a 26.51 V
+  battery — enough to latch a consumer's over-voltage fault with the engine
+  running. No I2C-level check could have caught it, because the transaction
+  succeeded: the module ACKed and returned four well-formed bytes, and rubbish
+  is bit-identical to a real reading there. The missing check was at the decode
+  boundary, so readings are now rejected unless finite and within the range the
+  hardware can produce. Since `read_pps` is all-or-nothing, rejecting one value
+  discards the whole batch, which is what keeps the bad input voltage from
+  escaping. The range check is deliberately loose and would *not* have caught
+  31.36 V — it is a second net for wilder corruption, not the fix.
 
 ## [0.5.0] - 2026-08-01
 
