@@ -86,30 +86,14 @@ async fn poll_pps(
 /// Full PPS loop: 500ms ticker, 1500ms timeout, and a consecutive-error budget
 /// the task stops itself on.
 ///
-/// Expected behaviour on a bench / HIL rig **without** PPS hardware: nothing
-/// answers at 0x35, so the identity probe NACKs `PROBE_ATTEMPTS` times (one
-/// tick apart), and then the loop NACKs on every cycle until `error_count`
-/// passes 10. The task logs:
+/// On a bench with no module the probe NACKs to exhaustion, the loop spends the
+/// budget, and the task returns. **Not a failure** — the budget exists so a
+/// wedged PPS cannot keep the bus hot forever; other tasks keep running.
+/// `examples/probe_pps.rs` drives exactly this.
 ///
-/// ```text
-/// [WARN ] PPS probe attempt 1/3 failed: I2C master error: AcknowledgeCheckFailed(Unknown)
-/// [WARN ] PPS probe attempt 2/3 failed: I2C master error: AcknowledgeCheckFailed(Unknown)
-/// [ERROR] PPS did not identify itself in 3 attempts: I2C master error: AcknowledgeCheckFailed(Unknown)
-/// [WARN ] PPS error: I2C master error: AcknowledgeCheckFailed(Unknown)   x11
-/// [ERROR] stopping PPS task after 10 consecutive errors
-/// ```
-///
-/// The last probe attempt reports at `error!` rather than `warn!` — the retry
-/// guard is `attempt < PROBE_ATTEMPTS`, so exhaustion is the error line, not a
-/// fourth warning. Eleven `PPS error` lines, not ten: the counter is tested
-/// after the increment (`error_count > 10`).
-///
-/// Then the task exits cleanly. The board's other tasks (BLE, LVGL, logger,
-/// serial_cmd, control loop) keep running. **This is not a failure** —
-/// during development and HIL testing the PPS module is absent, so the
-/// errors and the "stopping" log are expected and can be ignored. The check
-/// is there for production benches where a wedged PPS shouldn't keep the
-/// I2C bus hot forever.
+/// Counting the log lines: exhaustion reports at `error!` (the retry guard is
+/// `attempt < PROBE_ATTEMPTS`), and the budget ends one past its threshold
+/// because `error_count` is tested after the increment.
 pub async fn pps_loop(
     resources: PpsResources,
     on_read: fn(&PpsReadings),
