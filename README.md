@@ -239,6 +239,25 @@ mem::init_heap(HeapProfile::Lvgl);    // reclaimed-ROM only
 mem::init_heap(HeapProfile::Coex);    // more controller heap
 ```
 
+When no profile fits — a binary whose sizes are tuned against its own workload
+rather than a shared one — `init_heap_sized!` takes the region sizes directly.
+It is a macro, not a function, because `heap_allocator!` sizes a `static` and
+needs the value as a literal at the expansion site. The profiles above route
+through it, so it is the path they all take rather than a second implementation
+beside them.
+
+```rust
+m5stack_core::init_heap_sized!(reclaimed: 56 * 1024);              // reclaimed only
+m5stack_core::init_heap_sized!(reclaimed: 96 * 1024, dram: 24 * 1024);
+m5stack_core::init_heap_sized!(dram: 64 * 1024);                   // plain DRAM only
+```
+
+Prefer a profile: it is HIL-proven and shared, and a binary that picks its own
+number owns the consequences of getting it wrong. Reach for `init_heap_sized!`
+when that number *is* the validated result — e.g. an LVGL workload that OOMs
+mid-render at the `Lvgl` profile's 50 K. The region budget is the same either
+way: esp-alloc holds at most three regions and `psram_split` wants one.
+
 PSRAM specifics, behind the **`psram`** feature. Both boards have external SPI
 PSRAM (Fire27 ~4 MB, CoreS3 ~8 MB). Getting PSRAM into the global heap is
 opt-in and explicit — no function does it as a side effect of anything else,

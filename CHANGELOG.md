@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`mem::init_heap_sized!`** (#79): registers the global heap's DRAM regions at
+  explicit sizes, for a binary whose own workload sets the number and which no
+  `HeapProfile` can express. A macro rather than a function because
+  `heap_allocator!` sizes a `static`, so the size has to arrive as a literal at
+  the expansion site. `esp_alloc` and `esp_hal` are re-exported from the crate
+  root so the macro resolves them at the caller without the caller importing
+  either. `init_heap` keeps its signature and its sizes; the profiles now route
+  through the new macro, so it is the path they all take rather than a second
+  implementation beside them — if it breaks, every profile breaks with it.
 - **PPS identity probe** (#78): `driver::pps::MODULE_ID` and
   `PpsDriver::probe()`, which reads registers 0x00/0x01 and requires `0x1041` —
   the value the module's own firmware hardcodes. It is the only register whose
