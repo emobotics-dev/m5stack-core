@@ -80,7 +80,6 @@ use allocator_api2::vec::Vec;
 pub use esp_alloc::{AnyMemory, ExternalMemory, InternalMemory};
 #[cfg(feature = "psram")]
 use esp_hal::peripherals::PSRAM;
-use esp_hal::ram;
 
 #[cfg(feature = "psram")]
 use allocator_api2::boxed::Box;
@@ -114,26 +113,49 @@ pub enum HeapProfile {
 /// 4th `add_region` panics silently.
 pub fn init_heap(profile: HeapProfile) {
     match profile {
-        HeapProfile::Default => {
-            esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-            esp_alloc::heap_allocator!(size: 64 * 1024);
-        }
-        HeapProfile::Lvgl => {
-            esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-        }
+        HeapProfile::Default => crate::init_heap_sized!(reclaimed: 50 * 1024, dram: 64 * 1024),
+        HeapProfile::Lvgl => crate::init_heap_sized!(reclaimed: 50 * 1024),
         HeapProfile::Coex => {
             #[cfg(feature = "fire27")]
-            {
-                esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 96 * 1024);
-                esp_alloc::heap_allocator!(size: 24 * 1024);
-            }
+            crate::init_heap_sized!(reclaimed: 96 * 1024, dram: 24 * 1024);
             #[cfg(feature = "cores3")]
-            {
-                esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 50 * 1024);
-                esp_alloc::heap_allocator!(size: 96 * 1024);
-            }
+            crate::init_heap_sized!(reclaimed: 50 * 1024, dram: 96 * 1024);
         }
     }
+}
+
+/// Register the global heap's DRAM regions at explicit sizes. Use when no
+/// [`HeapProfile`] fits — a binary whose sizes are tuned against its own
+/// workload rather than a shared one.
+///
+/// ```rust, no_run
+/// m5stack_core::init_heap_sized!(reclaimed: 56 * 1024);
+/// m5stack_core::init_heap_sized!(reclaimed: 96 * 1024, dram: 24 * 1024);
+/// ```
+///
+/// A macro, not a function: `heap_allocator!` sizes a `static`, and a `static`
+/// cannot read a const generic of the function containing it. The size has to
+/// arrive as a literal at the expansion site.
+///
+/// Prefer [`init_heap`]: a profile is HIL-proven and shared, and a binary that
+/// picks its own number owns the consequences of getting it wrong. This is for
+/// the case where that number IS the validated result — e.g. an LVGL workload
+/// that OOMs mid-render at the `Lvgl` profile's 50 K.
+///
+/// Same region budget as [`init_heap`]: esp-alloc holds at most three regions
+/// and [`psram_split`] wants one.
+#[macro_export]
+macro_rules! init_heap_sized {
+    (reclaimed: $reclaimed:expr, dram: $dram:expr) => {{
+        $crate::esp_alloc::heap_allocator!(#[$crate::esp_hal::ram(reclaimed)] size: $reclaimed);
+        $crate::esp_alloc::heap_allocator!(size: $dram);
+    }};
+    (reclaimed: $reclaimed:expr) => {{
+        $crate::esp_alloc::heap_allocator!(#[$crate::esp_hal::ram(reclaimed)] size: $reclaimed);
+    }};
+    (dram: $dram:expr) => {{
+        $crate::esp_alloc::heap_allocator!(size: $dram);
+    }};
 }
 
 /// Map the board's external PSRAM and return the whole region as a private
