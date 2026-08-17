@@ -621,6 +621,32 @@ mod devices {
     pub type DisplayOnlyInitError =
         lcd_async::InitError<<DisplayOnlyInterface as Interface>::Error, core::convert::Infallible>;
 
+    /// Everything [`Spi2Resources::into_display_only`] can fail on.
+    ///
+    /// The SPI2 configure step used to `.expect()`, which panics a library
+    /// crate on a caller's bad config (`conventions/rust-code.md` §6). It
+    /// cannot use `?` on its own, because `DisplayOnlyInitError` is
+    /// `lcd_async`'s and has no variant for it — hence this wrapper.
+    #[derive(Debug)]
+    pub enum DisplayOnlyError {
+        /// SPI2 rejected the display bus configuration.
+        Config(ConfigError),
+        /// The panel did not initialise.
+        Init(DisplayOnlyInitError),
+    }
+
+    impl From<ConfigError> for DisplayOnlyError {
+        fn from(e: ConfigError) -> Self {
+            Self::Config(e)
+        }
+    }
+
+    impl From<DisplayOnlyInitError> for DisplayOnlyError {
+        fn from(e: DisplayOnlyInitError) -> Self {
+            Self::Init(e)
+        }
+    }
+
     /// A display brought up on the shared SPI2 DMA bus with **no** SD-card path
     /// ([`Spi2Resources::into_display_only`]). For LVGL and any DMA display-only
     /// app that does not touch the SD slot.
@@ -799,11 +825,10 @@ mod devices {
             self,
             dma_rx_buf: DmaRxBuf,
             dma_tx_buf: DmaTxBuf,
-        ) -> Result<DisplayBus, DisplayOnlyInitError> {
+        ) -> Result<DisplayBus, DisplayOnlyError> {
             // No `.with_miso()`: this path never reads the SD card, so GPIO35 is
             // free to be a plain DC output (below).
-            let spi = Spi::new(self.spi2, display_config())
-                .expect("SPI2 display config")
+            let spi = Spi::new(self.spi2, display_config())?
                 .with_sck(self.sck)
                 .with_mosi(self.mosi)
                 .with_dma(self.spi2_dma)
@@ -835,9 +860,8 @@ mod devices {
             self,
             dma_rx_buf: DmaRxBuf,
             dma_tx_buf: DmaTxBuf,
-        ) -> Result<DisplayBus, DisplayOnlyInitError> {
-            let spi = Spi::new(self.spi2, display_config())
-                .expect("SPI2 display config")
+        ) -> Result<DisplayBus, DisplayOnlyError> {
+            let spi = Spi::new(self.spi2, display_config())?
                 .with_sck(self.sck)
                 .with_mosi(self.mosi)
                 .with_miso(self.miso)
