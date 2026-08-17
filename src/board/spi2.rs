@@ -272,12 +272,67 @@ mod devices {
     /// presence-resolved. The BSP owns everything up to here with no SD-driver
     /// type in its graph; the app supplies only its SD driver:
     /// `SdSpi::new(prepared.into_inner())`.
-    pub struct PreparedCard<CS>(CardSpiDevice<PresenceCs<CS>>);
+    pub struct PreparedCard<CS: OutputPin> {
+        bus: &'static Mutex<RawMutex, SpiBusType>,
+        cs: PresenceCs<CS>,
+    }
 
-    impl<CS> PreparedCard<CS> {
-        /// The presence-resolved card `SpiDevice`, ready for the app's SD driver.
+    /// The SPI2 bus and the card's chip-select, held together.
+    ///
+    /// This exists because chip-select continuity is not expressible from
+    /// outside the BSP. `SpiDevice::transaction` asserts CS on entry and
+    /// deasserts on exit, and one SD command is several transactions — the
+    /// `0xFE` data-token wait is unbounded, so it cannot be folded into a single
+    /// fixed operation list. A driver holding only a `SpiDevice` therefore drops
+    /// CS mid-command no matter how carefully it locks.
+    ///
+    /// The BSP owns both halves, so it can hand them out together: take this
+    /// guard once per command, assert CS yourself, and CS stays low for the
+    /// whole exchange. Drop it between commands (and between busy-poll probes)
+    /// so the display still gets the bus — a full-card erase must not freeze
+    /// the UI.
+    pub struct Spi2CardGuard<'a, CS: OutputPin> {
+        bus: embassy_sync::mutex::MutexGuard<'a, RawMutex, SpiBusType>,
+        cs: &'a mut PresenceCs<CS>,
+    }
+
+    impl<CS: OutputPin> Spi2CardGuard<'_, CS> {
+        /// The bus and the chip-select, borrowed together for one command.
+        pub fn split(&mut self) -> (&mut SpiBusType, &mut PresenceCs<CS>) {
+            (&mut self.bus, self.cs)
+        }
+    }
+
+    impl<CS: OutputPin> Drop for Spi2CardGuard<'_, CS> {
+        /// Deselect the card as the bus is released.
+        ///
+        /// These are the same event: leaving CS low after the guard drops would
+        /// leave the card selected while another master owns the bus, which is
+        /// worse than the mid-command CS drops this guard exists to remove. It
+        /// also lets the driver assert CS once per command and then use `?`
+        /// freely — every early return releases the card by unwinding here.
+        fn drop(&mut self) {
+            let _ = self.cs.set_high();
+        }
+    }
+
+    impl<CS: OutputPin> PreparedCard<CS> {
+        /// Take the bus for ONE command, with the chip-select in hand.
+        ///
+        /// Released on drop. Hold it across a command; drop it between
+        /// commands and between busy probes.
+        pub async fn acquire(&mut self) -> Spi2CardGuard<'_, CS> {
+            Spi2CardGuard { bus: self.bus.lock().await, cs: &mut self.cs }
+        }
+
+        /// The presence-resolved card `SpiDevice`, for drivers that do not need
+        /// CS held across a command.
+        ///
+        /// Retained for existing callers. Prefer [`Self::acquire`]: a driver
+        /// built on this cannot keep CS asserted across the data-token wait,
+        /// because each `SpiDevice` call deasserts it.
         pub fn into_inner(self) -> CardSpiDevice<PresenceCs<CS>> {
-            self.0
+            SpiDeviceWithConfig::new(self.bus, self.cs, sd_init_config())
         }
     }
 
@@ -364,6 +419,20 @@ mod devices {
             self,
             card_cs: CS,
         ) -> Result<(DisplayDriver, CardSpiDevice<CS>), DisplayInitError> {
+            let (driver, bus) = self.finish_bus().await?;
+            Ok((driver, SpiDeviceWithConfig::new(bus, card_cs, sd_init_config())))
+        }
+
+        /// Display bring-up, yielding the SHARED bus rather than a composed
+        /// device.
+        ///
+        /// Split out of [`Self::finish`] so [`Self::finish_sd`] can keep the bus
+        /// and the chip-select as separate pieces — which is what lets a card
+        /// driver hold CS across a whole command. Not generic over `CS`: the
+        /// display path never needed to be.
+        async fn finish_bus(
+            self,
+        ) -> Result<(DisplayDriver, &'static Mutex<RawMutex, SpiBusType>), DisplayInitError> {
             let bus = SPI_BUS.init(Mutex::new(self.bus));
             let display_device =
                 SpiDeviceWithConfig::new(bus, self.display_cs, display_config());
@@ -390,8 +459,7 @@ mod devices {
                 driver
             };
 
-            let card_device = SpiDeviceWithConfig::new(bus, card_cs, sd_init_config());
-            Ok((driver, card_device))
+            Ok((driver, bus))
         }
 
         /// Publish-safe full SD bring-up, layered on [`finish`].
@@ -435,8 +503,8 @@ mod devices {
                 pin: card_cs,
                 frozen: matches!(presence, CardPresence::ForceAbsent),
             };
-            let (driver, card_device) = self.finish(card_cs).await?;
-            Ok((driver, PreparedCard(card_device)))
+            let (driver, bus) = self.finish_bus().await?;
+            Ok((driver, PreparedCard { bus, cs: card_cs }))
         }
     }
 
