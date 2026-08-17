@@ -66,6 +66,97 @@ use esp_hal::{
 /// `SpiDmaBus` is required (the CoreS3 uses GDMA for the same reason).
 pub type SpiBusType = SpiDmaBus<'static, Async>;
 
+/// The shared bus, plus which user the peripheral is currently configured for.
+///
+/// One mutex covers both, so the record cannot disagree with the hardware; a
+/// free-standing `static` could. Any `set_config` from outside (the display
+/// device applies its own per transaction) marks the config foreign, so the
+/// card restates its terms on the next acquire.
+pub struct Spi2Bus {
+    inner: SpiBusType,
+    card_configured: bool,
+}
+
+impl Spi2Bus {
+    fn new(inner: SpiBusType) -> Self {
+        Self { inner, card_configured: false }
+    }
+
+    /// The raw bus, for a holder that has already stated its terms.
+    fn bus(&mut self) -> &mut SpiBusType {
+        &mut self.inner
+    }
+
+    /// Apply `config` unless the card already owns the peripheral's settings.
+    ///
+    /// Conditional because the busy poll acquires ~1000x/s, and reprogramming
+    /// at that rate breaks erase outright.
+    fn configure_for_card(&mut self, config: &SpiConfig) -> Result<(), ConfigError> {
+        if self.card_configured {
+            return Ok(());
+        }
+        self.inner.apply_config(config)?;
+        self.card_configured = true;
+        Ok(())
+    }
+
+    /// Apply the card's config unconditionally and record it — the post-init
+    /// clock raise, made from a live guard.
+    fn apply_for_card(&mut self, config: &SpiConfig) -> Result<(), ConfigError> {
+        self.inner.apply_config(config)?;
+        self.card_configured = true;
+        Ok(())
+    }
+
+    /// Forget who owns the settings — the next card acquire must restate them.
+    fn invalidate(&mut self) {
+        self.card_configured = false;
+    }
+}
+
+/// Only with `display`: the impl exists to hook the display device's
+/// per-transaction config, and that device only exists with the feature.
+#[cfg(feature = "display")]
+impl embassy_embedded_hal::SetConfig for Spi2Bus {
+    type Config = SpiConfig;
+    type ConfigError = ConfigError;
+
+    /// The display applies its own config per transaction, which is exactly
+    /// what makes the card's settings stale — recorded here rather than at a
+    /// call site where it can be forgotten.
+    fn set_config(&mut self, config: &Self::Config) -> Result<(), Self::ConfigError> {
+        self.inner.apply_config(config)?;
+        self.card_configured = false;
+        Ok(())
+    }
+}
+
+use embedded_hal_async::spi::SpiBus as AsyncSpiBus;
+
+impl embedded_hal_async::spi::ErrorType for Spi2Bus {
+    type Error = <SpiBusType as embedded_hal_async::spi::ErrorType>::Error;
+}
+
+/// Delegating, and spelled out: `SpiDmaBus` has inherent BLOCKING methods of
+/// the same names, so plain `self.inner.read(..)` silently picks those.
+impl embedded_hal_async::spi::SpiBus for Spi2Bus {
+    async fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        AsyncSpiBus::read(&mut self.inner, words).await
+    }
+    async fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+        AsyncSpiBus::write(&mut self.inner, words).await
+    }
+    async fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+        AsyncSpiBus::transfer(&mut self.inner, read, write).await
+    }
+    async fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        AsyncSpiBus::transfer_in_place(&mut self.inner, words).await
+    }
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        AsyncSpiBus::flush(&mut self.inner).await
+    }
+}
+
 /// Bus base config: 400 kHz Mode 0 — the clock SD cards require during init.
 /// The app raises the card device's clock (via `SetConfig`) after `init()`.
 pub fn sd_init_config() -> SpiConfig {
@@ -194,6 +285,7 @@ pub use devices::*;
 
 #[cfg(feature = "display")]
 mod devices {
+    use super::Spi2Bus;
     use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
     use embassy_sync::mutex::Mutex;
     use embassy_sync::semaphore::{FairSemaphore, Semaphore};
@@ -207,7 +299,10 @@ mod devices {
     use lcd_async::interface::{Interface, SpiInterface};
     use static_cell::StaticCell;
 
-    use super::{Spi2Parts, Spi2Resources, SpiBusType, display_config, sd_init_config};
+    use super::{
+        ConfigError, Spi2Parts, Spi2Resources, SpiBusType, SpiConfig, display_config,
+        sd_init_config,
+    };
     use crate::board::display::{self, Ili9342c};
 
     /// A device on the shared bus with a plain GPIO chip-select (the display).
@@ -217,9 +312,9 @@ mod devices {
     /// the card takes. Making only the card fair would have moved the
     /// starvation to the display instead of removing it.
     pub type SpiDeviceType<'a> =
-        FairSpiDevice<SpiDeviceWithConfig<'a, RawMutex, SpiBusType, Output<'a>>>;
+        FairSpiDevice<SpiDeviceWithConfig<'a, RawMutex, Spi2Bus, Output<'a>>>;
     /// The SD-card device: CS is generic so the app can wrap it.
-    pub type CardSpiDevice<CS> = SpiDeviceWithConfig<'static, RawMutex, SpiBusType, CS>;
+    pub type CardSpiDevice<CS> = SpiDeviceWithConfig<'static, RawMutex, Spi2Bus, CS>;
 
     /// Whether the SD slot should behave as populated or be forced to degrade.
     ///
@@ -280,8 +375,17 @@ mod devices {
     /// type in its graph; the app supplies only its SD driver:
     /// `SdSpi::new(prepared.into_inner())`.
     pub struct PreparedCard<CS: OutputPin> {
-        bus: &'static Mutex<RawMutex, SpiBusType>,
+        bus: &'static Mutex<RawMutex, Spi2Bus>,
         cs: PresenceCs<CS>,
+        /// The card's bus config, re-applied on every acquire.
+        ///
+        /// Load-bearing, and easy to lose: the DISPLAY device applies 40 MHz to
+        /// this same bus on each of its transactions, so a card command that
+        /// does not re-apply its own config runs at whatever the display left
+        /// behind. `SpiDeviceWithConfig` used to do this per transaction; once
+        /// the driver started driving the bus directly, dropping it silently
+        /// put SD init at 40 MHz and every attempt timed out.
+        config: SpiConfig,
     }
 
     /// A `SpiDevice` that queues for [`SPI2_FAIR`] before each transaction.
@@ -336,9 +440,6 @@ mod devices {
                 return Ok(());
             };
             let waited = queued.elapsed();
-            // This device applies its own config, so the bus is no longer set
-            // up for the card; the next card acquire must restore it.
-            BUS_IS_CARD.store(false, core::sync::atomic::Ordering::Release);
             let r = self.inner.transaction(operations).await;
             let total = queued.elapsed();
             if total.as_millis() > 100 {
@@ -367,7 +468,7 @@ mod devices {
     /// so the display still gets the bus — a full-card erase must not freeze
     /// the UI.
     pub struct Spi2CardGuard<'a, CS: OutputPin> {
-        bus: embassy_sync::mutex::MutexGuard<'a, RawMutex, SpiBusType>,
+        bus: embassy_sync::mutex::MutexGuard<'a, RawMutex, Spi2Bus>,
         cs: &'a mut PresenceCs<CS>,
         /// Held for its `Drop`: returning the permit is what releases our turn.
         _permit: embassy_sync::semaphore::SemaphoreReleaser<
@@ -379,7 +480,33 @@ mod devices {
     impl<CS: OutputPin> Spi2CardGuard<'_, CS> {
         /// The bus and the chip-select, borrowed together for one command.
         pub fn split(&mut self) -> (&mut SpiBusType, &mut PresenceCs<CS>) {
-            (&mut self.bus, self.cs)
+            (self.bus.bus(), self.cs)
+        }
+
+        /// Re-configure the bus while holding it — the SD clock raise after
+        /// `init()`, in practice.
+        ///
+        /// Needed because the card driver no longer holds a `SpiDevice` to
+        /// carry a per-device config: it drives the bus directly, so the clock
+        /// change has to happen here, under the same guard, or the card would
+        /// stay at the 400 kHz init clock for its whole life.
+        pub fn apply_config(
+            &mut self,
+            config: &SpiConfig,
+        ) -> Result<(), ConfigError> {
+            self.bus.apply_for_card(config)
+        }
+    }
+
+    impl<CS: OutputPin> PreparedCard<CS> {
+        /// Change the config re-applied on every acquire — the post-init clock
+        /// raise. Setting it only on a live guard would last exactly one
+        /// command, because the next acquire re-applies the stored one.
+        pub async fn set_config(&mut self, config: SpiConfig) {
+            self.config = config;
+            // Force the next acquire to apply it, or the clock raise would not
+            // take effect until the display happened to run.
+            self.bus.lock().await.invalidate();
         }
     }
 
@@ -409,6 +536,7 @@ mod devices {
             // crate must never `panic!` (conventions/rust-code.md §6), and this
             // is SD/bus code where the house rule is warn-and-degrade — a full
             // queue must cost logging, never the regulator.
+            let cfg = self.config;
             let permit = match SPI2_FAIR.acquire(1).await {
                 Ok(p) => p,
                 Err(_) => {
@@ -416,11 +544,29 @@ mod devices {
                     return None;
                 }
             };
-            Some(Spi2CardGuard {
-                bus: self.bus.lock().await,
-                cs: &mut self.cs,
-                _permit: permit,
-            })
+            let mut bus = self.bus.lock().await;
+            // Re-apply the CARD's config only if the display has been here
+            // since. Reprogramming the peripheral on every acquire breaks the
+            // erase busy poll, which acquires ~1000x/s.
+            let was_foreign = !bus.card_configured;
+            if let Err(e) = bus.configure_for_card(&cfg) {
+                warn!("SPI2: card bus config rejected: {e:?}");
+            }
+            if was_foreign {
+                // CoreS3: GPIO35 is MISO *and* the display's DC line. A panel
+                // transfer drives it as an output and leaves it there, so the
+                // card is inaudible until the pad is handed back — every SD
+                // read then sees an idle-high MISO and the card looks silent.
+                //
+                // This has to happen per ACQUIRE, not once at bring-up: the
+                // driver releases the bus between commands, so the display can
+                // intervene in the middle of a command sequence. It cost a
+                // cores3 SD init, which answered CMD0/CMD8 and then went silent
+                // at CMD55 once a flush had run.
+                #[cfg(feature = "cores3")]
+                crate::board::cores3::gpio35_disable_output();
+            }
+            Some(Spi2CardGuard { bus, cs: &mut self.cs, _permit: permit })
         }
 
         /// The presence-resolved card `SpiDevice`, for drivers that do not need
@@ -504,7 +650,7 @@ mod devices {
         }
     }
 
-    static SPI_BUS: StaticCell<Mutex<RawMutex, SpiBusType>> = StaticCell::new();
+    static SPI_BUS: StaticCell<Mutex<RawMutex, Spi2Bus>> = StaticCell::new();
 
     /// Waiter slots: the card and the display, plus slack so a mid-handover
     /// overlap cannot hit the `MaxWaiters` path.
@@ -526,6 +672,7 @@ mod devices {
     /// most one SD command. Every user takes a permit BEFORE locking the mutex,
     /// so the mutex is only ever held by the permit holder.
     static SPI2_FAIR: FairSemaphore<RawMutex, SPI2_WAITERS> = FairSemaphore::new(1);
+
 
     impl Spi2Parts {
         /// Share the bus, initialise the display, and build the SD-card
@@ -558,8 +705,8 @@ mod devices {
         /// display path never needed to be.
         async fn finish_bus(
             self,
-        ) -> Result<(DisplayDriver, &'static Mutex<RawMutex, SpiBusType>), DisplayInitError> {
-            let bus = SPI_BUS.init(Mutex::new(self.bus));
+        ) -> Result<(DisplayDriver, &'static Mutex<RawMutex, Spi2Bus>), DisplayInitError> {
+            let bus = SPI_BUS.init(Mutex::new(Spi2Bus::new(self.bus)));
             // Wrapped so every panel transfer queues for the SAME permit the
             // card takes. Fairness on one side only would just move the
             // starvation to the other.
@@ -633,7 +780,7 @@ mod devices {
                 frozen: matches!(presence, CardPresence::ForceAbsent),
             };
             let (driver, bus) = self.finish_bus().await?;
-            Ok((driver, PreparedCard { bus, cs: card_cs }))
+            Ok((driver, PreparedCard { bus, cs: card_cs, config: sd_init_config() }))
         }
     }
 
@@ -662,7 +809,7 @@ mod devices {
                 .with_dma(self.spi2_dma)
                 .with_buffers(dma_rx_buf, dma_tx_buf)
                 .into_async();
-            let bus = SPI_BUS.init(Mutex::new(spi));
+            let bus = SPI_BUS.init(Mutex::new(Spi2Bus::new(spi)));
             let display_cs = Output::new(self.display_cs, Level::High, OutputConfig::default());
             let dc = Output::new(self.miso_dc, Level::Low, OutputConfig::default());
             // Fair-wrapped like the shared path. These entry points are
@@ -697,7 +844,7 @@ mod devices {
                 .with_dma(self.spi2_dma)
                 .with_buffers(dma_rx_buf, dma_tx_buf)
                 .into_async();
-            let bus = SPI_BUS.init(Mutex::new(spi));
+            let bus = SPI_BUS.init(Mutex::new(Spi2Bus::new(spi)));
             let display_cs = Output::new(self.display_cs, Level::High, OutputConfig::default());
             let dc = Output::new(self.display_dc, Level::Low, OutputConfig::default());
             let rst = Output::new(self.display_rst, Level::Low, OutputConfig::default());
