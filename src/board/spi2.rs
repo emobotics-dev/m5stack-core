@@ -196,6 +196,7 @@ pub use devices::*;
 mod devices {
     use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
     use embassy_sync::mutex::Mutex;
+    use embassy_sync::semaphore::{FairSemaphore, Semaphore};
     use embedded_hal::digital::{ErrorType, OutputPin};
     use esp_hal::{
         dma::{DmaRxBuf, DmaTxBuf},
@@ -210,7 +211,13 @@ mod devices {
     use crate::board::display::{self, Ili9342c};
 
     /// A device on the shared bus with a plain GPIO chip-select (the display).
-    pub type SpiDeviceType<'a> = SpiDeviceWithConfig<'a, RawMutex, SpiBusType, Output<'a>>;
+    /// The display's SPI device, fairly arbitrated.
+    ///
+    /// Wrapped rather than raw so a panel transfer queues for the same permit
+    /// the card takes. Making only the card fair would have moved the
+    /// starvation to the display instead of removing it.
+    pub type SpiDeviceType<'a> =
+        FairSpiDevice<SpiDeviceWithConfig<'a, RawMutex, SpiBusType, Output<'a>>>;
     /// The SD-card device: CS is generic so the app can wrap it.
     pub type CardSpiDevice<CS> = SpiDeviceWithConfig<'static, RawMutex, SpiBusType, CS>;
 
@@ -277,6 +284,74 @@ mod devices {
         cs: PresenceCs<CS>,
     }
 
+    /// A `SpiDevice` that queues for [`SPI2_FAIR`] before each transaction.
+    ///
+    /// The display holds the bus for a whole panel transfer, so without this the
+    /// card's 1 ms-cadence busy-poll never gets in. With it, both users are
+    /// served in arrival order and neither can monopolise the bus.
+    pub struct FairSpiDevice<D> {
+        inner: D,
+    }
+
+    impl<D> FairSpiDevice<D> {
+        pub fn new(inner: D) -> Self {
+            Self { inner }
+        }
+    }
+
+    impl<'a, M, BUS, CS> FairSpiDevice<SpiDeviceWithConfig<'a, M, BUS, CS>>
+    where
+        M: embassy_sync::blocking_mutex::raw::RawMutex,
+        BUS: embassy_embedded_hal::SetConfig,
+    {
+        /// Re-configure the underlying device (e.g. raise the SD clock after
+        /// init). Delegates, so callers keep the wrapper — and with it the
+        /// fairness — instead of having to unwrap to reach the setter.
+        pub fn set_config(&mut self, config: BUS::Config) {
+            self.inner.set_config(config)
+        }
+    }
+
+    impl<D: embedded_hal_async::spi::ErrorType> embedded_hal_async::spi::ErrorType
+        for FairSpiDevice<D>
+    {
+        type Error = D::Error;
+    }
+
+    impl<D: embedded_hal_async::spi::SpiDevice> embedded_hal_async::spi::SpiDevice
+        for FairSpiDevice<D>
+    {
+        async fn transaction(
+            &mut self,
+            operations: &mut [embedded_hal_async::spi::Operation<'_, u8>],
+        ) -> Result<(), Self::Error> {
+            let queued = embassy_time::Instant::now();
+            // A full waiter queue must NOT fall through to an unpermitted
+            // transaction. `let _permit = acquire()` bound the RESULT, so on
+            // `Err` this drove the bus with no mutual exclusion at all, while
+            // the card may have been holding it. Drop the frame instead — the
+            // card path degrades the same way and a lost frame costs a redraw.
+            let Ok(_permit) = SPI2_FAIR.acquire(1).await else {
+                warn!("SPI2: waiter queue full, display dropped a frame");
+                return Ok(());
+            };
+            let waited = queued.elapsed();
+            // This device applies its own config, so the bus is no longer set
+            // up for the card; the next card acquire must restore it.
+            BUS_IS_CARD.store(false, core::sync::atomic::Ordering::Release);
+            let r = self.inner.transaction(operations).await;
+            let total = queued.elapsed();
+            if total.as_millis() > 100 {
+                warn!(
+                    "SPI2: display transaction {} ms ({} ms of it waiting for the bus)",
+                    total.as_millis(),
+                    waited.as_millis()
+                );
+            }
+            r
+        }
+    }
+
     /// The SPI2 bus and the card's chip-select, held together.
     ///
     /// This exists because chip-select continuity is not expressible from
@@ -294,6 +369,11 @@ mod devices {
     pub struct Spi2CardGuard<'a, CS: OutputPin> {
         bus: embassy_sync::mutex::MutexGuard<'a, RawMutex, SpiBusType>,
         cs: &'a mut PresenceCs<CS>,
+        /// Held for its `Drop`: returning the permit is what releases our turn.
+        _permit: embassy_sync::semaphore::SemaphoreReleaser<
+            'a,
+            FairSemaphore<RawMutex, SPI2_WAITERS>,
+        >,
     }
 
     impl<CS: OutputPin> Spi2CardGuard<'_, CS> {
@@ -321,8 +401,26 @@ mod devices {
         ///
         /// Released on drop. Hold it across a command; drop it between
         /// commands and between busy probes.
-        pub async fn acquire(&mut self) -> Spi2CardGuard<'_, CS> {
-            Spi2CardGuard { bus: self.bus.lock().await, cs: &mut self.cs }
+        pub async fn acquire(&mut self) -> Option<Spi2CardGuard<'_, CS>> {
+            // Permit FIRST, then the mutex. Arrival order decides who goes
+            // next; the mutex is uncontended by the time we take it.
+            //
+            // `None`, not a panic, when the waiter queue is full: a library
+            // crate must never `panic!` (conventions/rust-code.md §6), and this
+            // is SD/bus code where the house rule is warn-and-degrade — a full
+            // queue must cost logging, never the regulator.
+            let permit = match SPI2_FAIR.acquire(1).await {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!("SPI2: waiter queue full, card could not take the bus");
+                    return None;
+                }
+            };
+            Some(Spi2CardGuard {
+                bus: self.bus.lock().await,
+                cs: &mut self.cs,
+                _permit: permit,
+            })
         }
 
         /// The presence-resolved card `SpiDevice`, for drivers that do not need
@@ -331,8 +429,15 @@ mod devices {
         /// Retained for existing callers. Prefer [`Self::acquire`]: a driver
         /// built on this cannot keep CS asserted across the data-token wait,
         /// because each `SpiDevice` call deasserts it.
-        pub fn into_inner(self) -> CardSpiDevice<PresenceCs<CS>> {
-            SpiDeviceWithConfig::new(self.bus, self.cs, sd_init_config())
+        ///
+        /// It IS still fairly arbitrated — the device is wrapped so every
+        /// transaction queues for the same permit the display takes. An earlier
+        /// version handed back the raw `SpiDeviceWithConfig`, which silently
+        /// left the card outside the arbiter: exactly the half-fair
+        /// configuration this change exists to remove, reachable through the
+        /// path the module docs recommend for compatibility.
+        pub fn into_inner(self) -> FairSpiDevice<CardSpiDevice<PresenceCs<CS>>> {
+            FairSpiDevice::new(SpiDeviceWithConfig::new(self.bus, self.cs, sd_init_config()))
         }
     }
 
@@ -401,6 +506,27 @@ mod devices {
 
     static SPI_BUS: StaticCell<Mutex<RawMutex, SpiBusType>> = StaticCell::new();
 
+    /// Waiter slots: the card and the display, plus slack so a mid-handover
+    /// overlap cannot hit the `MaxWaiters` path.
+    const SPI2_WAITERS: usize = 4;
+
+    /// Fair arbiter in FRONT of the bus mutex.
+    ///
+    /// The mutex is still required — `SpiDeviceWithConfig` takes one — but it is
+    /// not FIFO, and the two users are asymmetric: an SD busy-poll offers the
+    /// bus up every 1 ms and asks for it straight back, while a display flush
+    /// holds it for an entire panel transfer (15-30 ms, longer on fire27 with
+    /// LVGL in SPI PSRAM). The flush therefore won repeatedly and the poll
+    /// starved: an erase the card had long finished took seconds to be
+    /// *observed* as finished, and fire27 `:format` drifted 440 ms -> 9434 ms
+    /// while cores3, which renders faster, sat unchanged at ~2850 ms.
+    ///
+    /// Serving permits in arrival order makes both waits structural rather than
+    /// statistical: the poll waits at most one display transfer, the display at
+    /// most one SD command. Every user takes a permit BEFORE locking the mutex,
+    /// so the mutex is only ever held by the permit holder.
+    static SPI2_FAIR: FairSemaphore<RawMutex, SPI2_WAITERS> = FairSemaphore::new(1);
+
     impl Spi2Parts {
         /// Share the bus, initialise the display, and build the SD-card
         /// device.
@@ -434,8 +560,11 @@ mod devices {
             self,
         ) -> Result<(DisplayDriver, &'static Mutex<RawMutex, SpiBusType>), DisplayInitError> {
             let bus = SPI_BUS.init(Mutex::new(self.bus));
+            // Wrapped so every panel transfer queues for the SAME permit the
+            // card takes. Fairness on one side only would just move the
+            // starvation to the other.
             let display_device =
-                SpiDeviceWithConfig::new(bus, self.display_cs, display_config());
+                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, self.display_cs, display_config()));
 
             #[cfg(feature = "cores3")]
             let driver = {
@@ -536,7 +665,12 @@ mod devices {
             let bus = SPI_BUS.init(Mutex::new(spi));
             let display_cs = Output::new(self.display_cs, Level::High, OutputConfig::default());
             let dc = Output::new(self.miso_dc, Level::Low, OutputConfig::default());
-            let device = SpiDeviceWithConfig::new(bus, display_cs, display_config());
+            // Fair-wrapped like the shared path. These entry points are
+            // display-only today, so nothing contends — but leaving one raw
+            // would mean the place that skips the arbiter is the one nobody
+            // re-checks when a second bus user appears.
+            let device =
+                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c(di).await?;
             Ok(DisplayBus { display })
@@ -568,7 +702,12 @@ mod devices {
             let dc = Output::new(self.display_dc, Level::Low, OutputConfig::default());
             let rst = Output::new(self.display_rst, Level::Low, OutputConfig::default());
             let mut backlight = Output::new(self.display_bl, Level::Low, OutputConfig::default());
-            let device = SpiDeviceWithConfig::new(bus, display_cs, display_config());
+            // Fair-wrapped like the shared path. These entry points are
+            // display-only today, so nothing contends — but leaving one raw
+            // would mean the place that skips the arbiter is the one nobody
+            // re-checks when a second bus user appears.
+            let device =
+                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c_with_reset(di, rst).await?;
             backlight.set_high();
