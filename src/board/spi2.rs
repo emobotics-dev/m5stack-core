@@ -395,11 +395,20 @@ mod devices {
     /// served in arrival order and neither can monopolise the bus.
     pub struct FairSpiDevice<D> {
         inner: D,
+        /// Apply the pending display DC level after taking the permit. Set only
+        /// for the display: doing it for the card would drive GPIO35 as an
+        /// output while the card is being read.
+        applies_dc: bool,
     }
 
     impl<D> FairSpiDevice<D> {
         pub fn new(inner: D) -> Self {
-            Self { inner }
+            Self { inner, applies_dc: false }
+        }
+
+        /// The display's device: also owns the GPIO35 DC line on CoreS3.
+        pub fn new_display(inner: D) -> Self {
+            Self { inner, applies_dc: true }
         }
     }
 
@@ -440,6 +449,14 @@ mod devices {
                 return Ok(());
             };
             let waited = queued.elapsed();
+            // DC is part of the display's turn on the bus, not something that
+            // may happen while another master holds it.
+            #[cfg(feature = "cores3")]
+            if self.applies_dc {
+                crate::board::cores3::apply_pending_dc();
+            }
+            #[cfg(not(feature = "cores3"))]
+            let _ = self.applies_dc;
             let r = self.inner.transaction(operations).await;
             let total = queued.elapsed();
             if total.as_millis() > 100 {
@@ -737,7 +754,7 @@ mod devices {
             // card takes. Fairness on one side only would just move the
             // starvation to the other.
             let display_device =
-                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, self.display_cs, display_config()));
+                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, self.display_cs, display_config()));
 
             #[cfg(feature = "cores3")]
             let driver = {
@@ -842,7 +859,7 @@ mod devices {
             // would mean the place that skips the arbiter is the one nobody
             // re-checks when a second bus user appears.
             let device =
-                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
+                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c(di).await?;
             Ok(DisplayBus { display })
@@ -878,7 +895,7 @@ mod devices {
             // would mean the place that skips the arbiter is the one nobody
             // re-checks when a second bus user appears.
             let device =
-                FairSpiDevice::new(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
+                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c_with_reset(di, rst).await?;
             backlight.set_high();

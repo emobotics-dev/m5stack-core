@@ -198,23 +198,47 @@ impl ErrorType for Gpio35Dc {
     type Error = core::convert::Infallible;
 }
 
+/// Pending DC level, applied by [`apply_pending_dc`] when the display actually
+/// owns the bus.
+static DC_LOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 impl OutputPin for Gpio35Dc {
+    // RECORD, do not drive.
+    //
+    // GPIO35 is MISO as well as DC. `SpiInterface` sets DC and *then* awaits the
+    // SPI transfer, and that await now blocks on the shared-bus permit — so a
+    // DC write that took effect immediately would hold GPIO35 as an output
+    // while the SD card is mid-command, and every card response would read back
+    // as 0x00. (Observed exactly so: "unexpected token 0x00",
+    // "CrcMismatch(0, ..)", "UnknownDataResponse(0)".)
+    //
+    // The module docs used to require "no `.await` between a DC write and the
+    // SPI transfer". The fair arbiter introduced one, so the requirement is
+    // enforced here instead of being documented and hoped for: the level is
+    // recorded now and applied in [`apply_pending_dc`] once the permit is held.
     fn set_low(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1tc().write(|w| w.bits(GPIO35_BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(GPIO35_BIT));
-        }
+        DC_LOW.store(true, core::sync::atomic::Ordering::Release);
         Ok(())
     }
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
-        unsafe {
-            let gpio = &*esp_hal::peripherals::GPIO::PTR;
-            gpio.out1_w1ts().write(|w| w.bits(GPIO35_BIT));
-            gpio.enable1_w1ts().write(|w| w.bits(GPIO35_BIT));
-        }
+        DC_LOW.store(false, core::sync::atomic::Ordering::Release);
         Ok(())
+    }
+}
+
+/// Drive GPIO35 to the DC level recorded by [`Gpio35Dc`].
+///
+/// Call ONLY while holding the SPI2 permit: it takes the pad away from MISO.
+pub fn apply_pending_dc() {
+    unsafe {
+        let gpio = &*esp_hal::peripherals::GPIO::PTR;
+        if DC_LOW.load(core::sync::atomic::Ordering::Acquire) {
+            gpio.out1_w1tc().write(|w| w.bits(GPIO35_BIT));
+        } else {
+            gpio.out1_w1ts().write(|w| w.bits(GPIO35_BIT));
+        }
+        gpio.enable1_w1ts().write(|w| w.bits(GPIO35_BIT));
     }
 }
 
