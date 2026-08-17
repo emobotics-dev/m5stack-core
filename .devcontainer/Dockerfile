@@ -2,8 +2,8 @@
 
 # Stage 1: pull the prebuilt ESP Rust toolchain out of the CI image (same image
 # m5stack-core CI runs in), so we don't spend 10-30 min on `espup install`.
-# Keep the `:v7` tag in lockstep with .forgejo/workflows/{ci,build-ci-image}.yml.
-FROM registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7 AS esp-toolchain
+# Keep the `:v8` tag in lockstep with .forgejo/workflows/{ci,build-ci-image}.yml.
+FROM registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8 AS esp-toolchain
 
 # Stage 2: the clco base container + flashing tools.
 # Despite the image name, this is NOT a Claude Code redistribution — it's the clco
@@ -38,8 +38,14 @@ COPY --from=esp-toolchain /opt/rustup           /opt/rustup
 COPY --from=esp-toolchain /opt/cargo            /opt/cargo
 COPY --from=esp-toolchain /opt/esp_elf_bin_path /opt/esp_elf_bin_path
 
+# The nightly toolchain arrives inside /opt/rustup above; its prebuilt Miri
+# sysroot is a separate tree, and MIRI_SYSROOT is what stops a local `cargo
+# +nightly miri test` spending ~2 min rebuilding one.
+COPY --from=esp-toolchain /opt/miri-cache       /opt/miri-cache
+
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
+    MIRI_SYSROOT=/opt/miri-cache/miri \
     PATH="/opt/cargo/bin:${PATH}"
 
 # Let claude write cargo caches at runtime; keep rustup world-readable.

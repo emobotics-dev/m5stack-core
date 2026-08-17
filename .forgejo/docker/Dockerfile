@@ -37,7 +37,8 @@
 # default LLVM 14 — a bare `llvm-cov --version` sanity check used to look like
 # the fix hadn't landed. As of v7: the Xtensa toolchain is 1.97.0.0, the first
 # esp release carrying the generic `Atomic<T>` that `mem::PsramSafe` needs; its
-# embedded LLVM is still 21, so the coverage pin below is unaffected.
+# embedded LLVM is still 21, so the coverage pin below is unaffected. As of v8:
+# a nightly toolchain + miri and its prebuilt sysroot, for the host-crate leg.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -148,5 +149,22 @@ RUN apt-get update -q && \
     ln -sf /usr/lib/llvm-21/bin/llvm-cov /usr/bin/llvm-cov && \
     ln -sf /usr/lib/llvm-21/bin/llvm-profdata /usr/bin/llvm-profdata && \
     cargo install cargo-llvm-cov --locked
+
+# Miri, for ci.yml's host-crate leg. A second toolchain, never used for firmware:
+# miri ships only as a component of a rustup-distributed nightly, and the `esp`
+# toolchain is espup-installed with no component manifest at all — the same wall
+# the llvm-tools block above hit.
+#
+# The sysroot is prebuilt here rather than at run time. Miri interprets a
+# MIR-only std it compiles itself, which costs ~2 min per run, and it caches
+# under $HOME — which differs per runner user, so a run-time build would rarely
+# hit. XDG_CACHE_HOME places it; MIRI_SYSROOT is how every later invocation
+# finds it regardless of who is running.
+RUN rustup toolchain install nightly --profile minimal \
+        --component miri --component rust-src && \
+    XDG_CACHE_HOME=/opt/miri-cache cargo +nightly miri setup && \
+    chmod -R a+rX /opt/miri-cache
+
+ENV MIRI_SYSROOT=/opt/miri-cache/miri
 
 WORKDIR /workspace

@@ -30,7 +30,7 @@ on:
 
 env:
   IMAGE: registry:3000/emobotics/m5stack-core/m5stack-core-ci
-  IMAGE_VERSION: v7
+  IMAGE_VERSION: v8
 
 jobs:
   build-push:

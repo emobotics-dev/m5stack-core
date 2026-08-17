@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # CI: build m5stack-core lib + examples for ESP32 and ESP32-S3.
 #
-# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7 — this
+# Runs inside registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8 — this
 # repo's own reference ESP-BSP CI image (built + pushed by build-ci-image.yml
 # from .forgejo/docker/Dockerfile). It carries the dual-board Xtensa `esp`
 # toolchain (esp32 + esp32s3) and — as of v3 — exports the full ESP cross-build
@@ -56,7 +56,7 @@ env:
 jobs:
   # ── fire27 / ESP32 ──────────────────────────────────────────────────────────
   #
-  # No toolchain-plumbing step in any leg: the m5stack-core-ci:v7 image exports
+  # No toolchain-plumbing step in any leg: the m5stack-core-ci:v8 image exports
   # PATH (xtensa linkers), LIBCLANG_PATH and BINDGEN_EXTRA_CLANG_ARGS itself.
   # These green builds ARE the regression test that the image's exported env is
   # complete — if it weren't, they would fail with `linker not found` or bindgen
@@ -64,7 +64,7 @@ jobs:
   fire27-lib:
     name: fire27 lib
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
   fire27-full:
     name: fire27 all features
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,7 +84,7 @@ jobs:
   fire27-examples:
     name: fire27 examples
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,7 +107,7 @@ jobs:
   cores3-lib:
     name: cores3 lib
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,7 +117,7 @@ jobs:
   cores3-full:
     name: cores3 all features
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -127,7 +127,7 @@ jobs:
   cores3-examples:
     name: cores3 examples
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -147,7 +147,7 @@ jobs:
   host:
     name: host crates
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -171,6 +171,44 @@ jobs:
         working-directory: m5stack-core-build
         run: cargo test
 
+  # ── miri ────────────────────────────────────────────────────────────────────
+  miri:
+    name: miri (host crates)
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The host crates are the CEILING here, not a first instalment. The
+      # library has no test target (`[lib] test = false`, no `#[cfg(test)]`
+      # anywhere), so there is nothing to interpret; asking anyway dies in
+      # esp-hal, where `&*Self::PTR` on a peripheral address is E0080 "dangling
+      # reference ... has no provenance" — MMIO is not an allocation and cannot
+      # become one under Miri's model. Examples are `#![no_main]`, so they carry
+      # no test harness either. Note also what this leg does NOT cover: the only
+      # `unsafe` in the repo is serial.rs's two ioctls, reachable solely through
+      # a real tty, so every test that touches them is `#[ignore]`d.
+      #
+      # `cd /tmp` deliberately inverts the rule the `host` leg above states.
+      # Miri builds its own MIR-only sysroot by running cargo in the CURRENT
+      # DIRECTORY, so inside the repo it inherits `build-std` from
+      # .cargo/config.toml, stacks it on the sysroot's own `core`, and dies with
+      # E0464 "multiple candidates for `rmeta` dependency `core`". Outside the
+      # tree no repo config applies — which is what is wanted, because nightly
+      # ships a prebuilt host std and the build-std those crate configs exist to
+      # provide is precisely what must not happen here.
+      - name: Miri (build helper)
+        run: cd /tmp && cargo +nightly miri test --manifest-path "$GITHUB_WORKSPACE/m5stack-core-build/Cargo.toml"
+
+      # Isolation is disabled only here, and only because it is load-bearing: a
+      # `flash` test opens a fixture file, which Miri refuses under isolation.
+      # The build helper keeps the stricter default.
+      - name: Miri (HIL harness)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cd /tmp && cargo +nightly miri test --manifest-path "$GITHUB_WORKSPACE/m5stack-core-hil/Cargo.toml"
+
   # DO NOT RENAME: master's protection requires this exact context string, so
   # renaming silently disarms the gate — a required check that stops existing
   # never reports, green by absence (#52). `if: always()` for the same reason: a
@@ -186,8 +224,9 @@ jobs:
       - cores3-full
       - cores3-examples
       - host
+      - miri
     runs-on: [rust, esp32]
-    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v7
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
       - name: Verify every leg succeeded
         env:
@@ -199,6 +238,7 @@ jobs:
             cores3-full=${{ needs.cores3-full.result }}
             cores3-examples=${{ needs.cores3-examples.result }}
             host=${{ needs.host.result }}
+            miri=${{ needs.miri.result }}
         run: |
           set -eu
           rc=0
