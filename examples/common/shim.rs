@@ -17,7 +17,7 @@ pub fn init_console(spawner: Spawner, serial: SerialResources) -> Console {
     // console (and the host's `detect_crash` grep).
     let crumb = console::take_panic_breadcrumb();
     let console =
-        console::install(spawner, Config { serial: Some(serial), level: log::LevelFilter::Info });
+        console::install(spawner, Config { serial: Some(serial), filter: "info" });
     if let Some(c) = crumb {
         log::warn!("{} @ {} (reason {:#010x})", console::markers::PREV_PANIC, c.location, c.reason);
     }
