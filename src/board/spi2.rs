@@ -439,6 +439,7 @@ mod devices {
             operations: &mut [embedded_hal_async::spi::Operation<'_, u8>],
         ) -> Result<(), Self::Error> {
             let queued = embassy_time::Instant::now();
+            DISP_ENTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             // A full waiter queue must NOT fall through to an unpermitted
             // transaction. `let _permit = acquire()` bound the RESULT, so on
             // `Err` this drove the bus with no mutual exclusion at all, while
@@ -448,6 +449,15 @@ mod devices {
                 warn!("SPI2: waiter queue full, display dropped a frame");
                 return Ok(());
             };
+            DISP_GOT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            // From a Drop: a cancelled frame unwinds and would look like a leak.
+            struct RelOnDrop;
+            impl Drop for RelOnDrop {
+                fn drop(&mut self) {
+                    DISP_REL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            let _rel = RelOnDrop;
             let waited = queued.elapsed();
             // DC is part of the display's turn on the bus, not something that
             // may happen while another master holds it.
@@ -537,6 +547,7 @@ mod devices {
         /// freely — every early return releases the card by unwinding here.
         fn drop(&mut self) {
             let _ = self.cs.set_high();
+            CARD_REL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -554,6 +565,7 @@ mod devices {
             // is SD/bus code where the house rule is warn-and-degrade — a full
             // queue must cost logging, never the regulator.
             let cfg = self.config;
+            CARD_ENTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let permit = match SPI2_FAIR.acquire(1).await {
                 Ok(p) => p,
                 Err(_) => {
@@ -561,6 +573,7 @@ mod devices {
                     return None;
                 }
             };
+            CARD_GOT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let mut bus = self.bus.lock().await;
             // Re-apply the CARD's config only if the display has been here
             // since. Reprogramming the peripheral on every acquire breaks the
@@ -716,6 +729,20 @@ mod devices {
     /// so the mutex is only ever held by the permit holder.
     static SPI2_FAIR: FairSemaphore<RawMutex, SPI2_WAITERS> = FairSemaphore::new(1);
 
+    /// Bus-permit accounting: `GOT - REL` per side is what that side holds.
+    /// Separates a holder parked mid-command from a lost permit from a queue
+    /// whose head is never polled — indistinguishable from outside.
+    pub static CARD_ENTER: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    /// Card permits granted. See [`CARD_ENTER`].
+    pub static CARD_GOT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    /// Card permits released. See [`CARD_ENTER`].
+    pub static CARD_REL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    /// Display arrivals at the permit queue. See [`CARD_ENTER`].
+    pub static DISP_ENTER: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    /// Display permits granted. See [`CARD_ENTER`].
+    pub static DISP_GOT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    /// Display permits released. See [`CARD_ENTER`].
+    pub static DISP_REL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
     impl Spi2Parts {
         /// Share the bus, initialise the display, and build the SD-card
