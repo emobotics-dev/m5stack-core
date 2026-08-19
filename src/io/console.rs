@@ -342,12 +342,105 @@ fn push_line(level: &str, args: core::fmt::Arguments<'_>) {
 
 struct ConsoleLogger;
 
+/// Filter spec supplied by the application at [`init`] — the console is the
+/// `log` backend and implements the mechanism, the app owns the policy.
+/// `env_logger` syntax: `info,sdspi=debug`; the longest matching
+/// `target=level` directive wins, a bare level is the default.
+///
+/// Held as a raw pointer pair, not behind a mutex: `enabled` runs on EVERY
+/// log macro that passes `log`'s own atomic gate, and taking a critical
+/// section there to read a `&'static str` would cost more than the filtering.
+/// Written once in `init` before any task logs; reads are relaxed and see
+/// either null (pre-init, treated as the default) or the final value.
+static SPEC_PTR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static SPEC_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// Level of the spec's bare directive — the common case, answered without
+/// touching the spec string at all.
+static DEFAULT_LEVEL: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(3);
+/// Whether any `target=level` directive exists. When none do (production
+/// `"info"`), `enabled` is one relaxed load and a compare, as it was before
+/// per-module filtering existed.
+static HAS_DIRECTIVES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn spec() -> &'static str {
+    use core::sync::atomic::Ordering::Relaxed;
+    let ptr = SPEC_PTR.load(Relaxed) as *const u8;
+    if ptr.is_null() {
+        return "info";
+    }
+    // SAFETY: written once in `init` from a `&'static str`; never mutated.
+    unsafe {
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, SPEC_LEN.load(Relaxed)))
+    }
+}
+
+fn level_from_u8(v: u8) -> log::LevelFilter {
+    match v {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Error,
+        2 => log::LevelFilter::Warn,
+        3 => log::LevelFilter::Info,
+        4 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    }
+}
+
+fn level_of(s: &str) -> Option<log::LevelFilter> {
+    match s.as_bytes() {
+        b"off" => Some(log::LevelFilter::Off),
+        b"error" => Some(log::LevelFilter::Error),
+        b"warn" => Some(log::LevelFilter::Warn),
+        b"info" => Some(log::LevelFilter::Info),
+        b"debug" => Some(log::LevelFilter::Debug),
+        b"trace" => Some(log::LevelFilter::Trace),
+        _ => None,
+    }
+}
+
+fn filter_for(target: &str) -> log::LevelFilter {
+    let spec = spec();
+    let mut best = log::LevelFilter::Info;
+    let mut best_len = 0;
+    for directive in spec.split(',') {
+        match directive.split_once('=') {
+            None => {
+                if best_len == 0 {
+                    best = level_of(directive.trim()).unwrap_or(log::LevelFilter::Info);
+                }
+            }
+            Some((prefix, level)) => {
+                let prefix = prefix.trim();
+                if target.starts_with(prefix) && prefix.len() > best_len {
+                    if let Some(l) = level_of(level.trim()) {
+                        best = l;
+                        best_len = prefix.len();
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 impl log::Log for ConsoleLogger {
-    fn enabled(&self, _: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, meta: &log::Metadata) -> bool {
+        use core::sync::atomic::Ordering::Relaxed;
+        // Fast path, and the only one production takes: anything at or above
+        // the default level passes without looking at the spec.
+        if meta.level() <= level_from_u8(DEFAULT_LEVEL.load(Relaxed)) {
+            return true;
+        }
+        // Below the default, and no per-target directive can raise it.
+        if !HAS_DIRECTIVES.load(Relaxed) {
+            return false;
+        }
+        meta.level() <= filter_for(meta.target())
     }
 
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
         // Format level as a string so the column width matches the prior layout
         // exactly (existing log scrapers depend on it).
         let lvl = match record.level() {
@@ -369,14 +462,43 @@ static LOGGER: ConsoleLogger = ConsoleLogger;
 /// ring is statically initialised, so producers can write immediately —
 /// pre-[`drain_task`] writes simply accumulate in the ring and are flushed
 /// once the drain runs.
-pub fn init() {
-    init_with_level(log::LevelFilter::Info);
-}
-
-/// Like [`init`] but with an explicit max level (used by [`install`]).
-fn init_with_level(level: log::LevelFilter) {
+/// `spec` is an `env_logger`-style filter (`info,sdspi=debug`), typically the
+/// app's `ESP_LOG` read at the APP's compile time — the console previously
+/// hardcoded Info here, which silently discarded every `module=debug`
+/// directive from the day esp-println (whose logger parsed `ESP_LOG`) was
+/// dropped.
+pub fn init(spec: &'static str) {
+    use core::sync::atomic::Ordering::Relaxed;
+    SPEC_LEN.store(spec.len(), Relaxed);
+    SPEC_PTR.store(spec.as_ptr() as usize, Relaxed);
+    let mut default = log::LevelFilter::Info;
+    let mut directives = false;
+    for directive in spec.split(',') {
+        match directive.split_once('=') {
+            None => default = level_of(directive.trim()).unwrap_or(default),
+            Some(_) => directives = true,
+        }
+    }
+    DEFAULT_LEVEL.store(default as u8, Relaxed);
+    HAS_DIRECTIVES.store(directives, Relaxed);
+    // Global gate = the most verbose level any directive asks for; per-target
+    // narrowing happens in `enabled`.
+    let mut max = log::LevelFilter::Info;
+    for directive in spec.split(',') {
+        let level = directive.split_once('=').map(|(_, l)| l).unwrap_or(directive);
+        if let Some(l) = level_of(level.trim()) {
+            if l > max {
+                max = l;
+            }
+        }
+    }
     let _ = log::set_logger(&LOGGER);
-    log::set_max_level(level);
+    log::set_max_level(max);
+    // Liveness self-test: one debug!-level line, enabled by a directive in the
+    // HIL builds' filter spec. The debug channel was once dead for 11 weeks
+    // with nothing anywhere failing; the harness asserts this marker at boot,
+    // so a dead filter now fails every HIL run instead of no test ever.
+    log::debug!("{} spec={}", markers::DBG_SELFTEST, spec);
 }
 
 /// Stable, greppable log markers that the HIL `detect_crash` contract keys on.
@@ -385,6 +507,9 @@ fn init_with_level(level: log::LevelFilter) {
 pub mod markers {
     /// Emitted by [`super::on_panic`] before halt.
     pub const PANIC: &str = "[PANIC]";
+    /// Emitted at `debug!` level by [`super::init`] — proves the level filter
+    /// passes debug when a directive asks for it. HIL asserts it at boot.
+    pub const DBG_SELFTEST: &str = "[dbg-selftest]";
     /// Prefix of the drain's ring-overrun marker (` <n>B]` follows).
     pub const CONSOLE_DROP: &str = "[CONSOLE-DROP";
     /// Logged once at boot when a previous-run panic breadcrumb is read back.
@@ -403,8 +528,9 @@ pub mod markers {
 pub struct Config {
     /// The chip's serial peripheral bundle, or `None` for a serial-free build.
     pub serial: Option<SerialResources>,
-    /// Global `log` max level.
-    pub level: log::LevelFilter,
+    /// `env_logger`-style filter spec (`info,module=debug`) — the app's
+    /// policy, typically its `ESP_LOG` read at the app's compile time.
+    pub filter: &'static str,
 }
 
 /// What [`install`] hands back: the console RX half, when a transport was
@@ -416,7 +542,7 @@ pub struct Console {
     pub rx: Option<ConsoleRx<'static>>,
 }
 
-/// One-call console bring-up: register the `log` backend at `cfg.level` and,
+/// One-call console bring-up: register the `log` backend with `cfg.filter` and,
 /// when `cfg.serial` is `Some`, build the chip's transport + spawn the single
 /// [`drain_task`]. Replaces the hand-wired `init()` + `setup()` + drain-spawn
 /// sequence in every binary. Call once from main (the core that owns the drain;
@@ -425,7 +551,7 @@ pub struct Console {
 /// Returns a [`Console`] whose `rx` (when present) goes to the serial-command
 /// reader so log TX and command RX share the one port (R7).
 pub fn install(spawner: embassy_executor::Spawner, cfg: Config) -> Console {
-    init_with_level(cfg.level);
+    init(cfg.filter);
     let console = {
         #[cfg(feature = "console-serial")]
         {
