@@ -157,7 +157,7 @@ ex-ui-app-core     = ["ex-ui-flush-thread"]
 # the same versions, plus SPI/DMA patches the examples need) via the rev-pinned
 # [patch.crates-io] below, which `cargo publish` ignores.
 esp-alloc           = { version = "=0.10.0", optional = true }
-esp-hal             = { version = "=1.1.1", features = ["unstable"] }
+esp-hal             = { version = "=1.1.2", features = ["unstable"] }
 esp-radio           = { version = "=0.18.0", features = ["esp-alloc", "unstable"] }
 esp-sync            = { version = "=0.2.1" }
 # Bootloader integration — needed only by the `heap` feature: `init_heap`'s
@@ -215,17 +215,17 @@ thiserror-no-std    = "2.0.2"
 # not the floating `local` branch, so builds are reproducible. `cargo publish`
 # ignores [patch], so downstream consumers resolve the stock crates.io versions.
 [patch.crates-io]
-esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
 # oxivgl's `rtos-sem` asks for the crates.io release; the examples use the fork.
 # Without this they resolve to two crates and the semaphore handle oxivgl returns
 # is a different type from the one esp-rtos registers.
-esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
 
 [workspace]
 # `m5stack-core-build` is a HOST crate, and a member — including an implicit one,
@@ -373,17 +373,17 @@ oxivgl-sys           = { workspace = true }
 
 [workspace.dependencies]
 # esp-hal family (emobotics fork, pinned rev)
-esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["internal-heap-stats"] }
-esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["panic-handler", "custom-halt", "colors", "println"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["unstable"] }
-esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["log-04", "colors", "timestamp"], default-features = false }
-esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8", features = ["embassy", "esp-radio"] }
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["log-04", "colors", "timestamp"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["embassy", "esp-radio"] }
 # Native threads and semaphores. esp-rtos exposes neither on its own surface —
 # these are the primitives esp-radio's WiFi/BT internals use, registered by
 # `esp_rtos::start()`. Examples only: the library must stay crates.io-resolvable.
-esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
-esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "2fca1aa40b447443aae497246d9fdddaf26d15b8" }
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
 # CoreS3 logging/panic (USB-Serial-JTAG)
 panic-halt           = "1.0.0"
 rtt-target           = { version = "0.6.2", features = ["log"] }
