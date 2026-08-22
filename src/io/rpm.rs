@@ -59,11 +59,7 @@ const NO_SIGNAL_INTERVALS: u32 = 30;
 /// Between the "stopped" and "no signal" transitions the callback is
 /// silent, which lets HIL-injected values stick once the rig has been
 /// idle long enough.
-pub async fn pulse_loop(
-    resources: RpmResources<'static>,
-    config: RpmConfig,
-    on_pulse_hz: fn(f32),
-) {
+pub async fn pulse_loop(resources: RpmResources<'static>, config: RpmConfig, on_pulse_hz: fn(f32)) {
     let mut pcnt_driver = resources.into_driver();
     let mut ticker = Ticker::every(Duration::from_millis(config.loop_time_ms));
     let mut zero_intervals: u32 = 0;
@@ -76,9 +72,9 @@ pub async fn pulse_loop(
             let prev = zero_intervals;
             zero_intervals = zero_intervals.saturating_add(1);
             if prev == 0 {
-                on_pulse_hz(0.0);           // transition: running → stopped
+                on_pulse_hz(0.0); // transition: running → stopped
             } else if prev == NO_SIGNAL_INTERVALS {
-                on_pulse_hz(f32::NAN);      // transition: stopped → no signal
+                on_pulse_hz(f32::NAN); // transition: stopped → no signal
             }
             // else: PROCESS_DATA untouched
         }

@@ -75,7 +75,9 @@ impl Gauge {
     pub fn new(mode: &str) -> Result<Self, WidgetError> {
         let screen = Screen::active().expect("no active screen");
         let bg = Style::new(|s| {
-            s.bg_color_hex(0x0d1117).bg_opa(255).text_color_hex(0xffffff);
+            s.bg_color_hex(0x0d1117)
+                .bg_opa(255)
+                .text_color_hex(0xffffff);
         });
         screen.add_style(&bg, Selector::DEFAULT);
 
@@ -98,20 +100,28 @@ impl Gauge {
         bar.set_range_raw(0, 100);
         bar.set_value_raw(0, false);
 
-
         // Eight independent bars for the object-count profile. Untouched by the
         // other profiles, and an untouched widget is never invalidated, so they
         // cost nothing when idle.
         let mut many: heapless::Vec<Bar<'static>, 8> = heapless::Vec::new();
         for i in 0..8 {
             let bar = Bar::new(&screen)?;
-            bar.size(28, 10).align(Align::TopLeft, 6 + (i as i32) * 38, 24);
+            bar.size(28, 10)
+                .align(Align::TopLeft, 6 + (i as i32) * 38, 24);
             bar.set_range_raw(0, 100);
             bar.set_value_raw(0, false);
             let _ = many.push(bar);
         }
 
-        Ok(Self { screen, many, arc, bar, readout, value: 0, dir: 1 })
+        Ok(Self {
+            screen,
+            many,
+            arc,
+            bar,
+            readout,
+            value: 0,
+            dir: 1,
+        })
     }
 
     /// Resize the arc for the current profile. Only called on a profile change,
@@ -172,5 +182,4 @@ impl Gauge {
             Load::Idle => {}
         }
     }
-
 }

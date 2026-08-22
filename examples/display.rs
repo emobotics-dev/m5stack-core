@@ -14,8 +14,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::board::{self, ButtonAction, ButtonId, INPUT_KIND, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use embassy_executor::Spawner;
 use static_cell::make_static;
 
@@ -66,7 +66,11 @@ async fn main(spawner: Spawner) {
 }
 
 /// Render the three-position last-action readout through the shared panel.
-async fn render(display: &mut board::Lcd, strip_buf: &mut [u8], slots: &[alloc::string::String; 3]) {
+async fn render(
+    display: &mut board::Lcd,
+    strip_buf: &mut [u8],
+    slots: &[alloc::string::String; 3],
+) {
     let l = alloc::format!("Left  : {}", slots[0]);
     let c = alloc::format!("Center: {}", slots[1]);
     let r = alloc::format!("Right : {}", slots[2]);

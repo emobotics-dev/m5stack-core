@@ -21,7 +21,7 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
 - Before releasing, verify **both halves** of the gate:
   1. `cargo package --no-verify`, then confirm the packaged `Cargo.toml` has no
      `git =` / `[patch]` (only the `[lib]` `path = "src/lib.rs"`).
-  2. `cargo package --list` shows **exactly 51 files** — `src/`, `tools/`, `docs/` and the
+  2. `cargo package --list` shows **exactly 52 files** — `src/`, `tools/`, `docs/` and the
      named top-level assets. A surprise means `[package] include` needs a
      deliberate edit, never a `--allow-dirty` shrug (#59).
 
@@ -40,20 +40,23 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
 
 ## Dependency policy
 
-**Latest-and-greatest, except where the esp-hal 1.1.1 stack forbids it.** Track
+**Latest-and-greatest, except where the esp-hal 1.1.2 stack forbids it.** Track
 the newest version of everything; the only legitimate reason to hold a dep back
 is a constraint imposed by esp-hal/esp-radio/esp-alloc/esp-sync (or by another
 dep that is itself already at its latest).
 
 A hold must say *why*, inline, and the reason must be **verified rather than
 assumed** — attempt the bump and record what actually breaks. Re-verified
-2026-08-01 by doing exactly that:
+2026-08-22 against the esp-hal **1.1.2** stack by doing exactly that; all three
+still hold. Note the trap that pass exposed: `heap` is what gates
+`dep:allocator-api2`, so a `--features fire27` build never compiles it and
+"passes" without proving anything:
 
 | held | latest | what happens on bump |
 |---|---|---|
 | `allocator-api2` 0.3 | 0.4 | `E0277` at `src/mem.rs:351` — esp-alloc 0.10 implements **0.3**'s `Allocator` for `Internal`/`ExternalMemory`; 0.4 is a different trait ("expected"/"found" both named `Allocator`) |
 | `fixed` 1.29 | 1.31 | resolution fails — 1.30+ needs `az ^1.3`, embedded-graphics 0.8.2 needs `az ~1.2.0` (a **normal** dep, and e-g is already latest) |
-| `trouble-host` 0.6 | 0.7 | cargo *does* resolve it, compiling bt-hci 0.8.1 **and** 0.9.0 side by side. Port `ble.rs` first (0.7 moved the controller into `HostResources`' first generic, and `build()` yields a `Stack`) — the pre-port errors are misleading. The real blocker then shows plainly: `BleConnector: bt_hci::transport::Transport` unsatisfied, with *"expected `FromHciBytesError`, found `FromHciBytesError`"* — the two-versions signature. Gated on **esp-radio**, not esp-hal: 0.18.0 wants `esp-hal ~1.1.0-rc.0` (1.1.1 satisfies it), and **no published esp-radio uses bt-hci 0.9**, not even `1.0.0-beta.0` |
+| `trouble-host` 0.6 | 0.7 | cargo *does* resolve it, compiling bt-hci 0.8.1 **and** 0.9.0 side by side. Port `ble.rs` first (0.7 moved the controller into `HostResources`' first generic, and `build()` yields a `Stack`) — the pre-port errors are misleading. The real blocker then shows plainly: `BleConnector: bt_hci::transport::Transport` unsatisfied, with *"expected `FromHciBytesError`, found `FromHciBytesError`"* — the two-versions signature. Gated on **esp-radio**, not esp-hal: 0.18.0 wants `esp-hal ~1.1.0-rc.0` (1.1.2 satisfies it), and **no published esp-radio uses bt-hci 0.9**, not even `1.0.0-beta.0`, which is still on `bt-hci ^0.8.0` |
 
 `cargo update --workspace` locking 0 packages is the quick check that nothing
 else has drifted. MSRV is **1.96** — the first version with the generic

@@ -16,8 +16,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel, wheel};
 use crate::common::board::{self, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel, wheel};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use m5stack_core::driver::sk6812::{Rgb, Sk6812Driver};
@@ -48,9 +48,14 @@ async fn main(spawner: Spawner) {
 
     loop {
         let mut lines: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-        lines.push(alloc::string::String::from(board::battery_line(i2c).await.as_str()));
+        lines.push(alloc::string::String::from(
+            board::battery_line(i2c).await.as_str(),
+        ));
         #[cfg(feature = "cores3")]
-        lines.push(alloc::format!("5V bus: {}", if bus_5v_on { "ON" } else { "OFF" }));
+        lines.push(alloc::format!(
+            "5V bus: {}",
+            if bus_5v_on { "ON" } else { "OFF" }
+        ));
         lines.push(alloc::string::String::from("LEDs cycle on M-Bus 23"));
         let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         draw_panel(&mut display, &mut strip_buf[..], NAME, "M5GO", &refs).await;

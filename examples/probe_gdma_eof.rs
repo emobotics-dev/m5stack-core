@@ -94,14 +94,22 @@ static ISR_FIRED: AtomicU32 = AtomicU32::new(0);
 /// the level-triggered line deasserts.
 #[handler(priority = Priority::Priority1)]
 fn spi2_trans_done_handler() {
-    let suc_eof = DMA::regs().ch(DMA_CHANNEL).in_int().raw().read().in_suc_eof().bit();
+    let suc_eof = DMA::regs()
+        .ch(DMA_CHANNEL)
+        .in_int()
+        .raw()
+        .read()
+        .in_suc_eof()
+        .bit();
     if suc_eof {
         EOF_ALREADY_SET.fetch_add(1, Ordering::Relaxed);
     } else {
         EOF_NOT_YET_SET.fetch_add(1, Ordering::Relaxed);
     }
     ISR_FIRED.fetch_add(1, Ordering::Relaxed);
-    SPI2::regs().dma_int_clr().write(|w| w.trans_done().clear_bit_by_one());
+    SPI2::regs()
+        .dma_int_clr()
+        .write(|w| w.trans_done().clear_bit_by_one());
 }
 
 /// Let the BSP console's drain task run between blocking stretches.
@@ -119,17 +127,26 @@ async fn main(_spawner: Spawner) {
     esp_rtos::start(AnyTimer::from(tg0.timer0), sw_int.software_interrupt0);
     let _console = shim::init_console(_spawner, board::console_serial(p.USB_DEVICE));
 
-    log::info!("#16 GDMA IN_SUC_EOF-vs-TRANS_DONE timing probe on {}", board::NAME);
+    log::info!(
+        "#16 GDMA IN_SUC_EOF-vs-TRANS_DONE timing probe on {}",
+        board::NAME
+    );
     drain().await;
 
-    let (sclk, mosi, cs) = (AnyPin::from(p.GPIO5), AnyPin::from(p.GPIO6), AnyPin::from(p.GPIO7));
+    let (sclk, mosi, cs) = (
+        AnyPin::from(p.GPIO5),
+        AnyPin::from(p.GPIO6),
+        AnyPin::from(p.GPIO7),
+    );
     // SAFETY: same self-loopback trick as spi_cmd_probe.rs — MOSI driven out,
     // its own clone read back in as MISO. Only free M-Bus pads are touched.
     let miso = unsafe { mosi.clone_unchecked() };
 
     let mut spi_dma = SpiMaster::new(
         p.SPI2,
-        SpiConfig::default().with_frequency(Rate::from_mhz(1)).with_mode(Mode::_0),
+        SpiConfig::default()
+            .with_frequency(Rate::from_mhz(1))
+            .with_mode(Mode::_0),
     )
     .expect("SPI2 master init")
     .with_sck(sclk)
@@ -152,7 +169,11 @@ async fn main(_spawner: Spawner) {
     for &len in &LENGTHS {
         for &mhz in &CLOCKS_MHZ {
             spi_dma
-                .apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(mhz)).with_mode(Mode::_0))
+                .apply_config(
+                    &SpiConfig::default()
+                        .with_frequency(Rate::from_mhz(mhz))
+                        .with_mode(Mode::_0),
+                )
                 .expect("apply_config");
 
             EOF_ALREADY_SET.store(0, Ordering::Relaxed);
@@ -160,7 +181,9 @@ async fn main(_spawner: Spawner) {
             ISR_FIRED.store(0, Ordering::Relaxed);
 
             drain().await;
-            log::info!("combo len={len:<4} clock={mhz:>2}MHz: running {ITERS_PER_COMBO} transfers...");
+            log::info!(
+                "combo len={len:<4} clock={mhz:>2}MHz: running {ITERS_PER_COMBO} transfers..."
+            );
 
             for i in 0..ITERS_PER_COMBO {
                 rx.as_mut_slice()[..len].fill(0xEE);

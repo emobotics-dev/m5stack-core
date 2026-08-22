@@ -288,7 +288,8 @@ mod sta {
                     Either::First(Err(error)) => {
                         warn!("WiFi connect failed: {:?}", error);
                         // Back off, but still service commands during the wait.
-                        let backoff = select(Timer::after(Duration::from_secs(2)), CMD.wait()).await;
+                        let backoff =
+                            select(Timer::after(Duration::from_secs(2)), CMD.wait()).await;
                         if let Either::Second(command) = backoff {
                             handle(controller, desired_up, command).await;
                         }

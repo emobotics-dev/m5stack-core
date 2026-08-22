@@ -1,6 +1,6 @@
 [package]
 name = "m5stack-core"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -215,17 +215,17 @@ thiserror-no-std    = "2.0.2"
 # not the floating `local` branch, so builds are reproducible. `cargo publish`
 # ignores [patch], so downstream consumers resolve the stock crates.io versions.
 [patch.crates-io]
-esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-hal     = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-radio   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-sync    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-alloc   = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-rom-sys = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-rtos    = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
 # oxivgl's `rtos-sem` asks for the crates.io release; the examples use the fork.
 # Without this they resolve to two crates and the semaphore handle oxivgl returns
 # is a different type from the one esp-rtos registers.
-esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
 
 [workspace]
 # `m5stack-core-build` is a HOST crate, and a member — including an implicit one,
@@ -373,17 +373,17 @@ oxivgl-sys           = { workspace = true }
 
 [workspace.dependencies]
 # esp-hal family (emobotics fork, pinned rev)
-esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["internal-heap-stats"] }
-esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["panic-handler", "custom-halt", "colors", "println"] }
-esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["unstable"] }
-esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["log-04", "colors", "timestamp"], default-features = false }
-esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414", features = ["embassy", "esp-radio"] }
+esp-alloc            = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0", features = ["internal-heap-stats"] }
+esp-backtrace        = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0", features = ["panic-handler", "custom-halt", "colors", "println"] }
+esp-bootloader-esp-idf = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-hal              = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0", features = ["unstable"] }
+esp-println          = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0", features = ["log-04", "colors", "timestamp"], default-features = false }
+esp-rtos             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0", features = ["embassy", "esp-radio"] }
 # Native threads and semaphores. esp-rtos exposes neither on its own surface —
 # these are the primitives esp-radio's WiFi/BT internals use, registered by
 # `esp_rtos::start()`. Examples only: the library must stay crates.io-resolvable.
-esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
-esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "e13b7ae16ca2079291e2bfffea3c91ee854e6414" }
+esp-radio-rtos-driver = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
+esp-sync             = { git = "https://github.com/emobotics-dev/esp-hal.git", rev = "04646b65e3ef94d60f5e08cb24fed9e3cd77f9d0" }
 # CoreS3 logging/panic (USB-Serial-JTAG)
 panic-halt           = "1.0.0"
 rtt-target           = { version = "0.6.2", features = ["log"] }
@@ -422,7 +422,7 @@ lcd-async            = "0.1.3"
 # unblocks it, and the ble.rs port above is the whole of the other half.
 #
 # And it is esp-RADIO that gates it, not esp-hal: esp-radio 0.18.0 asks for
-# `esp-hal ~1.1.0-rc.0`, which 1.1.1 already satisfies. Checked 2026-08-01,
+# `esp-hal ~1.1.0-rc.0`, which 1.1.2 already satisfies. Re-checked 2026-08-22,
 # **no published esp-radio uses bt-hci 0.9** — 0.18.0 is the newest stable and
 # even the 1.0.0-beta.0 prerelease still requires `bt-hci ^0.8.0` (and
 # `esp-hal ~1.1.0`). There is nothing newer to move to yet; re-check esp-radio,
@@ -433,12 +433,13 @@ trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu
 # oxivgl, so resolving the two halves separately drifts them apart and the lvgl
 # example fails to link (Cargo.lock is gitignored → every fresh resolve).
 #
-# Temporarily on git, not crates.io: `Ui`/`RenderConfig`/`FlushSync` landed in
-# oxivgl#3 *after* 0.7.0 was published, and the demos here are built on them.
-# Swap both back to `version = "=0.8.0"` once that release exists (oxivgl#4);
-# examples-only, so the library's crates.io gate is untouched either way.
-oxivgl               = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", features = ["esp-hal", "log-04", "rtos-sem"] }
-oxivgl-sys           = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", default-features = false }
+# On crates.io now that 0.8.0 carries `Ui`/`RenderConfig`/`FlushSync` — the git
+# pin was only ever a bridge until that release existed. Pinned exactly and as a
+# pair: 0.8.0 asks for oxivgl-sys 0.2.4, and the two halves must come from one
+# source or the `oxivgl_render_scratch_*` hooks drift apart and the lvgl example
+# fails to link.
+oxivgl               = { version = "=0.8.0", features = ["esp-hal", "log-04", "rtos-sem"] }
+oxivgl-sys           = { version = "=0.2.4", default-features = false }
 # misc
 embedded-hal         = "1.0.0"
 heapless             = "0.9.3"

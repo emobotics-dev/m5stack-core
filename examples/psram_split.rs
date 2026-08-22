@@ -95,7 +95,12 @@ fn validate(split: mem::PsramSplit) -> bool {
     for i in (0..len).step_by(STRIDE) {
         let got = unsafe { private[i].assume_init() };
         if got != pattern(i) {
-            log::error!("[psram] private mismatch @ {}: {:#x} != {:#x}", i, got, pattern(i));
+            log::error!(
+                "[psram] private mismatch @ {}: {:#x} != {:#x}",
+                i,
+                got,
+                pattern(i)
+            );
             disjoint = false;
             break;
         }

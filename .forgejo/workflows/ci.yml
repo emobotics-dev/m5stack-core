@@ -163,13 +163,47 @@ jobs:
       # the Xtensa pin applies and a std crate dies with "can't find crate for
       # `std`". Being in the crate's directory is what lets its own config
       # (host target, build-std=["std"]) take effect.
+      # `-D warnings` as RUSTFLAGS is safe for these two and NOT for the board
+      # legs: the env var replaces `target.<triple>.rustflags` wholesale, and the
+      # boards keep their linker args there (so theirs lives in .cargo/config.toml
+      # instead). Nothing sets rustflags for the host target.
       - name: Test HIL harness (host)
         working-directory: m5stack-core-hil
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo test
 
       - name: Test build helper (host)
         working-directory: m5stack-core-build
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo test
+
+  # ── formatting ──────────────────────────────────────────────────────────────
+  fmt:
+    name: rustfmt
+    runs-on: [rust, esp32]
+    container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Three invocations because there are three workspaces: the BSP, and the
+      # two host crates that `--workspace` does not reach. Without this leg the
+      # tree drifts unnoticed — it had accumulated 429 diffs across 53 files
+      # before anyone looked. `m5stack-core-hil` formats to its OWN
+      # rustfmt.toml (wider, wrapped comments); the other two take rustfmt's
+      # defaults, which is what that file says it intends.
+      - name: rustfmt (BSP + examples)
+        run: cargo fmt --check
+
+      - name: rustfmt (HIL harness)
+        working-directory: m5stack-core-hil
+        run: cargo fmt --check
+
+      - name: rustfmt (build helper)
+        working-directory: m5stack-core-build
+        run: cargo fmt --check
 
   # ── miri ────────────────────────────────────────────────────────────────────
   miri:
@@ -225,6 +259,7 @@ jobs:
       - cores3-examples
       - host
       - miri
+      - fmt
     runs-on: [rust, esp32]
     container: registry:3000/emobotics/m5stack-core/m5stack-core-ci:v8
     steps:
@@ -239,6 +274,7 @@ jobs:
             cores3-examples=${{ needs.cores3-examples.result }}
             host=${{ needs.host.result }}
             miri=${{ needs.miri.result }}
+            fmt=${{ needs.fmt.result }}
         run: |
           set -eu
           rc=0

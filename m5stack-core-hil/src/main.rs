@@ -359,8 +359,8 @@ fn run(cli: &Cli) -> Result<(), String> {
     // matters.
     let cap = cli.out.join(format!("{}-transcript.log", target.board.id.replace(':', "-")));
     let sink = fs::File::create(&cap).map_err(|e| format!("cannot create {}: {e}", cap.display()))?;
-    let port =
-        DrainedSource::open(&target.board.port, target.board.baud).map_err(|e| format!("{}: {e}", target.board.port))?;
+    let port = DrainedSource::open(&target.board.port, target.board.baud)
+        .map_err(|e| format!("{}: {e}", target.board.port))?;
     let mut l = Listener::new(port).streaming_to(Box::new(sink));
     note(quiet, &format!("m5stack-hil: streaming transcript -> {}", cap.display()));
 

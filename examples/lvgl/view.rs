@@ -37,7 +37,9 @@ pub struct MenuView {
 impl View for MenuView {
     fn create(&mut self, container: &Obj<'static>) -> Result<(), WidgetError> {
         let bg = Style::new(|s| {
-            s.bg_color_hex(0x101820).bg_opa(255).text_color_hex(0xffffff);
+            s.bg_color_hex(0x101820)
+                .bg_opa(255)
+                .text_color_hex(0xffffff);
         });
         container.add_style(&bg, Selector::DEFAULT);
 
@@ -49,7 +51,8 @@ impl View for MenuView {
         let group = Group::new()?;
         for (i, name) in NAMES.iter().enumerate() {
             let btn = Button::new(container)?;
-            btn.size(64, 48).align(Align::Center, (i as i32 - 1) * 84, -8);
+            btn.size(64, 48)
+                .align(Align::Center, (i as i32 - 1) * 84, -8);
             Label::new(&btn)?.text(name).align(Align::Center, 0, 0);
             group.add_obj(&btn);
             self.buttons[i] = Some(btn);
@@ -72,7 +75,9 @@ impl View for MenuView {
         // Fire27 drives the same buttons via the keypad indev instead.
         #[cfg(feature = "cores3")]
         {
-            self._pointer = Some(oxivgl::indev::PointerIndev::new(&crate::ui::input::POINTER)?);
+            self._pointer = Some(oxivgl::indev::PointerIndev::new(
+                &crate::ui::input::POINTER,
+            )?);
         }
         Ok(())
     }

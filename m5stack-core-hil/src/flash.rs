@@ -129,11 +129,7 @@ impl core::fmt::Display for ExpectedImage {
     /// Labels make the two lines honestly different shapes rather than the same
     /// shape with the values shuffled.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "project_name={} version={} app_elf_sha256={}",
-            self.project_name, self.version, self.sha256_prefix
-        )
+        write!(f, "project_name={} version={} app_elf_sha256={}", self.project_name, self.version, self.sha256_prefix)
     }
 }
 

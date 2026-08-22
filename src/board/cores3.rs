@@ -122,7 +122,10 @@ pub async fn power_display_reset(i2c: &'static SharedI2cBus) {
         if aw_fault_inject_active(tries) {
             tries += 1;
             if tries > AW9523B_FALLBACK_TRIES {
-                error!("AW9523B not ready (fault-inject) after {} retries", AW9523B_FALLBACK_TRIES);
+                error!(
+                    "AW9523B not ready (fault-inject) after {} retries",
+                    AW9523B_FALLBACK_TRIES
+                );
                 break;
             }
             warn!(

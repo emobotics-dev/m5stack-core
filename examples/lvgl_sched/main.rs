@@ -49,10 +49,10 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use crate::common::board;
-use crate::gauge::{Gauge, Load};
-use crate::common::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W};
 #[cfg(feature = "ex-ui-thread")]
 use crate::common::sched;
+use crate::common::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W};
+use crate::gauge::{Gauge, Load};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -82,7 +82,11 @@ compile_error!(
 
 #[cfg(feature = "ex-ui-app-core")]
 const MODE: &str = "render on APP";
-#[cfg(all(feature = "ex-ui-thread", feature = "ex-ui-flush-thread", not(feature = "ex-ui-app-core")))]
+#[cfg(all(
+    feature = "ex-ui-thread",
+    feature = "ex-ui-flush-thread",
+    not(feature = "ex-ui-app-core")
+))]
 const MODE: &str = "render+flush threads";
 #[cfg(all(feature = "ex-ui-thread", not(feature = "ex-ui-flush-thread")))]
 const MODE: &str = "render thread";
@@ -262,7 +266,9 @@ async fn main(spawner: Spawner) {
     let (dbus, _input) = board::lvgl_bringup(board.spi2, board.buttons, dma_rx, dma_tx).await;
     #[cfg(feature = "cores3")]
     let (dbus, _i2c) = board::lvgl_bringup(board.spi2, board.i2c0, dma_rx, dma_tx).await;
-    DRIVER.try_send(metrics::Counted(common::ui::DisplayDriver::new(dbus))).ok();
+    DRIVER
+        .try_send(metrics::Counted(common::ui::DisplayDriver::new(dbus)))
+        .ok();
 
     // Which constructor is not a style choice: an interrupt-executor flush gives
     // the semaphore from interrupt context, where only the `_from_isr` form is
@@ -291,7 +297,13 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "ex-ui-flush-thread")]
     // SAFETY: `flush_thread` runs an executor and never returns.
     unsafe {
-        sched::spawn("ui-flush", flush_thread, sched::PRIO_FLUSH, sched::FLUSH_STACK, 0)
+        sched::spawn(
+            "ui-flush",
+            flush_thread,
+            sched::PRIO_FLUSH,
+            sched::FLUSH_STACK,
+            0,
+        )
     };
     // The APP core needs its own scheduler before a thread can be pinned there.
     // SWI1 is free in this mode: the flush runs on a thread, not an interrupt

@@ -37,11 +37,11 @@ pub const INPUT_KIND: &str = match input_caps() {
     InputCaps::Pointer { .. } => "Touch",
 };
 
+#[cfg(feature = "cores3")]
+pub use m5stack_core::board::cores3::Board;
 /// The board's pin map (`Board::split(peripherals)`), selected by feature.
 #[cfg(feature = "fire27")]
 pub use m5stack_core::board::fire27::Board;
-#[cfg(feature = "cores3")]
-pub use m5stack_core::board::cores3::Board;
 
 /// The non-DMA shared SPI bus used by the status bins (the `draw_status` loops
 /// run far below the rate that needs DMA; only the LVGL bin uses the DMA path).
@@ -68,7 +68,11 @@ pub fn console_serial(
     uart0_rx: esp_hal::gpio::AnyPin<'static>,
     uart0_tx: esp_hal::gpio::AnyPin<'static>,
 ) -> m5stack_core::io::console::SerialResources {
-    m5stack_core::io::console::SerialResources { uart: uart0, tx_pin: uart0_tx, rx_pin: uart0_rx }
+    m5stack_core::io::console::SerialResources {
+        uart: uart0,
+        tx_pin: uart0_tx,
+        rx_pin: uart0_rx,
+    }
 }
 
 /// See the Fire27 variant.
@@ -118,7 +122,8 @@ pub async fn init_display(
     let rst = Output::new(spi2.display_rst, Level::Low, OutputConfig::default());
     let mut bl = Output::new(spi2.display_bl, Level::Low, OutputConfig::default());
     let bus = SHARED_SPI.init(Mutex::new(spi));
-    let device = SpiDeviceWithConfig::new(bus, display_cs, cfg.with_frequency(Rate::from_khz(40_000)));
+    let device =
+        SpiDeviceWithConfig::new(bus, display_cs, cfg.with_frequency(Rate::from_khz(40_000)));
     let di = SpiInterface::new(device, dc);
     let display = display::init_ili9342c_with_reset(di, rst)
         .await
@@ -205,7 +210,8 @@ pub async fn init_display(
     // (a bare register hack would leave it unrouted → black screen).
     let dc = Output::new(spi2.miso_dc, Level::Low, OutputConfig::default());
     let bus = SHARED_SPI.init(Mutex::new(spi));
-    let device = SpiDeviceWithConfig::new(bus, display_cs, cfg.with_frequency(Rate::from_khz(40_000)));
+    let device =
+        SpiDeviceWithConfig::new(bus, display_cs, cfg.with_frequency(Rate::from_khz(40_000)));
     let di = SpiInterface::new(device, dc);
     let display = display::init_ili9342c(di).await.expect("display init");
     (display, i2c)
@@ -226,7 +232,9 @@ impl Input {
             multi_tap_ms: 150,
             ..Default::default()
         };
-        Self(m5stack_core::io::touch_buttons::TouchButtons::new(i2c, config))
+        Self(m5stack_core::io::touch_buttons::TouchButtons::new(
+            i2c, config,
+        ))
     }
 }
 
@@ -264,7 +272,11 @@ pub async fn enable_bus_5v(i2c: &'static SharedI2cBus) -> bool {
     if battery_present || !vbus {
         match aw.enable_bus_5v().await {
             Ok(()) => {
-                log::info!("M-Bus 5V enabled (BOOST_EN+BUS_OUT_EN); batt={}mV vbus={}", mv, vbus);
+                log::info!(
+                    "M-Bus 5V enabled (BOOST_EN+BUS_OUT_EN); batt={}mV vbus={}",
+                    mv,
+                    vbus
+                );
                 true
             }
             Err(e) => {
@@ -346,7 +358,10 @@ mod lvgl_bus {
         dma_rx: DmaRxBuf,
         dma_tx: DmaTxBuf,
     ) -> (DisplayBus, Input) {
-        let dbus = spi2.into_display_only(dma_rx, dma_tx).await.expect("display init");
+        let dbus = spi2
+            .into_display_only(dma_rx, dma_tx)
+            .await
+            .expect("display init");
         (dbus, Input::new(buttons))
     }
 
@@ -359,10 +374,16 @@ mod lvgl_bus {
         i2c0: esp_hal::i2c::master::I2c<'static, esp_hal::Blocking>,
         dma_rx: DmaRxBuf,
         dma_tx: DmaTxBuf,
-    ) -> (DisplayBus, &'static m5stack_core::io::shared_i2c::SharedI2cBus) {
+    ) -> (
+        DisplayBus,
+        &'static m5stack_core::io::shared_i2c::SharedI2cBus,
+    ) {
         let i2c = super::init_i2c_shared(i2c0);
         m5stack_core::board::cores3::power_display_reset(i2c).await;
-        let dbus = spi2.into_display_only(dma_rx, dma_tx).await.expect("display init");
+        let dbus = spi2
+            .into_display_only(dma_rx, dma_tx)
+            .await
+            .expect("display init");
         (dbus, i2c)
     }
 }

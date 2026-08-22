@@ -101,7 +101,9 @@ pub async fn draw_panel<DI, RST: OutputPin>(
 {
     let header = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::CYAN);
     let white = MonoTextStyle::new(&FONT_9X18_BOLD, Rgb565::WHITE);
-    let rule = PrimitiveStyleBuilder::new().fill_color(Rgb565::CYAN).build();
+    let rule = PrimitiveStyleBuilder::new()
+        .fill_color(Rgb565::CYAN)
+        .build();
     // FONT_9X18_BOLD is 9 px wide; right-align the title against the panel edge.
     let title_x = (W as i32 - title.len() as i32 * 9 - 8).max(8);
     for strip in 0..(H / STRIP_H) {
@@ -116,13 +118,10 @@ pub async fn draw_panel<DI, RST: OutputPin>(
             Text::new(title, Point::new(title_x, 18 - y_offset), header)
                 .draw(&mut fb)
                 .ok();
-            Rectangle::new(
-                Point::new(8, 26 - y_offset),
-                Size::new(W as u32 - 16, 1),
-            )
-            .into_styled(rule)
-            .draw(&mut fb)
-            .ok();
+            Rectangle::new(Point::new(8, 26 - y_offset), Size::new(W as u32 - 16, 1))
+                .into_styled(rule)
+                .draw(&mut fb)
+                .ok();
             // Body lines start below the header rule.
             for (i, line) in body.iter().enumerate() {
                 let y = 44 + i as i32 * 18;
@@ -132,7 +131,13 @@ pub async fn draw_panel<DI, RST: OutputPin>(
             }
         }
         display
-            .show_raw_data(0, (strip * STRIP_H) as u16, W as u16, STRIP_H as u16, strip_buf)
+            .show_raw_data(
+                0,
+                (strip * STRIP_H) as u16,
+                W as u16,
+                STRIP_H as u16,
+                strip_buf,
+            )
             .await
             .ok();
     }

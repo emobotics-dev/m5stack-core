@@ -57,10 +57,20 @@ static NACK_COUNT: AtomicU32 = AtomicU32::new(0);
 async fn nack_flood(i2c: &'static SharedI2cBus) {
     loop {
         let mut buf = [0u8; 1];
-        let r = { i2c.lock().await.write_read_async(NACK_ADDR, &[0u8], &mut buf).await };
+        let r = {
+            i2c.lock()
+                .await
+                .write_read_async(NACK_ADDR, &[0u8], &mut buf)
+                .await
+        };
         let n = NACK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         if n % 200 == 0 {
-            log::warn!("nack_flood: {} async NACKs to 0x{:02x} (last err = {:?})", n, NACK_ADDR, r.err());
+            log::warn!(
+                "nack_flood: {} async NACKs to 0x{:02x} (last err = {:?})",
+                n,
+                NACK_ADDR,
+                r.err()
+            );
         }
         Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
@@ -74,7 +84,10 @@ async fn heartbeat() {
         beat = beat.wrapping_add(1);
         log::info!(
             "ALIVE beat={} t={}ms nacks={} core={:?}",
-            beat, Instant::now().as_millis(), NACK_COUNT.load(Ordering::Relaxed), Cpu::current()
+            beat,
+            Instant::now().as_millis(),
+            NACK_COUNT.load(Ordering::Relaxed),
+            Cpu::current()
         );
         Timer::after(Duration::from_millis(1000)).await;
     }
@@ -83,7 +96,10 @@ async fn heartbeat() {
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     common::boot!(spawner, board, Coex);
-    log::info!("nack_repro-irq: main (PRO thread-mode) core = {:?}", Cpu::current());
+    log::info!(
+        "nack_repro-irq: main (PRO thread-mode) core = {:?}",
+        Cpu::current()
+    );
 
     // --- WiFi STA + net activity: full coex load (the original #10 context) ---
     match board::connect_wifi(board.wifi, WIFI_SSID, WIFI_PASSWORD) {
@@ -101,7 +117,10 @@ async fn main(spawner: Spawner) {
             spawner.spawn(ble::ble_scan_task(radio).unwrap());
             log::info!("nack_repro-irq: BLE scanner started (RWBLE on PRO)");
         }
-        Err(e) => log::warn!("nack_repro-irq: BLE init FAILED ({:?}) — repro invalid w/o radio", e),
+        Err(e) => log::warn!(
+            "nack_repro-irq: BLE init FAILED ({:?}) — repro invalid w/o radio",
+            e
+        ),
     }
 
     // --- I²C: into_async() runs HERE on PRO → completion IRQ binds PRO (same
@@ -111,6 +130,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(heartbeat().expect("spawn heartbeat"));
     log::info!(
         "nack_repro-irq: async I²C flood on 0x{:02x} @ {} ms — I²C IRQ on PRO (contends RWBLE)",
-        NACK_ADDR, POLL_INTERVAL_MS
+        NACK_ADDR,
+        POLL_INTERVAL_MS
     );
 }

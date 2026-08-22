@@ -186,7 +186,9 @@ async fn run_round(round: u32) {
 
     let spi_dma = SpiMaster::new(
         spi2_peri,
-        SpiConfig::default().with_frequency(Rate::from_khz(SCLK_KHZ)).with_mode(Mode::_0),
+        SpiConfig::default()
+            .with_frequency(Rate::from_khz(SCLK_KHZ))
+            .with_mode(Mode::_0),
     )
     .expect("SPI2 master init")
     .with_sck(sclk)
@@ -216,7 +218,10 @@ async fn run_round(round: u32) {
     embassy_time::Timer::after(embassy_time::Duration::from_millis(INJECT_DELAY_MS)).await;
 
     log::warn!("injecting fault now: OUTLINK_STOP on GDMA channel {DMA_CHANNEL}");
-    DMA::regs().ch(DMA_CHANNEL).out_link().modify(|_, w| w.outlink_stop().set_bit());
+    DMA::regs()
+        .ch(DMA_CHANNEL)
+        .out_link()
+        .modify(|_, w| w.outlink_stop().set_bit());
 
     // Let the fault actually propagate (FIFO drain past whatever margin
     // GDMA had pre-buffered) before reading anything.
@@ -252,7 +257,9 @@ async fn run_round(round: u32) {
     drain().await;
 
     log::info!("  rung 1: MS_DATA_BITLEN <- 7, pulse CMD.UPDATE (esp-hal's abort_transfer trick)");
-    SPI2::regs().ms_dlen().write(|w| unsafe { w.ms_data_bitlen().bits(7) });
+    SPI2::regs()
+        .ms_dlen()
+        .write(|w| unsafe { w.ms_data_bitlen().bits(7) });
     SPI2::regs().cmd().modify(|_, w| w.update().set_bit());
     let mut spins = 0u32;
     while SPI2::regs().cmd().read().update().bit_is_set() && spins < UPDATE_POLL_BUDGET {
@@ -279,8 +286,12 @@ async fn run_round(round: u32) {
             winning_rung = Some(2);
         } else {
             log::info!("  rung 3: SYSTEM_PERIP_RST_EN0.SPI2_RST 1 -> 0 (full peripheral reset)");
-            SYSTEM::regs().perip_rst_en0().modify(|_, w| w.spi2_rst().set_bit());
-            SYSTEM::regs().perip_rst_en0().modify(|_, w| w.spi2_rst().clear_bit());
+            SYSTEM::regs()
+                .perip_rst_en0()
+                .modify(|_, w| w.spi2_rst().set_bit());
+            SYSTEM::regs()
+                .perip_rst_en0()
+                .modify(|_, w| w.spi2_rst().clear_bit());
             drain().await;
             let usr_after_3 = spi_usr_set();
             log::info!("  rung 3 result: SPI_USR={}", usr_after_3 as u8);
@@ -298,7 +309,9 @@ async fn run_round(round: u32) {
     }
 
     if let Some(rung) = winning_rung {
-        log::info!("Verifying the peripheral is actually usable (not just SPI_USR=0): one small real transfer");
+        log::info!(
+            "Verifying the peripheral is actually usable (not just SPI_USR=0): one small real transfer"
+        );
         drain().await;
         // SAFETY: the original Spi/DMA/pin handles were leaked above
         // (mem::forget), never dropped -- these are the only live Rust
@@ -311,7 +324,9 @@ async fn run_round(round: u32) {
 
         let mut verify = SpiMaster::new(
             spi2_peri,
-            SpiConfig::default().with_frequency(Rate::from_khz(SCLK_KHZ)).with_mode(Mode::_0),
+            SpiConfig::default()
+                .with_frequency(Rate::from_khz(SCLK_KHZ))
+                .with_mode(Mode::_0),
         )
         .expect("SPI2 re-init after recovery")
         .with_sck(sclk2)
@@ -322,7 +337,9 @@ async fn run_round(round: u32) {
         let mut data = [0x5Au8, 0xA5, 0x3C, 0xC3];
         match verify.transfer(&mut data) {
             Ok(()) => {
-                log::info!("Verify OK after rung {rung}: loopback wrote=[5a,a5,3c,c3] read={data:02x?}")
+                log::info!(
+                    "Verify OK after rung {rung}: loopback wrote=[5a,a5,3c,c3] read={data:02x?}"
+                )
             }
             Err(e) => log::error!(
                 "Verify FAILED after rung {rung}: transfer error {e:?} -- SPI_USR cleared but the peripheral is not actually usable"

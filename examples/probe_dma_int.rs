@@ -104,23 +104,29 @@ async fn main(spawner: Spawner) {
     // this works at all is the point: the bits are reachable, esp-hal just
     // never writes them.
     let clear_by_hand = || {
-        dma.ch(CH).in_int().clr().write(|w| unsafe { w.bits(RX_ALL) });
-        dma.ch(CH).out_int().clr().write(|w| unsafe { w.bits(TX_ALL) });
+        dma.ch(CH)
+            .in_int()
+            .clr()
+            .write(|w| unsafe { w.bits(RX_ALL) });
+        dma.ch(CH)
+            .out_int()
+            .clr()
+            .write(|w| unsafe { w.bits(TX_ALL) });
     };
     let set_thrs = |thrs: u16| {
         dma.ch(CH)
             .in_conf1()
             .modify(|_, w| unsafe { w.dma_infifo_full_thrs().bits(thrs) });
     };
-    let run = |rx: &mut [u8], tx: &[u8], m2m: &mut esp_hal::dma::SimpleMem2Mem<'_, _>| {
-        match m2m.start_transfer(rx, tx) {
-            Ok(xfer) => {
-                if let Err(e) = xfer.wait() {
-                    log::error!("mem2mem transfer error: {:?}", e);
-                }
+    let run = |rx: &mut [u8], tx: &[u8], m2m: &mut esp_hal::dma::SimpleMem2Mem<'_, _>| match m2m
+        .start_transfer(rx, tx)
+    {
+        Ok(xfer) => {
+            if let Err(e) = xfer.wait() {
+                log::error!("mem2mem transfer error: {:?}", e);
             }
-            Err(e) => log::error!("mem2mem start failed: {:?}", e),
         }
+        Err(e) => log::error!("mem2mem start failed: {:?}", e),
     };
 
     let mut round = 0u32;
@@ -133,7 +139,11 @@ async fn main(spawner: Spawner) {
         clear_by_hand();
         let rx0 = dma.ch(CH).in_int().raw().read().bits();
         let tx0 = dma.ch(CH).out_int().raw().read().bits();
-        log::info!("a) manual clear-all  -> IN raw={:#05x} OUT raw={:#05x}", rx0, tx0);
+        log::info!(
+            "a) manual clear-all  -> IN raw={:#05x} OUT raw={:#05x}",
+            rx0,
+            tx0
+        );
         if rx0 != 0 || tx0 != 0 {
             log::error!("   bits not clearable by hand — harness invalid");
         }
@@ -144,7 +154,11 @@ async fn main(spawner: Spawner) {
         run(&mut rx_buf, &tx_buf, &mut m2m);
         let rx1 = dma.ch(CH).in_int().raw().read().bits();
         let latched = rx1 & RX_FIFO_FULL_WM != 0;
-        log::info!("b) low thrs + xfer   -> IN raw={:#05x}  infifo_full_wm={}", rx1, latched as u8);
+        log::info!(
+            "b) low thrs + xfer   -> IN raw={:#05x}  infifo_full_wm={}",
+            rx1,
+            latched as u8
+        );
         if !latched {
             log::error!("   INFIFO_FULL_WM did not latch — cannot measure; harness invalid");
         }
@@ -156,7 +170,11 @@ async fn main(spawner: Spawner) {
         run(&mut rx_buf, &tx_buf, &mut m2m);
         let rx2 = dma.ch(CH).in_int().raw().read().bits();
         let survived = rx2 & RX_FIFO_FULL_WM != 0;
-        log::info!("c) high thrs + xfer  -> IN raw={:#05x}  infifo_full_wm={}", rx2, survived as u8);
+        log::info!(
+            "c) high thrs + xfer  -> IN raw={:#05x}  infifo_full_wm={}",
+            rx2,
+            survived as u8
+        );
         drain().await;
 
         // (d) control: with the threshold high and a clean start, bit 5 must
@@ -165,10 +183,18 @@ async fn main(spawner: Spawner) {
         run(&mut rx_buf, &tx_buf, &mut m2m);
         let rx3 = dma.ch(CH).in_int().raw().read().bits();
         let control_dirty = rx3 & RX_FIFO_FULL_WM != 0;
-        log::info!("d) control (clean)   -> IN raw={:#05x}  infifo_full_wm={}", rx3, control_dirty as u8);
+        log::info!(
+            "d) control (clean)   -> IN raw={:#05x}  infifo_full_wm={}",
+            rx3,
+            control_dirty as u8
+        );
 
         if !latched || control_dirty {
-            log::error!("VERDICT: inconclusive (latch={} control_dirty={})", latched as u8, control_dirty as u8);
+            log::error!(
+                "VERDICT: inconclusive (latch={} control_dirty={})",
+                latched as u8,
+                control_dirty as u8
+            );
         } else if survived {
             log::error!("VERDICT: clear_all() INCOMPLETE — INFIFO_FULL_WM survived it  FAIL");
         } else {

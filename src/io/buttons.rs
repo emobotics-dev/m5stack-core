@@ -63,14 +63,20 @@ impl ButtonTiming {
     /// the `multi_tap_ms` window so consecutive taps can be counted. 500 ms
     /// long-press, 300 ms multi-tap window.
     pub const fn multi_tap() -> Self {
-        Self { long_press_ms: 500, multi_tap_ms: 300 }
+        Self {
+            long_press_ms: 500,
+            multi_tap_ms: 300,
+        }
     }
 
     /// Report every press immediately — multi-tap counting disabled
     /// (`multi_tap_ms = 0`). For latency-sensitive input (e.g. an encoder). Keeps
     /// the [`multi_tap`](Self::multi_tap) long-press threshold.
     pub const fn immediate_single_press() -> Self {
-        Self { long_press_ms: Self::multi_tap().long_press_ms, multi_tap_ms: 0 }
+        Self {
+            long_press_ms: Self::multi_tap().long_press_ms,
+            multi_tap_ms: 0,
+        }
     }
 }
 

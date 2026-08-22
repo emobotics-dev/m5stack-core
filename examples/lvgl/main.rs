@@ -95,7 +95,9 @@ async fn main(spawner: Spawner) {
 
     // Run the SPI flush on a high-priority interrupt executor (SWI1) so it never
     // blocks the LVGL render loop on the low-priority executor.
-    let int_exec = make_static!(InterruptExecutor::new(board.system.sw_int.software_interrupt1));
+    let int_exec = make_static!(InterruptExecutor::new(
+        board.system.sw_int.software_interrupt1
+    ));
     let hi_spawner = int_exec.start(Priority::min());
     hi_spawner.spawn(ui::flush_task(driver).expect("spawn flush task"));
 

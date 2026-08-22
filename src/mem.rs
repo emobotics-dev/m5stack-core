@@ -295,8 +295,7 @@ pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> Result<PsramSplit, 
     // `reserve == 0` the slice is empty: its base pointer lies inside the region
     // that *is* registered globally below, but a zero-length slice dereferences
     // nothing, so it still aliases nothing.
-    let private =
-        unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, reserve) };
+    let private = unsafe { core::slice::from_raw_parts_mut(base as *mut MaybeUninit<u8>, reserve) };
 
     // Register the remainder `[base + reserve, base + total)` with the global heap.
     let global_free = if reserve < total {
@@ -319,7 +318,10 @@ pub fn psram_split(psram: PSRAM<'static>, reserve: usize) -> Result<PsramSplit, 
         reserve / 1024,
         global_free / 1024
     );
-    Ok(PsramSplit { private, global_free })
+    Ok(PsramSplit {
+        private,
+        global_free,
+    })
 }
 
 /// Marker for types safe to store in PSRAM: nothing holding an *inline* atomic.

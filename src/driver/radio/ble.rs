@@ -6,7 +6,10 @@
 //!
 //! Ref: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/bluetooth/index.html>
 use esp_hal::peripherals::BT;
-use esp_radio::ble::{Config, InvalidConfigError, controller::{BleConnector, BleInitError}};
+use esp_radio::ble::{
+    Config, InvalidConfigError,
+    controller::{BleConnector, BleInitError},
+};
 use thiserror_no_std::Error;
 
 #[derive(Debug, Error)]

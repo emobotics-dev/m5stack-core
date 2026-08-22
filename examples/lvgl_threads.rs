@@ -37,9 +37,9 @@ mod common;
 
 use core::ffi::c_void;
 
+use crate::common::board;
 use crate::common::sched;
 use crate::common::ui::{LVGL_BUF_BYTES, SCREEN_H, SCREEN_W};
-use crate::common::board;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -135,7 +135,10 @@ async fn render_task() -> ! {
 
     // `Ui::init` must run on this thread: every later LVGL call happens here.
     Ui::init(SCREEN_W.into(), SCREEN_H.into(), bufs)
-        .run(Sweep::default(), RenderConfig::default().with_target_fps(TARGET_FPS))
+        .run(
+            Sweep::default(),
+            RenderConfig::default().with_target_fps(TARGET_FPS),
+        )
         .await
 }
 
@@ -176,7 +179,13 @@ async fn main(spawner: Spawner) {
     // (3) Threads, at the flush > render rungs of the ladder.
     // SAFETY: both entries run an executor and never return.
     unsafe {
-        sched::spawn("ui-flush", flush_thread, sched::PRIO_FLUSH, sched::FLUSH_STACK, 0);
+        sched::spawn(
+            "ui-flush",
+            flush_thread,
+            sched::PRIO_FLUSH,
+            sched::FLUSH_STACK,
+            0,
+        );
         sched::spawn(
             "ui-render",
             render_thread,

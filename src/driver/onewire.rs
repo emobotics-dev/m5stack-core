@@ -85,7 +85,9 @@ impl<'a> OneWire<'a> {
         // the bus. Invert TX so an RMT `High` symbol pulls the bus LOW (an active
         // 1-Wire drive) and a `Low` symbol releases it to the pull-up; invert RX
         // to match, so a captured `length1` measures the bus-low duration.
-        let tx = txcc.configure_tx(&tx_config)?.with_pin(output.with_output_inverter(true));
+        let tx = txcc
+            .configure_tx(&tx_config)?
+            .with_pin(output.with_output_inverter(true));
         let rx = rxcc
             .configure_rx(&rx_config)?
             .with_pin(input.clone().with_input_inverter(true));

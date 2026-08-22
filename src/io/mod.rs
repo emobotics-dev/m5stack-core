@@ -26,7 +26,10 @@ pub const fn input_caps() -> InputCaps {
     }
     #[cfg(feature = "cores3")]
     {
-        InputCaps::Pointer { width: crate::board::SCREEN_W, height: crate::board::SCREEN_H }
+        InputCaps::Pointer {
+            width: crate::board::SCREEN_W,
+            height: crate::board::SCREEN_H,
+        }
     }
 }
 
@@ -35,8 +38,8 @@ pub mod console;
 pub mod ow_temp;
 pub mod pps;
 pub mod rpm;
-pub mod shared_i2c;
 #[cfg(feature = "serial-cmd")]
 pub mod serial_cmd;
+pub mod shared_i2c;
 pub mod touch_buttons;
 pub mod watchdog;

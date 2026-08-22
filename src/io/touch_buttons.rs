@@ -170,7 +170,10 @@ impl TouchButtons {
                     {
                         let id = self.tap_zone.take().unwrap();
                         let count = core::mem::take(&mut self.tap_count);
-                        return ButtonEvent { id, action: ButtonAction::Short(count) };
+                        return ButtonEvent {
+                            id,
+                            action: ButtonAction::Short(count),
+                        };
                     }
                 }
                 // New touch down in a zone.
@@ -189,7 +192,10 @@ impl TouchButtons {
                         // A long press cancels any pending multi-tap.
                         self.tap_count = 0;
                         self.tap_zone = None;
-                        return ButtonEvent { id: zone, action: ButtonAction::Long };
+                        return ButtonEvent {
+                            id: zone,
+                            action: ButtonAction::Long,
+                        };
                     }
                 }
                 // Touch released.

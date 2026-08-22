@@ -14,8 +14,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::board::{self, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::net;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
