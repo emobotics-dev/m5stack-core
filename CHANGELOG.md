@@ -4,7 +4,24 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-22
+
+### Known issue
+
+- **CoreS3 requires `esp32s3 = "=0.35.2"` in the consumer's manifest.** The PAC's
+  0.35.3 renamed `USB0` to `USB_FS` and de-prefixed the RTC_CNTL `EXT_WAKEUP1`
+  accessors — renames only, same address and register layout, but shipped in a
+  *patch* release. esp-hal 1.1.2 still calls the old names and asks only for
+  `^0.35`, so a fresh resolve fails to compile (`E0433`, `E0599`). Not specific
+  to this crate: reproducible with nothing but stock `esp-hal =1.1.2` and
+  `esp32s3 =0.35.3`, and anything on esp-hal 1.1.x for ESP32-S3 is affected.
+  Fire27 is unaffected.
+
+  The bound is deliberately **not** carried here — this crate calls no PAC API,
+  so the constraint belongs to esp-hal, and pinning it here would block esp32s3
+  0.36 downstream long after the cause is gone. Upstream has already merged the
+  adaptation (esp-pacs #444, esp-hal #5558); drop the pin when an esp-hal release
+  carries it. See the README for the full explanation.
 
 ### Added
 
@@ -34,6 +51,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `PpsReadings::rejected` — readings discarded since boot, riding along on the
   next good batch. A rejection was otherwise visible only on the console, which
   is not attached in a vehicle.
+- **Fair SPI2 arbitration** (#86): the display and the SD card queue for the
+  shared bus in arrival order, so neither can monopolise it. `board::spi2`
+  gained `permit_stats() -> PermitStats` — arrivals, grants and releases per
+  side, where `got - rel` is what that side holds right now. That separates a
+  holder parked mid-command from a permit lost outright from a queue whose head
+  is never polled: three failures that look identical from outside and were
+  being told apart by argument. Diagnostic only — nothing reads it to decide
+  anything, so a torn read costs a wrong log line, never behaviour.
+- **`PreparedCard::acquire() -> Option<Spi2CardGuard>`** (#86) hands out the bus
+  and the chip-select together. An `SpiDevice` drops CS on exit, so a driver
+  that must hold it across command, token and payload could not express that
+  through one.
 
 ### Changed
 
@@ -51,6 +80,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that has them the check failed open. Behaviour is otherwise unchanged —
   `UnsafeCell`, `Cell` and `RefCell` stay `PsramSafe`, and a reference or
   pointer to an atomic still is too.
+- **Breaking:** `io::rpm` reports the pulse rate the hardware measures, not
+  engine rpm (#86). `read_rpm` → `read_pulse_hz`, `rpm_loop` → `pulse_loop`,
+  `on_rpm` → `on_pulse_hz`, and `RpmConfig` loses `pole_pairs` and
+  `pulley_ratio`. Pole pairs and belt ratio are facts about the alternator and
+  the engine it is bolted to, not about the board, so a BSP that knows them
+  cannot be reused on another vehicle; the application owns the conversion. The
+  value changes meaning as well as name — but every name changed too, so a stale
+  caller fails to compile rather than quietly reporting Hz as rpm.
+- **Breaking:** `SharedI2cBus` is no longer `Send`/`Sync` (#86, closes #83).
+  Both claims the old `unsafe impl`s rested on had lapsed: I2C bring-up moved to
+  the APP core, and cooperative scheduling is a statement about *access* while
+  `Send` is one about moving a value between threads. `!Send` is now the
+  compiler's to enforce, so moving the bus to another core is a build error
+  rather than unchecked breakage.
+- **Breaking:** `PreparedCard` is reshaped and `into_inner` now yields
+  `FairSpiDevice<CardSpiDevice<PresenceCs<CS>>>` (#86) — the fairness wrapper is
+  part of the type the consumer receives.
+- **Breaking:** `board::spi2::Spi2Resources::into_display_only` returns
+  `Result<_, DisplayOnlyError>` instead of `.expect()`-ing the SPI configure step
+  (#86). A library crate must not panic on a caller's bad config
+  (`conventions/rust-code.md` §6); `lcd_async`'s own error type has no variant
+  for it, hence the wrapper.
+- **esp-hal family pinned to `=1.1.2`** (#88), up from `=1.1.1`. This is
+  consumer-visible because the crate re-exports `esp_hal`. The fork the examples
+  patch to had already rebased onto 1.1.2, so a consumer patching the family to
+  it by path got a pin no patch satisfied: cargo resolved a *second* esp-hal
+  1.1.1 from crates.io and the build died on the `links = "esp-riscv-rt"`
+  collision rather than on anything legible. `=1.1.2` is a real crates.io
+  release, so the publish gate is unaffected.
 
 ### Fixed
 
@@ -68,6 +126,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   discards the whole batch, which is what keeps the bad input voltage from
   escaping. The range check is deliberately loose and would *not* have caught
   31.36 V — it is a second net for wilder corruption, not the fix.
+- **Per-module log filtering works again** (#86). It died silently when
+  `esp-println` was dropped: that logger parsed `ESP_LOG`, ours hardcoded
+  `Info`, and every `debug!` on target was discarded for eleven weeks with
+  nothing anywhere failing. The console is the log backend, so the mechanism
+  lives there and the policy string comes from the application:
+  `io::console::init(spec)` takes an `RUST_LOG`-style filter. `init` now emits
+  one `debug!`-level self-test marker, so a harness asserting it turns a dead
+  filter into a loud failure rather than silence. The check stays cheap — a
+  record at or above the default level returns immediately, and with no
+  per-target directive that is the whole of it.
+- **SD initialisation no longer runs at the display's clock** (#86). The display
+  leaves 40 MHz on the bus, so SD init timed out five times out of five. The
+  card's terms are restated on every acquire, and which user the peripheral is
+  configured for lives in the mutex payload beside the bus, so the record and
+  the hardware change under one lock and cannot disagree.
+- **A display flush no longer starves the SD busy-poll** (#86). The mutex is not
+  FIFO and the two users are asymmetric — a busy poll asks ~1000×/s while a
+  flush holds the bus for a whole panel transfer. Measured before the fix:
+  fire27 `:format` drifted from 440 ms to 9434 ms while cores3 sat unchanged.
+- **A >20 s "STALL, card state unknown" is fixed at its cause** (#86).
+  `apply_config` reprogrammed the clock divider with no idle check, and on esp32
+  the clock-gate sequence around that write is `cfg`'d out; reprogramming a
+  peripheral that has not finished left the next transfer armed but never
+  completing, parked in the `TransferDone` wait while holding the bus. Letting
+  the bus go idle first is the fix — making the reconfigure conditional merely
+  cut the rate and left the fault latent.
+- **CoreS3 builds against the current esp32s3 PAC again.** 0.35.3 renamed the
+  `USB0` peripheral to `USB_FS` and dropped the redundant prefix from the
+  RTC_CNTL `EXT_WAKEUP1` accessors (`ext_wakeup1_sel` → `sel`,
+  `ext_wakeup1_status_clr` → `status_clr`), so esp-hal — which asks only for
+  `^0.35` — stopped compiling (`E0433`, `E0599`) the moment a fresh resolve
+  picked it up. Reproduced with nothing but stock `esp-hal =1.1.2` and
+  `esp32s3 =0.35.3`, so it is a property of neither this crate nor the fork.
+
+  These are renames and nothing more: the same address (`0x6008_0000`), a
+  byte-identical register block, and the same svd2rust build. So the fork
+  **follows** them rather than holding the PAC back — the metadata's `pac`
+  override carries the peripheral rename, leaving esp-hal's own
+  `peripherals::USB0` singleton and `otg_fs` untouched. `[patch.crates-io]`
+  moves onto that commit, and a fresh resolve now takes 0.35.3.
+
+  This crate declares no dependency on `esp32s3` and calls no PAC API; the
+  constraint belongs to esp-hal, which names it. A consumer of the **published**
+  crate still resolves stock esp-hal 1.1.2 and remains affected until the fix is
+  upstream.
+- **CoreS3 card responses no longer read back `0x00`** (#86). GPIO35 is both
+  MISO and the display DC line, and the DC write used to take effect while the
+  card was mid-command; it is now applied under the bus permit.
 
 ## [0.5.0] - 2026-08-01
 
