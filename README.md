@@ -4,6 +4,37 @@ Board support crate for **M5Stack Fire27** (ESP32) and **CoreS3** (ESP32-S3).
 
 Provides chip-agnostic drivers, shared I2C bus, and reusable async IO task loops with `fn(...)` callbacks.
 
+## CoreS3 needs one pin today
+
+Building this crate for **CoreS3** off crates.io currently fails unless you add
+one line to your own manifest:
+
+```toml
+esp32s3 = "=0.35.2"   # see below; remove once esp-hal releases the PAC renames
+```
+
+Without it the build stops with ``error[E0433]: cannot find `USB0` in `pac` ``
+and two `E0599`s on `ext_wakeup1_sel` / `ext_wakeup1_status_clr`.
+
+Why: esp32s3 **0.35.3** renamed the `USB0` peripheral to `USB_FS` and dropped the
+redundant prefix from the RTC_CNTL `EXT_WAKEUP1` accessors. Renames only — same
+address `0x6008_0000`, byte-identical register block — but shipped in a *patch*
+release, and esp-hal 1.1.2 still calls the old names while asking only for
+`^0.35`. So a fresh resolve picks a PAC esp-hal cannot compile against. This is
+not specific to this crate: anything depending on esp-hal 1.1.x for ESP32-S3 hits
+it, reproducible with nothing but `esp-hal =1.1.2` and `esp32s3 =0.35.3`.
+
+This crate deliberately does **not** carry that bound itself. It calls no PAC API
+(`grep -rn 'esp32s3::\|pac::' src/` is empty), so the constraint belongs to
+esp-hal, the crate that names the PAC — and pinning it here would block esp32s3
+0.36 for everyone downstream long after the problem is gone.
+
+**Fire27 is unaffected** — the esp32 PAC was not renamed.
+
+The fix is already merged upstream (esp-pacs #444, esp-hal #5558; esp-hal `main`
+uses `USB_FS`) and is waiting on an esp-hal release. **Drop the pin as soon as
+one ships.**
+
 ## Documentation
 
 **API docs: <https://emobotics-dev.github.io/m5stack-core>** — one rustdoc tree
@@ -217,6 +248,16 @@ backstop for a fully wedged executor.
     remains the lower-level primitive. `CardPresence::{Detect, ForceAbsent}`
     forces the absent-card degrade path with a card physically inserted (HIL),
     via the `PresenceCs<CS>` frozen chip-select carried inside `PreparedCard`.
+  - **Fair arbitration**: both users queue for the bus in arrival order, so
+    neither can monopolise it. The display holds the bus for a whole panel
+    transfer, which used to starve the card's 1 ms-cadence busy-poll.
+    `spi2::permit_stats()` snapshots arrivals/grants/releases per side —
+    `got - rel` is what that side holds right now, which separates a holder
+    parked mid-command from a permit lost outright from a queue whose head is
+    never polled. Diagnostic only; nothing reads it to decide anything.
+  - `Spi2Resources::into_display_only` returns `DisplayOnlyError` rather than
+    `.expect()`-ing a caller's bad SPI config — a library crate must not panic
+    on one (`conventions/rust-code.md` §6).
   - The SD-card *driver* (`sdspi`) stays an application dependency until it is
     published on crates.io; see the `board::spi2` module docs for the wiring
     pattern.
@@ -459,6 +500,10 @@ pipeline AND the per-target hardware. No `esp-println`/`esp-backtrace`/RTT.
   command RX share one port — no debug probe needed). `serial: None` is the R9
   production backstop. Replaces the old `init`/`setup`/`drain_task`/`enable_async`
   sequence (still public for advanced use).
+- **`init(spec)`** — an `RUST_LOG`-style filter (`"info"`, or
+  `"info,m5stack_core::io::pps=debug"`) applied per module. The bare directive
+  is the common case and is answered by one relaxed load, so a production
+  `"info"` costs what it did before per-module filtering existed.
 - **`markers`** — `PANIC` / `CONSOLE_DROP` / `PREV_PANIC`, the **stable** strings
   the HIL crash detector greps; treat as contract.
 - **`on_panic(&PanicInfo) -> !`** — writes an RTC-persistent breadcrumb
@@ -480,10 +525,12 @@ and `on_panic` still breadcrumbs + halts — zero serial surface.
 ### Key types
 
 ```rust
-// io::rpm
-pub struct RpmConfig { pub loop_time_ms: u64, pub pole_pairs: f32, pub pulley_ratio: f32 }
-pub fn read_rpm(pcnt: &mut PcntDriver, config: &RpmConfig) -> f32
-pub async fn rpm_loop(resources: RpmResources<'static>, config: RpmConfig, on_rpm: fn(f32))
+// io::rpm — the BSP reports the pulse rate the hardware measures, in Hz.
+// Turning Hz into engine rpm needs pole pairs and pulley ratio, which are facts
+// about the alternator and the engine, not the board; the application owns that.
+pub struct RpmConfig { pub loop_time_ms: u64 }
+pub fn read_pulse_hz(pcnt: &mut PcntDriver, config: &RpmConfig) -> f32
+pub async fn pulse_loop(resources: RpmResources<'static>, config: RpmConfig, on_pulse_hz: fn(f32))
 
 // io::pps
 pub struct PpsReadings { pub voltage: f32, pub current: f32, pub temperature: f32, ... }
@@ -698,13 +745,13 @@ Currently wired for **CoreS3**; Fire27 is next.
 
 ## Dependencies & the esp-hal fork
 
-The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.1,
+The **library** depends only on **stock crates.io** crates (`esp-hal` 1.1.2,
 `esp-radio` 0.18.0, `esp-sync`, `esp-alloc`) — it uses no fork-specific API
 (the 1-Wire-over-RMT driver is vendored in-tree; see `driver::onewire`).
 
 The **examples**, and all local workspace builds, are redirected to a fork —
-[`emobotics-dev/esp-hal`](https://github.com/emobotics-dev/esp-hal/tree/local) —
-via `[patch.crates-io]`. The fork is esp-hal 1.1.1 plus a small set of **ESP32
+[`emobotics-dev/esp-hal`](https://github.com/emobotics-dev/esp-hal/tree/local-1.1.2) —
+via `[patch.crates-io]`. The fork is esp-hal 1.1.2 plus a small set of **ESP32
 fixes not yet upstream**, primarily **SPI-DMA correctness** that the LVGL
 display example's `SpiDmaBus` flush depends on:
 
@@ -728,7 +775,11 @@ fork and the `[patch]` are dropped.
 ## Design
 
 - **Chip differences** handled via `#[cfg(feature = "...")]` (e.g. RMT channel in `ds18b20`)
-- **`SharedI2cBus`** wraps `Mutex<RawMutex, I2c>` — safe for single-executor async tasks
+- **`SharedI2cBus`** wraps `Mutex<CriticalSectionRawMutex, I2c>` and is deliberately
+  **not `Send`/`Sync`** — it is for cooperative tasks on one core. `I2c<'static,
+  Async>` is `!Send` in esp-hal because an async peripheral's wakers and interrupt
+  state belong to the core that armed it, so moving the bus to another core is now
+  a build error rather than unchecked breakage
 - **Resource pattern**: `*Resources` structs bundle peripherals, consumed by `into_driver()` or task loops
 - **IO loops** use error counting with threshold (e.g. PPS breaks after 10 consecutive errors)
 - **GPIO35 (CoreS3)**: GPIO35 is the display DC line (and is hardware-shared with SPI2 MISO). The cores3 example uses no SD/MISO, so it drives DC as a plain `Output` — `Output::new` configures the pad's IO-MUX so the pin actually drives. (A consumer that *also* needs MISO on the same bus, like alternator-regulator's SD card, must instead claim GPIO35 as MISO and toggle DC via register-level muxing.)
