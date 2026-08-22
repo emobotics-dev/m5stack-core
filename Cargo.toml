@@ -433,12 +433,13 @@ trouble-host         = { version = "0.6.0", features = ["default-packet-pool-mtu
 # oxivgl, so resolving the two halves separately drifts them apart and the lvgl
 # example fails to link (Cargo.lock is gitignored → every fresh resolve).
 #
-# Temporarily on git, not crates.io: `Ui`/`RenderConfig`/`FlushSync` landed in
-# oxivgl#3 *after* 0.7.0 was published, and the demos here are built on them.
-# Swap both back to `version = "=0.8.0"` once that release exists (oxivgl#4);
-# examples-only, so the library's crates.io gate is untouched either way.
-oxivgl               = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", features = ["esp-hal", "log-04", "rtos-sem"] }
-oxivgl-sys           = { git = "http://forgejo:3000/emobotics/oxivgl.git", rev = "aad5a6392b4929d5076d69c429348837cefc1929", default-features = false }
+# On crates.io now that 0.8.0 carries `Ui`/`RenderConfig`/`FlushSync` — the git
+# pin was only ever a bridge until that release existed. Pinned exactly and as a
+# pair: 0.8.0 asks for oxivgl-sys 0.2.4, and the two halves must come from one
+# source or the `oxivgl_render_scratch_*` hooks drift apart and the lvgl example
+# fails to link.
+oxivgl               = { version = "=0.8.0", features = ["esp-hal", "log-04", "rtos-sem"] }
+oxivgl-sys           = { version = "=0.2.4", default-features = false }
 # misc
 embedded-hal         = "1.0.0"
 heapless             = "0.9.3"
