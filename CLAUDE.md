@@ -18,15 +18,24 @@ must therefore resolve **entirely from crates.io** — no `git =` / `path =` dep
   feature. **Never** let it into the library graph — that breaks publishing.
   Consequence: SD *bring-up* (bus, CS, 74-clock idle, GPIO35 mux) is the BSP's;
   the SD *driver* (`SdSpi`, FAT) stays in the consumer/example.
-- Before releasing, verify **both halves** of the gate:
+- Before releasing, verify **all three parts** of the gate:
   1. `cargo package --no-verify`, then confirm the packaged `Cargo.toml` has no
      `git =` / `[patch]` (only the `[lib]` `path = "src/lib.rs"`).
   2. `cargo package --list` shows **exactly 52 files** — `src/`, `tools/`, `docs/` and the
      named top-level assets. A surprise means `[package] include` needs a
      deliberate edit, never a `--allow-dirty` shrug (#59).
+  3. **Build the packaged crate, not the repo.** Unpack the `.crate` somewhere
+     else, add `[workspace]`, and `cargo build --release --features fire27`
+     inside it. This is the only check that sees what a consumer gets. 0.6.0
+     shipped unbuildable for every registry consumer because `build.rs` emitted
+     `cargo:rustc-link-arg-examples` and `include` omits `examples/` — cargo
+     REJECTS that instruction when no example target exists. `cargo package`,
+     `cargo publish --dry-run` and CI all missed it: each builds a tree that
+     still has `examples/`.
 
-  Both guard one thing: a tarball that matches its git tag. Neither is
-  checkable by CI — a fresh checkout has none of the stray files.
+  The first two guard a tarball that matches its git tag; the third guards that
+  the tarball actually builds. None is checkable by CI — a fresh checkout has
+  neither the stray files nor the stripped ones.
 
 ## Building
 
