@@ -79,7 +79,10 @@ pub struct Spi2Bus {
 
 impl Spi2Bus {
     fn new(inner: SpiBusType) -> Self {
-        Self { inner, card_configured: false }
+        Self {
+            inner,
+            card_configured: false,
+        }
     }
 
     /// The raw bus, for a holder that has already stated its terms.
@@ -277,7 +280,13 @@ impl Spi2Resources<'static> {
         let display_rst = Output::new(self.display_rst, Level::Low, OutputConfig::default());
         let display_bl = Output::new(self.display_bl, Level::Low, OutputConfig::default());
         Ok((
-            Spi2Parts { bus, display_cs, display_dc, display_rst, display_bl },
+            Spi2Parts {
+                bus,
+                display_cs,
+                display_dc,
+                display_rst,
+                display_bl,
+            },
             card_cs,
         ))
     }
@@ -408,12 +417,18 @@ mod devices {
 
     impl<D> FairSpiDevice<D> {
         pub fn new(inner: D) -> Self {
-            Self { inner, applies_dc: false }
+            Self {
+                inner,
+                applies_dc: false,
+            }
         }
 
         /// The display's device: also owns the GPIO35 DC line on CoreS3.
         pub fn new_display(inner: D) -> Self {
-            Self { inner, applies_dc: true }
+            Self {
+                inner,
+                applies_dc: true,
+            }
         }
     }
 
@@ -504,10 +519,8 @@ mod devices {
         bus: embassy_sync::mutex::MutexGuard<'a, RawMutex, Spi2Bus>,
         cs: &'a mut PresenceCs<CS>,
         /// Held for its `Drop`: returning the permit is what releases our turn.
-        _permit: embassy_sync::semaphore::SemaphoreReleaser<
-            'a,
-            FairSemaphore<RawMutex, SPI2_WAITERS>,
-        >,
+        _permit:
+            embassy_sync::semaphore::SemaphoreReleaser<'a, FairSemaphore<RawMutex, SPI2_WAITERS>>,
     }
 
     impl<CS: OutputPin> Spi2CardGuard<'_, CS> {
@@ -523,10 +536,7 @@ mod devices {
         /// carry a per-device config: it drives the bus directly, so the clock
         /// change has to happen here, under the same guard, or the card would
         /// stay at the 400 kHz init clock for its whole life.
-        pub fn apply_config(
-            &mut self,
-            config: &SpiConfig,
-        ) -> Result<(), ConfigError> {
+        pub fn apply_config(&mut self, config: &SpiConfig) -> Result<(), ConfigError> {
             self.bus.apply_for_card(config)
         }
     }
@@ -602,7 +612,11 @@ mod devices {
                 #[cfg(feature = "cores3")]
                 crate::board::cores3::gpio35_disable_output();
             }
-            Some(Spi2CardGuard { bus, cs: &mut self.cs, _permit: permit })
+            Some(Spi2CardGuard {
+                bus,
+                cs: &mut self.cs,
+                _permit: permit,
+            })
         }
 
         /// The presence-resolved card `SpiDevice`, for drivers that do not need
@@ -619,7 +633,11 @@ mod devices {
         /// configuration this change exists to remove, reachable through the
         /// path the module docs recommend for compatibility.
         pub fn into_inner(self) -> FairSpiDevice<CardSpiDevice<PresenceCs<CS>>> {
-            FairSpiDevice::new(SpiDeviceWithConfig::new(self.bus, self.cs, sd_init_config()))
+            FairSpiDevice::new(SpiDeviceWithConfig::new(
+                self.bus,
+                self.cs,
+                sd_init_config(),
+            ))
         }
     }
 
@@ -801,7 +819,10 @@ mod devices {
             card_cs: CS,
         ) -> Result<(DisplayDriver, CardSpiDevice<CS>), DisplayInitError> {
             let (driver, bus) = self.finish_bus().await?;
-            Ok((driver, SpiDeviceWithConfig::new(bus, card_cs, sd_init_config())))
+            Ok((
+                driver,
+                SpiDeviceWithConfig::new(bus, card_cs, sd_init_config()),
+            ))
         }
 
         /// Display bring-up, yielding the SHARED bus rather than a composed
@@ -818,8 +839,11 @@ mod devices {
             // Wrapped so every panel transfer queues for the SAME permit the
             // card takes. Fairness on one side only would just move the
             // starvation to the other.
-            let display_device =
-                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, self.display_cs, display_config()));
+            let display_device = FairSpiDevice::new_display(SpiDeviceWithConfig::new(
+                bus,
+                self.display_cs,
+                display_config(),
+            ));
 
             #[cfg(feature = "cores3")]
             let driver = {
@@ -836,9 +860,11 @@ mod devices {
             #[cfg(feature = "fire27")]
             let driver = {
                 let di = SpiInterface::new(display_device, self.display_dc);
-                let display =
-                    display::init_ili9342c_with_reset(di, self.display_rst).await?;
-                let mut driver = DisplayDriver { display, bl: self.display_bl };
+                let display = display::init_ili9342c_with_reset(di, self.display_rst).await?;
+                let mut driver = DisplayDriver {
+                    display,
+                    bl: self.display_bl,
+                };
                 driver.bl_on();
                 driver
             };
@@ -888,7 +914,14 @@ mod devices {
                 frozen: matches!(presence, CardPresence::ForceAbsent),
             };
             let (driver, bus) = self.finish_bus().await?;
-            Ok((driver, PreparedCard { bus, cs: card_cs, config: sd_init_config() }))
+            Ok((
+                driver,
+                PreparedCard {
+                    bus,
+                    cs: card_cs,
+                    config: sd_init_config(),
+                },
+            ))
         }
     }
 
@@ -923,8 +956,11 @@ mod devices {
             // display-only today, so nothing contends — but leaving one raw
             // would mean the place that skips the arbiter is the one nobody
             // re-checks when a second bus user appears.
-            let device =
-                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
+            let device = FairSpiDevice::new_display(SpiDeviceWithConfig::new(
+                bus,
+                display_cs,
+                display_config(),
+            ));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c(di).await?;
             Ok(DisplayBus { display })
@@ -959,8 +995,11 @@ mod devices {
             // display-only today, so nothing contends — but leaving one raw
             // would mean the place that skips the arbiter is the one nobody
             // re-checks when a second bus user appears.
-            let device =
-                FairSpiDevice::new_display(SpiDeviceWithConfig::new(bus, display_cs, display_config()));
+            let device = FairSpiDevice::new_display(SpiDeviceWithConfig::new(
+                bus,
+                display_cs,
+                display_config(),
+            ));
             let di = SpiInterface::new(device, dc);
             let display = display::init_ili9342c_with_reset(di, rst).await?;
             backlight.set_high();

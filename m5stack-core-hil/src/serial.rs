@@ -794,9 +794,12 @@ mod ontarget {
         // process that holds nothing, so the wait below times out looking for a
         // hold that never happened. Observed exactly that, and only when this
         // test ran after the flash-decision tier.
-        wait::until("the board to be present before squatting", Duration::from_secs(10), Duration::from_millis(50), || {
-            SerialSource::openable(&t)
-        })
+        wait::until(
+            "the board to be present before squatting",
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            || SerialSource::openable(&t),
+        )
         .expect("the board must be addressable before this test can squat on it");
 
         let mut squatter: Child = std::process::Command::new("sh")
@@ -870,8 +873,8 @@ mod ontarget {
     /// The host suite proves the *sequence* — idle, `EN` low, idle, and `DTR`
     /// never asserted — against a recorder. What it cannot prove is that the
     /// board on the far end is wired to those lines at all. That is exactly one
-    /// bench run, and until it has been made, this is the test that has not been
-    /// run rather than a claim that has been checked.
+    /// bench run, and until it has been made, this is the test that has not
+    /// been run rather than a claim that has been checked.
     ///
     /// Needs a board whose reset lines the harness drives — a Fire27, or any
     /// board configured `reset = "serial-lines"`. It does **not** need

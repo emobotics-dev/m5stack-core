@@ -21,7 +21,8 @@
 //!   gave up. Knowing what the condition is fails this.
 //! - [`lock`] — an exclusive claim on a named resource, and its release.
 //! - [`serial`] — getting bytes off a tty.
-//! - [`listen`] — bytes accumulated for a run, and the decision to stop waiting.
+//! - [`listen`] — bytes accumulated for a run, and the decision to stop
+//!   waiting.
 //! - [`identity`] — bytes into an identity, from a console line or an ELF.
 //! - [`config`] — a config file in, board definitions out. A MAC is a fact
 //!   about a *rig*, so it lives in `hil.toml` and the tooling takes a name.

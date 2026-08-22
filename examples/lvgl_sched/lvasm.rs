@@ -161,7 +161,13 @@ pub fn report() {
         let calls = CALLS[i].swap(0, Relaxed);
         let px = PIXELS[i].swap(0, Relaxed);
         if calls > 0 {
-            log::info!("[lvasm] {:<6} calls={} px={} px/call={}", NAMES[i], calls, px, px / calls);
+            log::info!(
+                "[lvasm] {:<6} calls={} px={} px/call={}",
+                NAMES[i],
+                calls,
+                px,
+                px / calls
+            );
         }
     }
 }

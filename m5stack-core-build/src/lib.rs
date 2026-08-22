@@ -39,7 +39,10 @@
 // The doc example above keeps its `fn main()` deliberately: what it documents
 // is a `build.rs`, and a build script IS its `main`. Stripping it to satisfy
 // the lint would show a reader a snippet that does not go anywhere real.
-#![allow(clippy::needless_doctest_main, reason = "the example is a build script; its main is the subject")]
+#![allow(
+    clippy::needless_doctest_main,
+    reason = "the example is a build script; its main is the subject"
+)]
 
 use vergen_gitcl::{Emitter, GitclBuilder};
 
@@ -89,7 +92,11 @@ pub fn emit_identity_env(features: &str, hash_len: usize) {
 }
 
 fn join_mark(features: &str, commit: &str) -> String {
-    if features.is_empty() { commit.to_string() } else { format!("{features}/{commit}") }
+    if features.is_empty() {
+        commit.to_string()
+    } else {
+        format!("{features}/{commit}")
+    }
 }
 
 /// Ask `vergen` for this build's git state, and abbreviate it.
@@ -118,7 +125,11 @@ fn git_mark(hash_len: usize) -> Option<String> {
         .dirty(true)
         .build()
         .ok()?;
-    Emitter::default().add_instructions(&gitcl).ok()?.emit_and_set().ok()?;
+    Emitter::default()
+        .add_instructions(&gitcl)
+        .ok()?
+        .emit_and_set()
+        .ok()?;
 
     let sha = std::env::var("VERGEN_GIT_SHA").ok()?;
     let dirty = std::env::var("VERGEN_GIT_DIRTY").is_ok_and(|d| d == "true");
@@ -179,7 +190,10 @@ mod tests {
 
     #[test]
     fn features_prefix_the_commit() {
-        assert_eq!(join_mark("crypto-opt", "0f63a4926303+"), "crypto-opt/0f63a4926303+");
+        assert_eq!(
+            join_mark("crypto-opt", "0f63a4926303+"),
+            "crypto-opt/0f63a4926303+"
+        );
     }
 
     /// The property `--short` did NOT give: the width asked for is the width
@@ -189,8 +203,15 @@ mod tests {
     fn the_width_asked_for_is_the_width_produced() {
         for hash_len in [4, 6, 8, 12, 16, 40] {
             let mark = abbreviate(SHA, hash_len, false).expect("a hex sha abbreviates");
-            assert_eq!(mark.len(), hash_len, "hash_len={hash_len} produced {mark:?}");
-            assert!(SHA.starts_with(&mark), "must be a PREFIX of the real hash: {mark:?}");
+            assert_eq!(
+                mark.len(),
+                hash_len,
+                "hash_len={hash_len} produced {mark:?}"
+            );
+            assert!(
+                SHA.starts_with(&mark),
+                "must be a PREFIX of the real hash: {mark:?}"
+            );
         }
     }
 
@@ -200,7 +221,10 @@ mod tests {
     #[test]
     fn an_absurdly_short_request_is_clamped_to_the_old_git_floor() {
         for hash_len in [0, 1, 3] {
-            assert_eq!(abbreviate(SHA, hash_len, false).expect("abbreviates").len(), MIN_HASH_LEN);
+            assert_eq!(
+                abbreviate(SHA, hash_len, false).expect("abbreviates").len(),
+                MIN_HASH_LEN
+            );
         }
     }
 
@@ -215,7 +239,11 @@ mod tests {
     fn a_dirty_tree_is_marked_and_does_not_eat_a_hash_character() {
         let mark = abbreviate(SHA, 12, true).expect("abbreviates");
         assert_eq!(mark, "0f63a4926303+");
-        assert_eq!(mark.trim_end_matches('+').len(), 12, "the + is extra, not part of the width");
+        assert_eq!(
+            mark.trim_end_matches('+').len(),
+            12,
+            "the + is extra, not part of the width"
+        );
     }
 
     /// THE guard that keeps a non-answer out of a firmware's identity. vergen

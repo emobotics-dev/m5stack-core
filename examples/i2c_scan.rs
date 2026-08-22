@@ -10,8 +10,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel, i2c_scan};
 use crate::common::board::{self, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel, i2c_scan};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use static_cell::make_static;

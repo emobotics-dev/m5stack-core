@@ -58,10 +58,11 @@ pub const EN_LOW_HOLD: Duration = Duration::from_millis(100);
 ///
 /// **Not a race workaround** — a settling time for real hardware. The kernel
 /// raises `DTR` and `RTS` when a tty is opened, and `EN` is pulled up through
-/// an RC network (order of a millisecond on the usual `10 kΩ`/`100 nF`). Driving
-/// the lines idle and pulling `EN` in the same instant would start the reset
-/// pulse from an indeterminate level rather than from a known-high one, so the
-/// board's *own* charge curve, not this harness, sets how long that takes.
+/// an RC network (order of a millisecond on the usual `10 kΩ`/`100 nF`).
+/// Driving the lines idle and pulling `EN` in the same instant would start the
+/// reset pulse from an indeterminate level rather than from a known-high one,
+/// so the board's *own* charge curve, not this harness, sets how long that
+/// takes.
 pub const LINE_SETTLE: Duration = Duration::from_millis(20);
 
 /// Espressif's USB-Serial-JTAG `VID:PID`, which `probe-rs` prefixes to a
@@ -122,13 +123,15 @@ pub enum Reset {
     /// [`PROBE_RS_MIN`].
     ProbeRs {
         chip: String,
-        /// `VID:PID:Serial`. **Load-bearing on a rig with more than one probe**:
-        /// unqualified, `probe-rs reset` prompts or picks, so it can restart
-        /// somebody else's board. Derived from the MAC for a CoreS3.
+        /// `VID:PID:Serial`. **Load-bearing on a rig with more than one
+        /// probe**: unqualified, `probe-rs reset` prompts or picks, so
+        /// it can restart somebody else's board. Derived from the MAC
+        /// for a CoreS3.
         probe: Option<String>,
     },
     /// Over the serial port's `RTS`/`DTR` lines, driven **in this process** on
-    /// the descriptor already held. The default for a board with no debug probe.
+    /// the descriptor already held. The default for a board with no debug
+    /// probe.
     ///
     /// `espflash reset` pulses the same lines, but as a subprocess it needs the
     /// tty to itself — so [`Reset::Espflash`] must release the port and re-open
@@ -358,9 +361,9 @@ pub fn reset_attached(board: &Board, l: &mut Listener<DrainedSource>) -> Result<
             // Held, so the lines are driven through the capture rather than
             // around it. `None` means a previous reconnect failed, which is a
             // hard error and not something to reset around.
-            let held = l.source_mut().ok_or_else(|| {
-                format!("board {}: the listener has no port — an earlier reconnect failed", board.id)
-            })?;
+            let held = l
+                .source_mut()
+                .ok_or_else(|| format!("board {}: the listener has no port — an earlier reconnect failed", board.id))?;
             reset_lines_sequence(held, &board.id)
         }
         Reset::Espflash => l.across_reset(|| reset_and_reopen(board)),
@@ -393,8 +396,7 @@ pub fn reset_and_reopen(board: &Board) -> Result<DrainedSource, String> {
     hard_reset(board)?;
     // The PATH does not change across a reset — only its availability does — so
     // this waits for the device to come back rather than for a new name.
-    serial::open_when_back(&board.port, board.baud, RETURN_BUDGET)
-        .map_err(|e| format!("board {}: {e}", board.id))
+    serial::open_when_back(&board.port, board.baud, RETURN_BUDGET).map_err(|e| format!("board {}: {e}", board.id))
 }
 
 /// Whether the boot a reset caused can be told apart from the one before it.
@@ -409,7 +411,8 @@ pub enum Isolation {
     Clean,
     /// The board never stopped talking, so a wait may still match output from
     /// before the reset. Harmless for an identity (a stale one is caught by its
-    /// hash) but **not** for `--until`, where it turns a miss into a false pass.
+    /// hash) but **not** for `--until`, where it turns a miss into a false
+    /// pass.
     Chatty,
 }
 
@@ -904,8 +907,7 @@ pub(crate) mod ontarget {
     use std::time::Duration;
 
     use super::{Board, Capture, IDENTITY_BUDGET, no_holes, read_identity, reset_attached};
-    use crate::flash::FlashConfig;
-    use crate::{listen::Listener, serial::DrainedSource};
+    use crate::{flash::FlashConfig, listen::Listener, serial::DrainedSource};
 
     /// A required environment variable, or a failure that says how to run this
     /// tier. A panic rather than a silent skip: a hardware test that quietly

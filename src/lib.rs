@@ -65,9 +65,11 @@ mod fmt;
 #[macro_export]
 macro_rules! must_spawn {
     ($spawner:expr, $task:expr) => {
-        $spawner.spawn($task.unwrap_or_else(|e| {
-            ::core::panic!(concat!("spawn ", stringify!($task), ": {:?}"), e)
-        }))
+        $spawner.spawn(
+            $task.unwrap_or_else(|e| {
+                ::core::panic!(concat!("spawn ", stringify!($task), ": {:?}"), e)
+            }),
+        )
     };
 }
 

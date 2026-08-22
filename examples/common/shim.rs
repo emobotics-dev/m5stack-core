@@ -16,10 +16,20 @@ pub fn init_console(spawner: Spawner, serial: SerialResources) -> Console {
     // R8: surface a prior panic ONCE, after the backend is up so it reaches the
     // console (and the host's `detect_crash` grep).
     let crumb = console::take_panic_breadcrumb();
-    let console =
-        console::install(spawner, Config { serial: Some(serial), filter: "info" });
+    let console = console::install(
+        spawner,
+        Config {
+            serial: Some(serial),
+            filter: "info",
+        },
+    );
     if let Some(c) = crumb {
-        log::warn!("{} @ {} (reason {:#010x})", console::markers::PREV_PANIC, c.location, c.reason);
+        log::warn!(
+            "{} @ {} (reason {:#010x})",
+            console::markers::PREV_PANIC,
+            c.location,
+            c.reason
+        );
     }
     console
 }

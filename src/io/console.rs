@@ -76,9 +76,7 @@ mod imp {
     /// TX sink the drain task writes. `into_async()` binds the TX-done IRQ to the
     /// calling core, so [`super::install`] must run on the core that owns the
     /// drain task (main / PRO).
-    pub fn install_serial(
-        res: SerialResources,
-    ) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
+    pub fn install_serial(res: SerialResources) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
         let (rx, tx) = setup(res.uart, res.tx_pin, res.rx_pin);
         (rx, tx.into_async())
     }
@@ -139,9 +137,7 @@ mod imp {
 
     /// Build the console, returning the RX half (for `serial_cmd`) and the async
     /// TX sink the drain task writes. The split TX is already async on CoreS3.
-    pub fn install_serial(
-        res: SerialResources,
-    ) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
+    pub fn install_serial(res: SerialResources) -> (ConsoleRx<'static>, ConsoleTxAsync<'static>) {
         setup(res.usb)
     }
 
@@ -219,7 +215,13 @@ struct Ring {
 
 impl Ring {
     const fn new() -> Self {
-        Self { buf: [0; RING_SIZE], head: 0, tail: 0, full: false, dropped: 0 }
+        Self {
+            buf: [0; RING_SIZE],
+            head: 0,
+            tail: 0,
+            full: false,
+            dropped: 0,
+        }
     }
 
     /// Append `bytes`; on full, the **oldest** bytes are overwritten. Always
@@ -485,7 +487,10 @@ pub fn init(spec: &'static str) {
     // narrowing happens in `enabled`.
     let mut max = log::LevelFilter::Info;
     for directive in spec.split(',') {
-        let level = directive.split_once('=').map(|(_, l)| l).unwrap_or(directive);
+        let level = directive
+            .split_once('=')
+            .map(|(_, l)| l)
+            .unwrap_or(directive);
         if let Some(l) = level_of(level.trim()) {
             if l > max {
                 max = l;
@@ -764,7 +769,10 @@ pub fn take_panic_breadcrumb() -> Option<PanicCrumb> {
         } else {
             "?"
         };
-        Some(PanicCrumb { location, reason: c[CRUMB_REASON_IDX] })
+        Some(PanicCrumb {
+            location,
+            reason: c[CRUMB_REASON_IDX],
+        })
     }
 }
 

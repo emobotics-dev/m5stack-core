@@ -42,11 +42,7 @@ mod imp {
 
 #[cfg(feature = "cores3")]
 mod imp {
-    use esp_hal::{
-        Async,
-        peripherals::USB_DEVICE,
-        usb_serial_jtag::UsbSerialJtag,
-    };
+    use esp_hal::{Async, peripherals::USB_DEVICE, usb_serial_jtag::UsbSerialJtag};
 
     pub struct SerialCmdResources<'d> {
         pub usb: USB_DEVICE<'d>,
@@ -59,4 +55,4 @@ mod imp {
     }
 }
 
-pub use imp::{SerialRx, SerialCmdResources, take_rx};
+pub use imp::{SerialCmdResources, SerialRx, take_rx};

@@ -22,8 +22,8 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::{String, ToString};
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::board::NAME;
+use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{
@@ -45,7 +45,6 @@ const SD_RETRIES: u32 = 5;
 /// Card presence handed to `finish_sd`. Flip to `ForceAbsent` to exercise the
 /// SD-absent degrade path with a card physically inserted (HIL `:nosd`).
 const PRESENCE: CardPresence = CardPresence::Detect;
-
 
 /// Peek sector 0 and, if it is an MBR, return the `(start_lba, sector_count)` of
 /// the first FAT partition. Returns `None` for a card with no MBR partition
@@ -125,8 +124,10 @@ async fn main(spawner: Spawner) {
     // the exclusive bus, brings the display up unconditionally (CoreS3: GPIO35 is
     // re-muxed to MISO here), and returns a presence-resolved card device. No
     // manual pre-init loop; `PRESENCE` can force the absent path with a card in.
-    let (mut driver, prepared) =
-        parts.finish_sd(card_cs, PRESENCE).await.expect("display init");
+    let (mut driver, prepared) = parts
+        .finish_sd(card_cs, PRESENCE)
+        .await
+        .expect("display init");
 
     // Read-only `ls` into display lines (and the log). Done before any draw, so
     // GPIO35 stays MISO on CoreS3 for the whole SD I/O (no DC writes interleave).
@@ -181,64 +182,67 @@ async fn main(spawner: Spawner) {
             // goes — mount vs the optional free-space scan vs the root listing.
             log::info!("[sd] mounting FAT volume...");
             match block_device_adapters::StreamSlice::new(bs, start, end).await {
-                Ok(slice) => match embedded_fatfs::FileSystem::new(
-                    slice,
-                    embedded_fatfs::FsOptions::new(),
-                )
-                .await
-                {
-                    Ok(fs) => {
-                        log::info!("[sd] mounted");
-                        // Free space, only when it costs nothing: `free_clusters_hint()`
-                        // reads the cached FSInfo count (O(1), no scan). We deliberately
-                        // do NOT call `fs.stats()`, which would scan the whole FAT
-                        // (O(card size), tens of seconds on a big card — the #50 "hang").
-                        // If the hint is unknown, we just skip the line.
-                        match fs.free_clusters_hint() {
-                            Some(free) => {
-                                let total = fs.total_clusters();
-                                let kib = |c: u32| (c as u64 * fs.cluster_size() as u64) / 1024;
-                                lines.push(format!("free {} / {} KiB", kib(free), kib(total)));
+                Ok(slice) => {
+                    match embedded_fatfs::FileSystem::new(slice, embedded_fatfs::FsOptions::new())
+                        .await
+                    {
+                        Ok(fs) => {
+                            log::info!("[sd] mounted");
+                            // Free space, only when it costs nothing: `free_clusters_hint()`
+                            // reads the cached FSInfo count (O(1), no scan). We deliberately
+                            // do NOT call `fs.stats()`, which would scan the whole FAT
+                            // (O(card size), tens of seconds on a big card — the #50 "hang").
+                            // If the hint is unknown, we just skip the line.
+                            match fs.free_clusters_hint() {
+                                Some(free) => {
+                                    let total = fs.total_clusters();
+                                    let kib = |c: u32| (c as u64 * fs.cluster_size() as u64) / 1024;
+                                    lines.push(format!("free {} / {} KiB", kib(free), kib(total)));
+                                }
+                                None => log::info!(
+                                    "[sd] free space unknown (no FSInfo hint; not scanning)"
+                                ),
                             }
-                            None => log::info!("[sd] free space unknown (no FSInfo hint; not scanning)"),
-                        }
-                        lines.push("root:".to_string());
-                        log::info!("[sd] listing root...");
-                        // Scope the dir iterator (it borrows `fs`) so it is dropped
-                        // before `fs.unmount()` moves `fs`.
-                        {
-                            let root = fs.root_dir();
-                            let mut it = root.iter();
-                            let mut n = 0u32;
-                            while let Some(entry) = it.next().await {
-                                match entry {
-                                    Ok(e) if e.is_dir() => {
-                                        lines.push(format!("  {}/", e.file_name()))
+                            lines.push("root:".to_string());
+                            log::info!("[sd] listing root...");
+                            // Scope the dir iterator (it borrows `fs`) so it is dropped
+                            // before `fs.unmount()` moves `fs`.
+                            {
+                                let root = fs.root_dir();
+                                let mut it = root.iter();
+                                let mut n = 0u32;
+                                while let Some(entry) = it.next().await {
+                                    match entry {
+                                        Ok(e) if e.is_dir() => {
+                                            lines.push(format!("  {}/", e.file_name()))
+                                        }
+                                        Ok(e) => lines.push(format!(
+                                            "  {}  {} B",
+                                            e.file_name(),
+                                            e.len()
+                                        )),
+                                        Err(e) => {
+                                            log::warn!("dir entry error: {:?}", e);
+                                            break;
+                                        }
                                     }
-                                    Ok(e) => {
-                                        lines.push(format!("  {}  {} B", e.file_name(), e.len()))
-                                    }
-                                    Err(e) => {
-                                        log::warn!("dir entry error: {:?}", e);
+                                    n += 1;
+                                    // Cap the on-screen list; the full count is logged.
+                                    if n >= 10 {
+                                        lines.push("  ...".to_string());
                                         break;
                                     }
                                 }
-                                n += 1;
-                                // Cap the on-screen list; the full count is logged.
-                                if n >= 10 {
-                                    lines.push("  ...".to_string());
-                                    break;
-                                }
+                                log::info!("[sd] root listed ({} entries shown)", n);
                             }
-                            log::info!("[sd] root listed ({} entries shown)", n);
+                            let _ = fs.unmount().await;
                         }
-                        let _ = fs.unmount().await;
+                        Err(e) => {
+                            log::warn!("mount failed: {:?}", e);
+                            lines.push("mount failed".to_string());
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("mount failed: {:?}", e);
-                        lines.push("mount failed".to_string());
-                    }
-                },
+                }
                 Err(e) => {
                     log::warn!("StreamSlice failed: {:?}", e);
                     lines.push("slice failed".to_string());
@@ -254,7 +258,14 @@ async fn main(spawner: Spawner) {
     let strip_buf: &'static mut [u8; STRIP_BYTES] = make_static!([0u8; STRIP_BYTES]);
     let refs: alloc::vec::Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     loop {
-        draw_panel(&mut driver.display, &mut strip_buf[..], NAME, "SD ls", &refs).await;
+        draw_panel(
+            &mut driver.display,
+            &mut strip_buf[..],
+            NAME,
+            "SD ls",
+            &refs,
+        )
+        .await;
         Timer::after(Duration::from_secs(5)).await;
     }
 }

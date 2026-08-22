@@ -49,7 +49,12 @@ pub async fn net_demo(stack: Stack<'static>, control: WifiControl) {
                 v.clear();
                 for ap in aps.iter().take(MAX_APS) {
                     let mut line = heapless::String::new();
-                    let _ = write!(line, "{:<20.20} {:>4}", ap.ssid.as_str(), ap.signal_strength);
+                    let _ = write!(
+                        line,
+                        "{:<20.20} {:>4}",
+                        ap.ssid.as_str(),
+                        ap.signal_strength
+                    );
                     let _ = v.push(line);
                 }
             });

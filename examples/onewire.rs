@@ -18,8 +18,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::board::{self, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use m5stack_core::driver::ds18b20::Ds18b20Driver;
@@ -43,7 +43,14 @@ async fn main(spawner: Spawner) {
         Err(e) => {
             log::error!("ds18b20 init failed: {:?}", e);
             loop {
-                draw_panel(&mut display, &mut strip_buf[..], NAME, "1-Wire", &["init failed", "(pull-up present?)"]).await;
+                draw_panel(
+                    &mut display,
+                    &mut strip_buf[..],
+                    NAME,
+                    "1-Wire",
+                    &["init failed", "(pull-up present?)"],
+                )
+                .await;
                 Timer::after(Duration::from_secs(5)).await;
             }
         }

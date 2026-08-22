@@ -14,9 +14,15 @@ use esp_hal::rtc_cntl::{Rtc, RwdtStage};
 ///
 /// `Rtc` is consumed; construct it from
 /// [`SystemResources::lpwr`](crate::board::SystemResources::lpwr).
-pub async fn watchdog_feed_loop(mut rtc: Rtc<'static>, timeout_secs: u64, feed_every_secs: u64) -> ! {
-    rtc.rwdt
-        .set_timeout(RwdtStage::Stage0, esp_hal::time::Duration::from_secs(timeout_secs));
+pub async fn watchdog_feed_loop(
+    mut rtc: Rtc<'static>,
+    timeout_secs: u64,
+    feed_every_secs: u64,
+) -> ! {
+    rtc.rwdt.set_timeout(
+        RwdtStage::Stage0,
+        esp_hal::time::Duration::from_secs(timeout_secs),
+    );
     rtc.rwdt.enable();
     info!(
         "[wdt] RWDT armed ({} s reset), feeding every {} s",

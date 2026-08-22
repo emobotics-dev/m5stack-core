@@ -144,7 +144,11 @@ fn probe(
         // SAFETY: `buf_ptr` points at the DMA buffer's first CAP bytes, which
         // are `&'static mut` DRAM kept alive by the leaked transfer below.
         let got = unsafe { core::slice::from_raw_parts(buf_ptr, CAP) };
-        log::error!("{:<12} STALLED (no EOF) — dma buffer so far = {:02x?}", v.label, got);
+        log::error!(
+            "{:<12} STALLED (no EOF) — dma buffer so far = {:02x?}",
+            v.label,
+            got
+        );
         // Neither `wait()` nor `drop` can be used on a stalled transfer: both
         // spin on `is_done()`. Leak it and end the run.
         core::mem::forget(xfer);
@@ -155,7 +159,13 @@ fn probe(
 
     let got = &rx.as_slice()[..CAP];
     let verdict = if got == v.want { "PASS" } else { "FAIL" };
-    log::info!("{:<12} want={:02x?} got={:02x?}  {}", v.label, v.want, got, verdict);
+    log::info!(
+        "{:<12} want={:02x?} got={:02x?}  {}",
+        v.label,
+        v.want,
+        got,
+        verdict
+    );
 
     Outcome::Ok(slave, rx)
 }
@@ -178,13 +188,25 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "cores3")]
     let _console = shim::init_console(spawner, board::console_serial(p.USB_DEVICE));
 
-    log::info!("#18 SPI command-phase wire probe on {} @ {} kHz", board::NAME, SCLK_KHZ);
+    log::info!(
+        "#18 SPI command-phase wire probe on {} @ {} kHz",
+        board::NAME,
+        SCLK_KHZ
+    );
     drain().await;
 
     #[cfg(feature = "cores3")]
-    let (sclk, mosi, cs) = (AnyPin::from(p.GPIO5), AnyPin::from(p.GPIO6), AnyPin::from(p.GPIO7));
+    let (sclk, mosi, cs) = (
+        AnyPin::from(p.GPIO5),
+        AnyPin::from(p.GPIO6),
+        AnyPin::from(p.GPIO7),
+    );
     #[cfg(feature = "fire27")]
-    let (sclk, mosi, cs) = (AnyPin::from(p.GPIO5), AnyPin::from(p.GPIO26), AnyPin::from(p.GPIO13));
+    let (sclk, mosi, cs) = (
+        AnyPin::from(p.GPIO5),
+        AnyPin::from(p.GPIO26),
+        AnyPin::from(p.GPIO13),
+    );
 
     // SAFETY: master and slave use each pad in opposite directions (master
     // drives, slave listens) — the classic GPIO-matrix loopback. The extra
@@ -203,7 +225,9 @@ async fn main(spawner: Spawner) {
     // ESP32's SPI slave supports only modes 1 and 3; mode 1 works on both chips.
     let mut master = SpiMaster::new(
         p.SPI2,
-        SpiConfig::default().with_frequency(Rate::from_khz(SCLK_KHZ)).with_mode(Mode::_1),
+        SpiConfig::default()
+            .with_frequency(Rate::from_khz(SCLK_KHZ))
+            .with_mode(Mode::_1),
     )
     .expect("SPI2 master init")
     .with_sck(sclk)

@@ -62,7 +62,11 @@ async fn main(spawner: Spawner) {
     log::info!("probe: init={}", sd.init().await.is_ok());
 
     match sd.size().await {
-        Ok(sz) => log::info!("probe: card size = {} bytes ({} MiB)", sz, sz / (1024 * 1024)),
+        Ok(sz) => log::info!(
+            "probe: card size = {} bytes ({} MiB)",
+            sz,
+            sz / (1024 * 1024)
+        ),
         Err(e) => log::warn!("probe: size err {:?}", e),
     }
 
@@ -88,12 +92,21 @@ async fn main(spawner: Spawner) {
         let dev = sd.spi();
         for n in [8usize, 64, 128, 256, 384, 512] {
             let mut buf = [0xAAu8; 512];
-            match dev.transaction(&mut [Operation::TransferInPlace(&mut buf[..n])]).await {
+            match dev
+                .transaction(&mut [Operation::TransferInPlace(&mut buf[..n])])
+                .await
+            {
                 Ok(()) => {
                     let ff = buf[..n].iter().filter(|&&x| x == 0xFF).count();
                     let zero = buf[..n].iter().filter(|&&x| x == 0x00).count();
                     let aa = buf[..n].iter().filter(|&&x| x == 0xAA).count();
-                    log::info!("raw n={:3}: 0xFF={:3} 0x00={:3} untouched={:3}", n, ff, zero, aa);
+                    log::info!(
+                        "raw n={:3}: 0xFF={:3} 0x00={:3} untouched={:3}",
+                        n,
+                        ff,
+                        zero,
+                        aa
+                    );
                 }
                 Err(_) => log::warn!("raw n={}: transfer error", n),
             }

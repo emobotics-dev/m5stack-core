@@ -34,7 +34,11 @@ struct Frame {
     child_us: u64,
 }
 
-static mut STACK: [Frame; MAX_DEPTH] = [Frame { slot: 0, start_us: 0, child_us: 0 }; MAX_DEPTH];
+static mut STACK: [Frame; MAX_DEPTH] = [Frame {
+    slot: 0,
+    start_us: 0,
+    child_us: 0,
+}; MAX_DEPTH];
 static mut DEPTH: usize = 0;
 
 /// Find or claim the slot for a tag pointer.
@@ -66,7 +70,11 @@ pub extern "C" fn m5_prof_begin(tag: *const c_char) {
             return;
         }
         let stack = &mut *core::ptr::addr_of_mut!(STACK);
-        stack[*depth] = Frame { slot, start_us: esp_radio_rtos_driver::now(), child_us: 0 };
+        stack[*depth] = Frame {
+            slot,
+            start_us: esp_radio_rtos_driver::now(),
+            child_us: 0,
+        };
         *depth += 1;
     }
 }
@@ -117,7 +125,9 @@ pub fn report(total_us: u32, top: usize) {
     for &(key, us, calls) in rows.iter().take(top.min(n)) {
         // SAFETY: `key` is a tag pointer LVGL passed us, a `__func__` or literal
         // with static storage duration.
-        let name = unsafe { CStr::from_ptr(key as *const c_char) }.to_str().unwrap_or("?");
+        let name = unsafe { CStr::from_ptr(key as *const c_char) }
+            .to_str()
+            .unwrap_or("?");
         log::info!(
             "[lvprof] {:<28} {:>3}% excl={}us calls={} us/call={}",
             name,

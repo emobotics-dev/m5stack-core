@@ -62,7 +62,10 @@ pub mod ui;
 macro_rules! boot {
     ($spawner:expr, $board:ident, $profile:ident) => {
         let $board = crate::common::shim::boot_board(crate::common::shim::HeapProfile::$profile);
-        esp_rtos::start($board.system.timer0_0, $board.system.sw_int.software_interrupt0);
+        esp_rtos::start(
+            $board.system.timer0_0,
+            $board.system.sw_int.software_interrupt0,
+        );
         crate::common::boot_console!($spawner, $board);
     };
     ($spawner:expr, $board:ident, $profile:ident, idle_hook = $hook:expr) => {

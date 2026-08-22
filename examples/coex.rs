@@ -20,8 +20,8 @@ mod common;
 
 extern crate alloc;
 
-use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::board::{self, NAME};
+use crate::common::helpers::{STRIP_BYTES, draw_panel};
 use crate::common::{ble, net};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -81,7 +81,12 @@ async fn main(spawner: Spawner) {
             // Conventional MSB-first notation (raw() is little-endian).
             lines.push(alloc::format!(
                 "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]
+                mac[5],
+                mac[4],
+                mac[3],
+                mac[2],
+                mac[1],
+                mac[0]
             ));
         }
         let aps = net::scan_lines();

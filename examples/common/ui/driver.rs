@@ -24,11 +24,16 @@ impl DisplayDriver {
     pub fn new(bus: DisplayBus) -> Self {
         #[cfg(feature = "fire27")]
         {
-            Self { display: bus.display, _backlight: bus.backlight }
+            Self {
+                display: bus.display,
+                _backlight: bus.backlight,
+            }
         }
         #[cfg(feature = "cores3")]
         {
-            Self { display: bus.display }
+            Self {
+                display: bus.display,
+            }
         }
     }
 }
