@@ -4,6 +4,25 @@ All notable changes to this crate are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-22
+
+### Fixed
+
+- **0.6.0 could not be built by anyone consuming it from crates.io.** `build.rs`
+  emitted `cargo:rustc-link-arg-examples` unconditionally, and `[package]
+  include` omits `examples/` — so the published crate has no example target and
+  cargo *rejects* the instruction rather than ignoring it: *"invalid instruction
+  `cargo:rustc-link-arg-examples` ... does not have a example target"*. The build
+  died before compiling anything, on every feature set and every target.
+
+  It is emitted only when `examples/` exists now, which is true in the repository
+  and never in the published crate.
+
+  Nothing in the release process could have caught it: `cargo package`,
+  `cargo publish --dry-run` and CI all build a tree that still has `examples/`.
+  Only unpacking the `.crate` and building *that* reproduces what a consumer
+  gets — which is now the check to run before publishing.
+
 ## [0.6.0] - 2026-08-22
 
 ### Known issue

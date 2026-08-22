@@ -11,9 +11,21 @@
 //! if someone deliberately pins a per-package profile override for this crate.
 
 fn main() {
-    // Applies to example targets only, so a consumer linking this crate is
-    // unaffected. The examples are firmware images and need esp-hal's script.
-    println!("cargo:rustc-link-arg-examples=-Tlinkall.x");
+    // The examples are firmware images and need esp-hal's linker script.
+    //
+    // Emitted ONLY when `examples/` is present, which means: in this repo, never
+    // in the published crate. Cargo does not ignore this instruction when the
+    // package has no example target — it REJECTS it ("invalid instruction ...
+    // does not have a example target") and the build dies before any code is
+    // compiled. `[package] include` omits `examples/`, so every crates.io
+    // consumer of 0.6.0 hit that, on any feature set and any target.
+    //
+    // It cannot be caught by `cargo package`, `cargo publish --dry-run`, or CI:
+    // all of them build a tree that still has examples. Only consuming the
+    // packaged crate does.
+    if std::path::Path::new("examples").is_dir() {
+        println!("cargo:rustc-link-arg-examples=-Tlinkall.x");
+    }
     let psram = std::env::var_os("CARGO_FEATURE_PSRAM").is_some();
     let opt0 = std::env::var("OPT_LEVEL").as_deref() == Ok("0");
     if psram && opt0 {
