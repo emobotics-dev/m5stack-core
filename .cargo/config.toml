@@ -9,6 +9,12 @@ rustflags = [
   # written at runtime by design, so the layout is correct and the warning
   # is noise the linker scripts cannot avoid.
   "-C", "link-arg=-Wl,--no-warn-rwx-segments",
+  # Warnings are errors. It lives HERE, not in a CI `RUSTFLAGS`, because that
+  # env var REPLACES this array rather than appending to it — setting it would
+  # silently drop the link args above and the build would fail for an unrelated
+  # reason. Dependencies are unaffected: cargo caps lints on everything that is
+  # not a path member.
+  "-D", "warnings",
 ]
 
 [target.xtensa-esp32s3-none-elf]
@@ -22,6 +28,12 @@ rustflags = [
   # written at runtime by design, so the layout is correct and the warning
   # is noise the linker scripts cannot avoid.
   "-C", "link-arg=-Wl,--no-warn-rwx-segments",
+  # Warnings are errors. It lives HERE, not in a CI `RUSTFLAGS`, because that
+  # env var REPLACES this array rather than appending to it — setting it would
+  # silently drop the link args above and the build would fail for an unrelated
+  # reason. Dependencies are unaffected: cargo caps lints on everything that is
+  # not a path member.
+  "-D", "warnings",
 ]
 
 [build]

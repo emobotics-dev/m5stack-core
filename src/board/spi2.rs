@@ -72,11 +72,15 @@ pub type SpiBusType = SpiDmaBus<'static, Async>;
 /// A `set_config` from outside marks the settings foreign: the display device
 /// applies its own config per transaction, and the card restates its terms on
 /// the next acquire.
+/// Gated with its users: nothing constructs or reads this without `display`,
+/// and an ungated definition is dead code in a bare board build.
+#[cfg(feature = "display")]
 pub struct Spi2Bus {
     inner: SpiBusType,
     card_configured: bool,
 }
 
+#[cfg(feature = "display")]
 impl Spi2Bus {
     fn new(inner: SpiBusType) -> Self {
         Self {
@@ -139,14 +143,17 @@ impl embassy_embedded_hal::SetConfig for Spi2Bus {
     }
 }
 
+#[cfg(feature = "display")]
 use embedded_hal_async::spi::SpiBus as AsyncSpiBus;
 
+#[cfg(feature = "display")]
 impl embedded_hal_async::spi::ErrorType for Spi2Bus {
     type Error = <SpiBusType as embedded_hal_async::spi::ErrorType>::Error;
 }
 
 /// Delegating, and spelled out: `SpiDmaBus` has inherent BLOCKING methods of
 /// the same names, so plain `self.inner.read(..)` silently picks those.
+#[cfg(feature = "display")]
 impl embedded_hal_async::spi::SpiBus for Spi2Bus {
     async fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
         AsyncSpiBus::read(&mut self.inner, words).await
