@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SCREEN_H","SCREEN_W"],"fn":["init","run_app_core"],"mod":["cores3","display","spi2"],"struct":["SystemResources"]};

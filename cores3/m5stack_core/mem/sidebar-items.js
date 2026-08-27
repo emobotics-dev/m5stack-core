@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["HeapProfile","PsramSplitError"],"fn":["assert_dma_capable","dma_buffer","external_free","init_heap","internal_free","psram_box","psram_map","psram_split","psram_vec"],"struct":["AnyMemory","ExternalMemory","InternalMemory","PsramSplit"],"trait":["PsramSafe"]};

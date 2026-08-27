@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Map the board’s external PSRAM, carve a private region off the base, and register the remainder with the global heap."><title>psram_split in m5stack_core::mem - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="m5stack_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)" data-channel="nightly" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">psram_split</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../m5stack_core/index.html">m5stack_<wbr>core</a><span class="version">0.6.1</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">psram_<wbr>split</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#caveats-handed-back-to-the-caller" title="Caveats handed back to the caller">Caveats handed back to the caller</a></li><li><a href="#errors" title="Errors">Errors</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In m5stack_<wbr>core::<wbr>mem</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">m5stack_core</a>::<wbr><a href="index.html">mem</a></div><h1>Function <span class="fn">psram_<wbr>split</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/m5stack_core/mem.rs.html#273-325">Source</a> </span></div><pre class="rust item-decl"><code>pub fn psram_split(
+    psram: PSRAM&lt;'static&gt;,
+    reserve: usize,
+) -&gt; Result&lt;<a class="struct" href="struct.PsramSplit.html" title="struct m5stack_core::mem::PsramSplit">PsramSplit</a>, <a class="enum" href="enum.PsramSplitError.html" title="enum m5stack_core::mem::PsramSplitError">PsramSplitError</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Map the board’s external PSRAM, carve a <strong>private</strong> region off the base, and
+register the remainder with the global heap.</p>
+<p>The deliberate-global-exposure counterpart of <a href="fn.psram_map.html" title="fn m5stack_core::mem::psram_map"><code>psram_map</code></a> (which makes
+the whole region private and touches the global heap not at all). Reach for
+<code>psram_split</code> only once you’ve decided that some of PSRAM should be
+reachable by the checked <a href="fn.psram_box.html" title="fn m5stack_core::mem::psram_box"><code>psram_box</code></a> / <a href="fn.psram_vec.html" title="fn m5stack_core::mem::psram_vec"><code>psram_vec</code></a> helpers — that
+decision then applies to the <em>whole</em> crate graph’s plain allocations, not
+just yours, once internal DRAM runs out (see the module docs).</p>
+<ul>
+<li><code>reserve</code> carves that many bytes private from the base and registers the
+remainder globally. <code>reserve == 0</code> is the maximal-exposure case: an empty
+<a href="struct.PsramSplit.html#structfield.private" title="field m5stack_core::mem::PsramSplit::private"><code>PsramSplit::private</code></a> slice and <em>all</em> PSRAM registered globally. Sound (a
+zero-length slice grants access to nothing) but rarely what you want —
+prefer <a href="fn.psram_map.html" title="fn m5stack_core::mem::psram_map"><code>psram_map</code></a> if you don’t need any global exposure at all.</li>
+<li>The private region is carved <strong>from the base</strong>, so <a href="struct.PsramSplit.html#structfield.private" title="field m5stack_core::mem::PsramSplit::private"><code>PsramSplit::private</code></a>
+starts at the (large-aligned) PSRAM mapping base — aligned for LVGL’s TLSF
+with no math; esp-alloc aligns the remainder’s base internally.</li>
+<li>This primitive controls <em>placement</em> (the private/global split). The PSRAM
+<strong>hardware</strong> mapping uses the default [<code>esp_hal::psram</code>] config, which
+auto-detects size — the board-correct choice for both boards. A
+<code>psram_split_with(config)</code> variant is a non-breaking addition if a consumer
+ever needs a custom <code>PsramConfig</code> (a fixed <code>PsramSize</code>, say); no current
+one does.</li>
+</ul>
+<p>Call once, after [<code>esp_hal::init</code>], <strong>instead of</strong> <a href="fn.psram_map.html" title="fn m5stack_core::mem::psram_map"><code>psram_map</code></a>: taking
+<code>PSRAM&lt;'static&gt;</code> by value makes the once-only mapping a type-level
+guarantee, so the two cannot both run.</p>
+<h2 id="caveats-handed-back-to-the-caller"><a class="doc-anchor" href="#caveats-handed-back-to-the-caller">§</a>Caveats handed back to the caller</h2>
+<ul>
+<li><strong>No atomics in the private region.</strong> The checked <a href="fn.psram_box.html" title="fn m5stack_core::mem::psram_box"><code>psram_box</code></a> /
+<a href="fn.psram_vec.html" title="fn m5stack_core::mem::psram_vec"><code>psram_vec</code></a> cannot guard a foreign allocator, so keeping <code>Atomic*</code> out of
+whatever is placed here is the caller’s responsibility (holds for LVGL while
+<code>LV_USE_OS</code> is <code>LV_OS_NONE</code>). See <a href="trait.PsramSafe.html" title="trait m5stack_core::mem::PsramSafe"><code>PsramSafe</code></a>.</li>
+<li><strong>DMA.</strong> The ESP32 (Fire27) cannot DMA to/from PSRAM at all; the ESP32-S3
+can but slowly. A foreign allocator must not place DMA’d buffers here. See
+<a href="fn.assert_dma_capable.html" title="fn m5stack_core::mem::assert_dma_capable"><code>assert_dma_capable</code></a> / <a href="fn.dma_buffer.html" title="fn m5stack_core::mem::dma_buffer"><code>dma_buffer</code></a>.</li>
+</ul>
+<h2 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h2>
+<p><a href="enum.PsramSplitError.html#variant.NotMapped" title="variant m5stack_core::mem::PsramSplitError::NotMapped"><code>PsramSplitError::NotMapped</code></a> if PSRAM does not map; <a href="enum.PsramSplitError.html#variant.TooSmall" title="variant m5stack_core::mem::PsramSplitError::TooSmall"><code>PsramSplitError::TooSmall</code></a>
+if it maps smaller than <code>reserve</code>.</p>
+</div></details></section></div></main></body></html>

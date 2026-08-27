@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error","SearchError"],"fn":["crc8"],"struct":["Address","OneWire","Search"]};

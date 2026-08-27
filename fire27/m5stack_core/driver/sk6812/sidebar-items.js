@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_LEDS"],"enum":["Sk6812Error"],"struct":["Rgb","Sk6812Driver"]};

@@ -1,0 +1,405 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/board/cores3.rs`."><title>cores3.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="m5stack_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)" data-channel="nightly" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">m5stack_core/board/</div>cores3.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: MIT OR Apache-2.0
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! M5Stack CoreS3 board-level bring-up sequences and pin wiring.
+<a href=#3 id=3 data-nosnippet>3</a>//!
+<a href=#4 id=4 data-nosnippet>4</a>//! # Internal I²C bus (`I2C_SYS`)
+<a href=#5 id=5 data-nosnippet>5</a>//!
+<a href=#6 id=6 data-nosnippet>6</a>//! One shared bus on **GPIO12 (SDA) / GPIO11 (SCL)** carries seven devices; the
+<a href=#7 id=7 data-nosnippet>7</a>//! BSP drives the first three, the rest are listed for completeness:
+<a href=#8 id=8 data-nosnippet>8</a>//!
+<a href=#9 id=9 data-nosnippet>9</a>//! | Device   | Addr | Role                        | BSP driver          |
+<a href=#10 id=10 data-nosnippet>10</a>//! |----------|------|-----------------------------|---------------------|
+<a href=#11 id=11 data-nosnippet>11</a>//! | AXP2101  | 0x34 | PMIC / power rails / battery | [`Axp2101Driver`]   |
+<a href=#12 id=12 data-nosnippet>12</a>//! | AW9523B  | 0x58 | IO expander (LCD/touch reset)| [`Aw9523bDriver`]   |
+<a href=#13 id=13 data-nosnippet>13</a>//! | FT6336U  | 0x38 | capacitive touch            | `driver::ft6336u`   |
+<a href=#14 id=14 data-nosnippet>14</a>//! | BMI270   | 0x69 | 6-axis IMU                  | —                   |
+<a href=#15 id=15 data-nosnippet>15</a>//! | BM8563   | 0x51 | RTC                         | —                   |
+<a href=#16 id=16 data-nosnippet>16</a>//! | ES7210   | 0x40 | audio ADC (mic)             | —                   |
+<a href=#17 id=17 data-nosnippet>17</a>//! | AW88298  | 0x36 | speaker amp                 | —                   |
+<a href=#18 id=18 data-nosnippet>18</a>//!
+<a href=#19 id=19 data-nosnippet>19</a>//! # AXP2101 power rails (from `Sch_M5_CoreS3_v1.0`)
+<a href=#20 id=20 data-nosnippet>20</a>//!
+<a href=#21 id=21 data-nosnippet>21</a>//! | AXP2101 out | Net           | Spec        | Powers                                  |
+<a href=#22 id=22 data-nosnippet>22</a>//! |-------------|---------------|-------------|-----------------------------------------|
+<a href=#23 id=23 data-nosnippet>23</a>//! | DCDC1       | `VDD_3V3`     | 3.3 V / 2 A | **Core VDD** — ESP32-S3, **AW9523B**, **FT6336U touch**, LCD logic |
+<a href=#24 id=24 data-nosnippet>24</a>//! | DCDC3       | `VCC_3V3`     | 3.3 V / 2 A | Peripherals VDD                         |
+<a href=#25 id=25 data-nosnippet>25</a>//! | DLDO1       | `VCC_BL`      | 3.3 V       | LCD **backlight** (see [`BACKLIGHT_MV`]) |
+<a href=#26 id=26 data-nosnippet>26</a>//! | ALDO1       | `VDD_1V8`     | 1.8 V/300 mA| AW88298 PA DVDD                         |
+<a href=#27 id=27 data-nosnippet>27</a>//! | ALDO2       | `VDDA_3V3`    | 3.3 V/300 mA| ES7210 codec VDDP                       |
+<a href=#28 id=28 data-nosnippet>28</a>//! | ALDO3       | `VDDCAM_3V3`  | 3.3 V/300 mA| camera / codec VDDA                     |
+<a href=#29 id=29 data-nosnippet>29</a>//! | ALDO4       | `VDD_3V3_SD`  | 3.3 V/300 mA| microSD card VDD                        |
+<a href=#30 id=30 data-nosnippet>30</a>//! | BLDO1       | `AVDD`        | 2.8 V/300 mA| sensor VDDA                             |
+<a href=#31 id=31 data-nosnippet>31</a>//! | BLDO2       | `DVDD`        | 1.2 V/300 mA| sensor VDD                              |
+<a href=#32 id=32 data-nosnippet>32</a>//!
+<a href=#33 id=33 data-nosnippet>33</a>//! **Reset gating (important):** the **AW9523B `RSTN` is wired to `AXP_PG`**
+<a href=#34 id=34 data-nosnippet>34</a>//! (AXP2101 power-good) and has an internal ~100 kΩ pull-*low* — so the expander
+<a href=#35 id=35 data-nosnippet>35</a>//! is held in reset until the AXP asserts power-good. It in turn drives
+<a href=#36 id=36 data-nosnippet>36</a>//! `LCD_RST` / `TOUCH_RST`, so panel + touch bring-up all chain off it. See
+<a href=#37 id=37 data-nosnippet>37</a>//! [`power_display_reset`] for the cold-boot readiness handling.
+<a href=#38 id=38 data-nosnippet>38</a>
+<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">use </span>embedded_hal::digital::{ErrorType, OutputPin};
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span>esp_hal::{
+<a href=#41 id=41 data-nosnippet>41</a>    Blocking,
+<a href=#42 id=42 data-nosnippet>42</a>    dma::{AnyGdmaChannel, DmaChannelConvert},
+<a href=#43 id=43 data-nosnippet>43</a>    gpio::AnyPin,
+<a href=#44 id=44 data-nosnippet>44</a>    i2c::master::{BusTimeout, Config <span class="kw">as </span>I2cConfig, I2c, SoftwareTimeout},
+<a href=#45 id=45 data-nosnippet>45</a>    interrupt::software::SoftwareInterruptControl,
+<a href=#46 id=46 data-nosnippet>46</a>    peripherals::{BT, PCNT, Peripherals, RMT, USB_DEVICE, WIFI},
+<a href=#47 id=47 data-nosnippet>47</a>    spi::master::AnySpi,
+<a href=#48 id=48 data-nosnippet>48</a>    time::Rate,
+<a href=#49 id=49 data-nosnippet>49</a>    timer::{AnyTimer, timg::TimerGroup},
+<a href=#50 id=50 data-nosnippet>50</a>};
+<a href=#51 id=51 data-nosnippet>51</a>
+<a href=#52 id=52 data-nosnippet>52</a><span class="kw">use </span>embassy_time::{Duration, Timer};
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">use </span><span class="kw">crate</span>::board::SystemResources;
+<a href=#55 id=55 data-nosnippet>55</a><span class="kw">use </span><span class="kw">crate</span>::board::spi2::Spi2Resources;
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span><span class="kw">crate</span>::driver::aw9523b::{Aw9523bDriver, Aw9523bResources};
+<a href=#57 id=57 data-nosnippet>57</a><span class="kw">use </span><span class="kw">crate</span>::driver::axp2101::Axp2101Driver;
+<a href=#58 id=58 data-nosnippet>58</a><span class="kw">use </span><span class="kw">crate</span>::io::shared_i2c::SharedI2cBus;
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// AXP2101 PMIC I2C address on CoreS3.
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">const </span>AXP2101_ADDR: u8 = <span class="number">0x34</span>;
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Display backlight rail: AXP2101 DLDO1 @ 3.3 V.
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">const </span>BACKLIGHT_MV: u16 = <span class="number">3300</span>;
+<a href=#64 id=64 data-nosnippet>64</a>
+<a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// AW9523B post-power-on I²C-ready time — the datasheet's "minimal wait time for
+<a href=#66 id=66 data-nosnippet>66</a>/// I2C communication is 5 ms".
+<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">const </span>AW9523B_POR_MS: u64 = <span class="number">5</span>;
+<a href=#68 id=68 data-nosnippet>68</a><span class="doccomment">/// Deterministic settle before the first AW9523B access: 200% of the POR time.
+<a href=#69 id=69 data-nosnippet>69</a>/// On CoreS3 the expander's `RSTN` has an internal ~100 kΩ pull-*low* and is
+<a href=#70 id=70 data-nosnippet>70</a>/// wired to `AXP_PG` (AXP2101 power-good), so it is held in reset until the AXP
+<a href=#71 id=71 data-nosnippet>71</a>/// asserts power-good; at cold power-on `VDD_3V3` is already up (it powers the
+<a href=#72 id=72 data-nosnippet>72</a>/// running ESP32) but `AXP_PG` may lag, leaving the expander briefly in reset.
+<a href=#73 id=73 data-nosnippet>73</a>/// Waiting first — rather than poking the bus and retrying — avoids the premature
+<a href=#74 id=74 data-nosnippet>74</a>/// `AcknowledgeCheckFailed(Address)`, each of which fires one chip-wide I2C clock
+<a href=#75 id=75 data-nosnippet>75</a>/// reset.
+<a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">const </span>AW9523B_SETTLE_MS: u64 = <span class="number">2 </span>* AW9523B_POR_MS;
+<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Fallback if the expander is still not ready after the settle. This should not
+<a href=#78 id=78 data-nosnippet>78</a>/// happen in normal operation, so each attempt logs a warning; bounded, with a
+<a href=#79 id=79 data-nosnippet>79</a>/// final failure logged as an error (best-effort — bring-up continues).
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">const </span>AW9523B_FALLBACK_TRIES: u32 = <span class="number">5</span>;
+<a href=#81 id=81 data-nosnippet>81</a><span class="kw">const </span>AW9523B_FALLBACK_DELAY_MS: u64 = <span class="number">5</span>;
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// Fault-injection predicate for the `test-fault-inject` feature: reports the
+<a href=#84 id=84 data-nosnippet>84</a>/// AW9523B "not ready" for the first `M5_TEST_AW_NACK` post-settle attempts (a
+<a href=#85 id=85 data-nosnippet>85</a>/// build-time env var), so the cold-boot fallback retry can be regression-tested
+<a href=#86 id=86 data-nosnippet>86</a>/// on the bench without a real power cycle. Absent from production builds.
+<a href=#87 id=87 data-nosnippet>87</a></span><span class="attr">#[cfg(feature = <span class="string">"test-fault-inject"</span>)]
+<a href=#88 id=88 data-nosnippet>88</a></span><span class="kw">fn </span>aw_fault_inject_active(tries: u32) -&gt; bool {
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">match </span><span class="macro">option_env!</span>(<span class="string">"M5_TEST_AW_NACK"</span>) {
+<a href=#90 id=90 data-nosnippet>90</a>        <span class="prelude-val">Some</span>(s) =&gt; tries &lt; s.parse::&lt;u32&gt;().unwrap_or(<span class="number">0</span>),
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
+<a href=#92 id=92 data-nosnippet>92</a>    }
+<a href=#93 id=93 data-nosnippet>93</a>}
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// Power + display bring-up over the shared I2C bus: AW9523B IO-expander
+<a href=#96 id=96 data-nosnippet>96</a>/// (`LCD_RST` + touch reset) then AXP2101 PMIC backlight (DLDO1 @ 3.3 V).
+<a href=#97 id=97 data-nosnippet>97</a>///
+<a href=#98 id=98 data-nosnippet>98</a>/// A [`AW9523B_SETTLE_MS`] wait precedes the first AW9523B access so the expander
+<a href=#99 id=99 data-nosnippet>99</a>/// is out of reset (its `RSTN` follows `AXP_PG`) before we touch the bus — this
+<a href=#100 id=100 data-nosnippet>100</a>/// removes the intermittent cold-boot `AcknowledgeCheckFailed(Address)` that
+<a href=#101 id=101 data-nosnippet>101</a>/// otherwise fired one chip-wide I2C clock reset at every power-on. A bounded
+<a href=#102 id=102 data-nosnippet>102</a>/// warn-on-failure retry backs it up in case the settle was not enough.
+<a href=#103 id=103 data-nosnippet>103</a>///
+<a href=#104 id=104 data-nosnippet>104</a>/// Best-effort — each sub-step logs and continues on error, so a flaky chip
+<a href=#105 id=105 data-nosnippet>105</a>/// can't block the display/control loop from coming up. Caller-driven so the
+<a href=#106 id=106 data-nosnippet>106</a>/// caller owns the *when* and the *which core*: this MUST run on the core that
+<a href=#107 id=107 data-nosnippet>107</a>/// owns the I2C IRQ (APP core on the regulator — see its `irq-core-binding`
+<a href=#108 id=108 data-nosnippet>108</a>/// doc), and the caller signals display-readiness after it returns
+<a href=#109 id=109 data-nosnippet>109</a>/// (`LCD_RST` must precede display init).
+<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub async fn </span>power_display_reset(i2c: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>SharedI2cBus) {
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span><span class="kw-2">mut </span>aw = Aw9523bDriver::new(Aw9523bResources { i2c });
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="comment">// Deterministic settle for the cold-boot reset-release window (RSTN = AXP_PG)
+<a href=#113 id=113 data-nosnippet>113</a>    // before the first bus access — see AW9523B_SETTLE_MS.
+<a href=#114 id=114 data-nosnippet>114</a>    </span>Timer::after(Duration::from_millis(AW9523B_SETTLE_MS)).<span class="kw">await</span>;
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span><span class="kw-2">mut </span>tries = <span class="number">0u32</span>;
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">loop </span>{
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="comment">// Test hook (feature `test-fault-inject`, absent in production builds):
+<a href=#118 id=118 data-nosnippet>118</a>        // simulate the AW9523B still being not-ready for the first
+<a href=#119 id=119 data-nosnippet>119</a>        // `M5_TEST_AW_NACK` post-settle attempts, so the fallback retry is
+<a href=#120 id=120 data-nosnippet>120</a>        // exercisable on the bench without a power cycle (which the rig can't do).
+<a href=#121 id=121 data-nosnippet>121</a>        </span><span class="attr">#[cfg(feature = <span class="string">"test-fault-inject"</span>)]
+<a href=#122 id=122 data-nosnippet>122</a>        </span><span class="kw">if </span>aw_fault_inject_active(tries) {
+<a href=#123 id=123 data-nosnippet>123</a>            tries += <span class="number">1</span>;
+<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">if </span>tries &gt; AW9523B_FALLBACK_TRIES {
+<a href=#125 id=125 data-nosnippet>125</a>                <span class="macro">error!</span>(
+<a href=#126 id=126 data-nosnippet>126</a>                    <span class="string">"AW9523B not ready (fault-inject) after {} retries"</span>,
+<a href=#127 id=127 data-nosnippet>127</a>                    AW9523B_FALLBACK_TRIES
+<a href=#128 id=128 data-nosnippet>128</a>                );
+<a href=#129 id=129 data-nosnippet>129</a>                <span class="kw">break</span>;
+<a href=#130 id=130 data-nosnippet>130</a>            }
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="macro">warn!</span>(
+<a href=#132 id=132 data-nosnippet>132</a>                <span class="string">"[test-fault-inject] AW9523B not-ready simulated; retry {}/{}"</span>,
+<a href=#133 id=133 data-nosnippet>133</a>                tries, AW9523B_FALLBACK_TRIES
+<a href=#134 id=134 data-nosnippet>134</a>            );
+<a href=#135 id=135 data-nosnippet>135</a>            Timer::after(Duration::from_millis(AW9523B_FALLBACK_DELAY_MS)).<span class="kw">await</span>;
+<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">continue</span>;
+<a href=#137 id=137 data-nosnippet>137</a>        }
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">match </span>aw.init().<span class="kw">await </span>{
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="prelude-val">Ok</span>(()) =&gt; {
+<a href=#140 id=140 data-nosnippet>140</a>                <span class="kw">if </span>tries &gt; <span class="number">0 </span>{
+<a href=#141 id=141 data-nosnippet>141</a>                    <span class="macro">info!</span>(<span class="string">"AW9523B ready after settle + {} retries"</span>, tries);
+<a href=#142 id=142 data-nosnippet>142</a>                }
+<a href=#143 id=143 data-nosnippet>143</a>                <span class="kw">break</span>;
+<a href=#144 id=144 data-nosnippet>144</a>            }
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="prelude-val">Err</span>(e) =&gt; {
+<a href=#146 id=146 data-nosnippet>146</a>                tries += <span class="number">1</span>;
+<a href=#147 id=147 data-nosnippet>147</a>                <span class="kw">if </span>tries &gt; AW9523B_FALLBACK_TRIES {
+<a href=#148 id=148 data-nosnippet>148</a>                    <span class="macro">error!</span>(
+<a href=#149 id=149 data-nosnippet>149</a>                        <span class="string">"AW9523B not ready after {} ms settle + {} retries: {:?}"</span>,
+<a href=#150 id=150 data-nosnippet>150</a>                        AW9523B_SETTLE_MS, AW9523B_FALLBACK_TRIES, e
+<a href=#151 id=151 data-nosnippet>151</a>                    );
+<a href=#152 id=152 data-nosnippet>152</a>                    <span class="kw">break</span>;
+<a href=#153 id=153 data-nosnippet>153</a>                }
+<a href=#154 id=154 data-nosnippet>154</a>                <span class="macro">warn!</span>(
+<a href=#155 id=155 data-nosnippet>155</a>                    <span class="string">"AW9523B not ready after settle; retry {}/{}: {:?}"</span>,
+<a href=#156 id=156 data-nosnippet>156</a>                    tries, AW9523B_FALLBACK_TRIES, e
+<a href=#157 id=157 data-nosnippet>157</a>                );
+<a href=#158 id=158 data-nosnippet>158</a>                Timer::after(Duration::from_millis(AW9523B_FALLBACK_DELAY_MS)).<span class="kw">await</span>;
+<a href=#159 id=159 data-nosnippet>159</a>            }
+<a href=#160 id=160 data-nosnippet>160</a>        }
+<a href=#161 id=161 data-nosnippet>161</a>    }
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = aw.lcd_rst_pulse().<span class="kw">await </span>{
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">error!</span>(<span class="string">"AW9523B LCD RST failed: {:?}"</span>, e);
+<a href=#164 id=164 data-nosnippet>164</a>    }
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = aw.touch_rst_pulse().<span class="kw">await </span>{
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="macro">error!</span>(<span class="string">"AW9523B TOUCH RST failed: {:?}"</span>, e);
+<a href=#167 id=167 data-nosnippet>167</a>    }
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span><span class="kw-2">mut </span>axp = Axp2101Driver::new(i2c, AXP2101_ADDR);
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = axp.set_dldo1(<span class="bool-val">true</span>, BACKLIGHT_MV).<span class="kw">await </span>{
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">error!</span>(<span class="string">"AXP2101 backlight enable failed: {:?}"</span>, e);
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>}
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a><span class="comment">// --- GPIO35 MISO/DC mux -----------------------------------------------------
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a></span><span class="doccomment">/// GPIO35 bit position in the GPIO1 (pins 32–) register bank.
+<a href=#177 id=177 data-nosnippet>177</a></span><span class="kw">const </span>GPIO35_BIT: u32 = <span class="number">1 </span>&lt;&lt; (<span class="number">35 </span>- <span class="number">32</span>);
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a><span class="doccomment">/// Zero-sized display-DC "pin" that drives GPIO35 via direct register writes.
+<a href=#180 id=180 data-nosnippet>180</a>///
+<a href=#181 id=181 data-nosnippet>181</a>/// On the CoreS3, GPIO35 is hardware-shared between SPI2 MISO (SD-card reads)
+<a href=#182 id=182 data-nosnippet>182</a>/// and display DC (command/data select). This type does NOT own the pin — the
+<a href=#183 id=183 data-nosnippet>183</a>/// SPI peripheral owns it for MISO input (`with_miso`), which also routes the
+<a href=#184 id=184 data-nosnippet>184</a>/// pad through the GPIO matrix. Each `set_low`/`set_high` re-enables the
+<a href=#185 id=185 data-nosnippet>185</a>/// output driver, so it composes with [`gpio35_disable_output`] (called after
+<a href=#186 id=186 data-nosnippet>186</a>/// every SD access window).
+<a href=#187 id=187 data-nosnippet>187</a>///
+<a href=#188 id=188 data-nosnippet>188</a>/// Two valid configurations for GPIO35 as DC:
+<a href=#189 id=189 data-nosnippet>189</a>/// 1. **No SD use** (simple display apps): configure GPIO35 as a plain
+<a href=#190 id=190 data-nosnippet>190</a>///    [`Output`](esp_hal::gpio::Output) instead — a bare register hack without
+<a href=#191 id=191 data-nosnippet>191</a>///    any pad routing leaves the pad unrouted and DC never toggles.
+<a href=#192 id=192 data-nosnippet>192</a>/// 2. **Display + SD shared** ([`super::spi2`]): SPI owns the pad as MISO and
+<a href=#193 id=193 data-nosnippet>193</a>///    DC writes go through this type.
+<a href=#194 id=194 data-nosnippet>194</a>///
+<a href=#195 id=195 data-nosnippet>195</a>/// Safety of the mux: the display and the SD card must share one SPI-bus
+<a href=#196 id=196 data-nosnippet>196</a>/// mutex within a single task, with no `.await` between a DC write and the
+<a href=#197 id=197 data-nosnippet>197</a>/// SPI transfer — otherwise an SD operation could preempt mid-command.
+<a href=#198 id=198 data-nosnippet>198</a></span><span class="kw">pub struct </span>Gpio35Dc;
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a><span class="kw">impl </span>ErrorType <span class="kw">for </span>Gpio35Dc {
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">type </span>Error = core::convert::Infallible;
+<a href=#202 id=202 data-nosnippet>202</a>}
+<a href=#203 id=203 data-nosnippet>203</a>
+<a href=#204 id=204 data-nosnippet>204</a><span class="doccomment">/// Pending DC level, applied by [`apply_pending_dc`] when the display actually
+<a href=#205 id=205 data-nosnippet>205</a>/// owns the bus.
+<a href=#206 id=206 data-nosnippet>206</a></span><span class="kw">static </span>DC_LOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(<span class="bool-val">false</span>);
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a><span class="kw">impl </span>OutputPin <span class="kw">for </span>Gpio35Dc {
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="comment">// RECORD, do not drive.
+<a href=#210 id=210 data-nosnippet>210</a>    //
+<a href=#211 id=211 data-nosnippet>211</a>    // GPIO35 is MISO as well as DC. `SpiInterface` sets DC and *then* awaits the
+<a href=#212 id=212 data-nosnippet>212</a>    // SPI transfer, and that await now blocks on the shared-bus permit — so a
+<a href=#213 id=213 data-nosnippet>213</a>    // DC write that took effect immediately would hold GPIO35 as an output
+<a href=#214 id=214 data-nosnippet>214</a>    // while the SD card is mid-command, and every card response would read back
+<a href=#215 id=215 data-nosnippet>215</a>    // as 0x00. (Observed exactly so: "unexpected token 0x00",
+<a href=#216 id=216 data-nosnippet>216</a>    // "CrcMismatch(0, ..)", "UnknownDataResponse(0)".)
+<a href=#217 id=217 data-nosnippet>217</a>    //
+<a href=#218 id=218 data-nosnippet>218</a>    // The module docs used to require "no `.await` between a DC write and the
+<a href=#219 id=219 data-nosnippet>219</a>    // SPI transfer". The fair arbiter introduced one, so the requirement is
+<a href=#220 id=220 data-nosnippet>220</a>    // enforced here instead of being documented and hoped for: the level is
+<a href=#221 id=221 data-nosnippet>221</a>    // recorded now and applied in [`apply_pending_dc`] once the permit is held.
+<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">fn </span>set_low(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+<a href=#223 id=223 data-nosnippet>223</a>        DC_LOW.store(<span class="bool-val">true</span>, core::sync::atomic::Ordering::Release);
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="prelude-val">Ok</span>(())
+<a href=#225 id=225 data-nosnippet>225</a>    }
+<a href=#226 id=226 data-nosnippet>226</a>
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">fn </span>set_high(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+<a href=#228 id=228 data-nosnippet>228</a>        DC_LOW.store(<span class="bool-val">false</span>, core::sync::atomic::Ordering::Release);
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="prelude-val">Ok</span>(())
+<a href=#230 id=230 data-nosnippet>230</a>    }
+<a href=#231 id=231 data-nosnippet>231</a>}
+<a href=#232 id=232 data-nosnippet>232</a>
+<a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// Drive GPIO35 to the DC level recorded by [`Gpio35Dc`].
+<a href=#234 id=234 data-nosnippet>234</a>///
+<a href=#235 id=235 data-nosnippet>235</a>/// Call ONLY while holding the SPI2 permit: it takes the pad away from MISO.
+<a href=#236 id=236 data-nosnippet>236</a></span><span class="kw">pub fn </span>apply_pending_dc() {
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">unsafe </span>{
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>gpio = <span class="kw-2">&amp;*</span>esp_hal::peripherals::GPIO::PTR;
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">if </span>DC_LOW.load(core::sync::atomic::Ordering::Acquire) {
+<a href=#240 id=240 data-nosnippet>240</a>            gpio.out1_w1tc().write(|w| w.bits(GPIO35_BIT));
+<a href=#241 id=241 data-nosnippet>241</a>        } <span class="kw">else </span>{
+<a href=#242 id=242 data-nosnippet>242</a>            gpio.out1_w1ts().write(|w| w.bits(GPIO35_BIT));
+<a href=#243 id=243 data-nosnippet>243</a>        }
+<a href=#244 id=244 data-nosnippet>244</a>        gpio.enable1_w1ts().write(|w| w.bits(GPIO35_BIT));
+<a href=#245 id=245 data-nosnippet>245</a>    }
+<a href=#246 id=246 data-nosnippet>246</a>}
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a><span class="doccomment">/// Disable the GPIO35 output driver so the pad returns to high-impedance
+<a href=#249 id=249 data-nosnippet>249</a>/// input (SPI2 MISO). Must be called before any SD-card SPI operation — both
+<a href=#250 id=250 data-nosnippet>250</a>/// at bring-up (after display init; [`super::spi2`] does it) and per-op at
+<a href=#251 id=251 data-nosnippet>251</a>/// runtime (pass this as the block-device handler's pre-op hook).
+<a href=#252 id=252 data-nosnippet>252</a></span><span class="kw">pub fn </span>gpio35_disable_output() {
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">unsafe </span>{
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>gpio = <span class="kw-2">&amp;*</span>esp_hal::peripherals::GPIO::PTR;
+<a href=#255 id=255 data-nosnippet>255</a>        gpio.enable1_w1tc().write(|w| w.bits(GPIO35_BIT));
+<a href=#256 id=256 data-nosnippet>256</a>    }
+<a href=#257 id=257 data-nosnippet>257</a>}
+<a href=#258 id=258 data-nosnippet>258</a>
+<a href=#259 id=259 data-nosnippet>259</a><span class="comment">// --- Pin wiring ---------------------------------------------------------------
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a></span><span class="doccomment">/// External M5-Bus pins the BSP does not claim for on-board functions. What
+<a href=#262 id=262 data-nosnippet>262</a>/// hangs off them (1-Wire sensors, RPM pickups, ...) is application wiring.
+<a href=#263 id=263 data-nosnippet>263</a>/// Not exhaustive — extend as needed.
+<a href=#264 id=264 data-nosnippet>264</a></span><span class="kw">pub struct </span>M5Bus&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="doccomment">/// M5-Bus pin 20 (`BUS_PA_SCL`) → GPIO1.
+<a href=#266 id=266 data-nosnippet>266</a>    </span><span class="kw">pub </span>gpio1: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="doccomment">/// M5-Bus pin 10 (`BUS_PB_OUT`) → GPIO9.
+<a href=#268 id=268 data-nosnippet>268</a>    </span><span class="kw">pub </span>gpio9: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="doccomment">/// M5-Bus pin 2 (`BUS_ADC1`) → GPIO10.
+<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">pub </span>gpio10: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="doccomment">/// M5-Bus pin 8 (`BUS_G5`) → GPIO5.
+<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">pub </span>gpio5: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="doccomment">/// M5-Bus pin 21 (`BUS_G6`) → GPIO6.
+<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">pub </span>gpio6: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="doccomment">/// M5-Bus pin 22 (`BUS_G7`) → GPIO7.
+<a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">pub </span>gpio7: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// M5-Bus pin 13 (`BUS_U0RXD`) → GPIO44 — the ROM console's RX pin,
+<a href=#278 id=278 data-nosnippet>278</a>    /// unused on CoreS3 (console is USB-Serial-JTAG). Assign as an input:
+<a href=#279 id=279 data-nosnippet>279</a>    /// a ROM boot-log burst on the TX side (`gpio43`) can then never
+<a href=#280 id=280 data-nosnippet>280</a>    /// contend with a driven line here.
+<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="kw">pub </span>gpio44: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// M5-Bus pin 14 (`BUS_U0TXD`) → GPIO43 — the ROM console's TX pin,
+<a href=#283 id=283 data-nosnippet>283</a>    /// unused on CoreS3. Assign as an output; see [`Self::gpio44`].
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>gpio43: AnyPin&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#285 id=285 data-nosnippet>285</a>}
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a><span class="doccomment">/// The CoreS3's peripherals, split into board-fact groups. See
+<a href=#288 id=288 data-nosnippet>288</a>/// [`Board::split`].
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">pub struct </span>Board {
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="doccomment">/// Display + SD-card shared SPI2 bus (see [`super::spi2`]).
+<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">pub </span>spi2: Spi2Resources&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// Internal I2C bus (SDA=GPIO12, SCL=GPIO11) shared by the AXP2101 PMIC
+<a href=#293 id=293 data-nosnippet>293</a>    /// (0x34), AW9523B expander (0x58) and FT6336U touch (0x38).
+<a href=#294 id=294 data-nosnippet>294</a>    ///
+<a href=#295 id=295 data-nosnippet>295</a>    /// Returned BLOCKING: defer `into_async()` to the core that runs the I2C
+<a href=#296 id=296 data-nosnippet>296</a>    /// tasks — `into_async()` binds the I2C peripheral IRQ to the calling
+<a href=#297 id=297 data-nosnippet>297</a>    /// core, and on a BLE app it must stay off the core running RWBLE's
+<a href=#298 id=298 data-nosnippet>298</a>    /// level-1 IRQ (cumulative IRQ blocking otherwise desyncs the BLE
+<a href=#299 id=299 data-nosnippet>299</a>    /// controller blob and wedges that core's executor).
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">pub </span>i2c0: I2c&lt;<span class="lifetime">'static</span>, Blocking&gt;,
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">pub </span>bt: BT&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">pub </span>wifi: WIFI&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="doccomment">/// USB-Serial-JTAG — console + serial-cmd
+<a href=#304 id=304 data-nosnippet>304</a>    /// ([`crate::io::serial_cmd::SerialCmdResources`]).
+<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">pub </span>usb_device: USB_DEVICE&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="doccomment">/// RMT — e.g. the 1-Wire driver ([`crate::io::ow_temp::OnewireResources`]).
+<a href=#307 id=307 data-nosnippet>307</a>    </span><span class="kw">pub </span>rmt: RMT&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="doccomment">/// PCNT — e.g. pulse counting ([`crate::io::rpm::RpmResources`]).
+<a href=#309 id=309 data-nosnippet>309</a>    </span><span class="kw">pub </span>pcnt: PCNT&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// Spare SPI3 unit — the BSP does not drive it, listed for the app to
+<a href=#311 id=311 data-nosnippet>311</a>    /// claim (same idea as [`Self::rmt`]/[`Self::pcnt`]). Wiring (which
+<a href=#312 id=312 data-nosnippet>312</a>    /// [`Self::m5bus`] pin is SCK/MOSI/MISO/CS) and the interrupt priority /
+<a href=#313 id=313 data-nosnippet>313</a>    /// core allocation are application knowledge. Attach the CS pin as the
+<a href=#314 id=314 data-nosnippet>314</a>    /// peripheral's **hardware** chip-select (`with_cs`), not a
+<a href=#315 id=315 data-nosnippet>315</a>    /// software-toggled [`esp_hal::gpio::Output`] — some designs depend on a
+<a href=#316 id=316 data-nosnippet>316</a>    /// sub-microsecond CS gap that software toggling cannot hold. See #27.
+<a href=#317 id=317 data-nosnippet>317</a>    </span><span class="kw">pub </span>spi3: AnySpi&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="doccomment">/// GDMA channel for [`Self::spi3`] — any free channel works, this is just
+<a href=#319 id=319 data-nosnippet>319</a>    /// not the one `spi2` already owns (`DMA_CH0`).
+<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="kw">pub </span>spi3_dma: AnyGdmaChannel&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// SK6812 LED bars data pin (M-Bus pin 23 → GPIO13 on CoreS3), driven over
+<a href=#322 id=322 data-nosnippet>322</a>    /// RMT ([`crate::driver::sk6812::Sk6812Driver`]). The M5GO bottom's 5 V LED
+<a href=#323 id=323 data-nosnippet>323</a>    /// rail is gated by the AW9523B — see `Aw9523bDriver::enable_bus_5v`.
+<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub </span>sk6812: AnyPin&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// External SPI PSRAM (~8 MB) — feed to `mem::psram_map` / `mem::psram_split`
+<a href=#326 id=326 data-nosnippet>326</a>    /// (sizing/usage is application policy). [feature `psram`]
+<a href=#327 id=327 data-nosnippet>327</a>    </span><span class="kw">pub </span>psram: esp_hal::peripherals::PSRAM&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">pub </span>m5bus: M5Bus&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">pub </span>system: SystemResources&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#331 id=331 data-nosnippet>331</a>
+<a href=#332 id=332 data-nosnippet>332</a><span class="kw">impl </span>Board {
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Wire the CoreS3 pin map. Call once with the output of
+<a href=#334 id=334 data-nosnippet>334</a>    /// [`crate::board::init`] (or `esp_hal::init`); heap setup stays with the
+<a href=#335 id=335 data-nosnippet>335</a>    /// app (sizing is application policy).
+<a href=#336 id=336 data-nosnippet>336</a>    </span><span class="kw">pub fn </span>split(peripherals: Peripherals) -&gt; <span class="self">Self </span>{
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span>spi2 = Spi2Resources {
+<a href=#338 id=338 data-nosnippet>338</a>            spi2: AnySpi::from(peripherals.SPI2),
+<a href=#339 id=339 data-nosnippet>339</a>            spi2_dma: peripherals.DMA_CH0.degrade(),
+<a href=#340 id=340 data-nosnippet>340</a>            sck: AnyPin::from(peripherals.GPIO36),
+<a href=#341 id=341 data-nosnippet>341</a>            mosi: AnyPin::from(peripherals.GPIO37),
+<a href=#342 id=342 data-nosnippet>342</a>            miso_dc: AnyPin::from(peripherals.GPIO35),
+<a href=#343 id=343 data-nosnippet>343</a>            display_cs: AnyPin::from(peripherals.GPIO3),
+<a href=#344 id=344 data-nosnippet>344</a>            card_cs: AnyPin::from(peripherals.GPIO4),
+<a href=#345 id=345 data-nosnippet>345</a>        };
+<a href=#346 id=346 data-nosnippet>346</a>
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>i2c0 = I2c::new(
+<a href=#348 id=348 data-nosnippet>348</a>            peripherals.I2C0,
+<a href=#349 id=349 data-nosnippet>349</a>            I2cConfig::default()
+<a href=#350 id=350 data-nosnippet>350</a>                .with_frequency(Rate::from_khz(<span class="number">400</span>))
+<a href=#351 id=351 data-nosnippet>351</a>                .with_timeout(BusTimeout::BusCycles(<span class="number">20</span>))
+<a href=#352 id=352 data-nosnippet>352</a>                <span class="comment">// Bound async transactions: without a software timeout the
+<a href=#353 id=353 data-nosnippet>353</a>                // deadline is None, so a stuck/NACKing transaction loops
+<a href=#354 id=354 data-nosnippet>354</a>                // forever in esp-hal's `check_all_commands_done` yield_now
+<a href=#355 id=355 data-nosnippet>355</a>                // spin. On an InterruptExecutor that spin pins the core,
+<a href=#356 id=356 data-nosnippet>356</a>                // masking the very completion IRQ that would end it — the
+<a href=#357 id=357 data-nosnippet>357</a>                // whole executor wedges (HIL-proven on S3, 2026-06-02). A
+<a href=#358 id=358 data-nosnippet>358</a>                // finite deadline makes a stuck op return Err instead.
+<a href=#359 id=359 data-nosnippet>359</a>                </span>.with_software_timeout(SoftwareTimeout::Transaction(
+<a href=#360 id=360 data-nosnippet>360</a>                    esp_hal::time::Duration::from_millis(<span class="number">25</span>),
+<a href=#361 id=361 data-nosnippet>361</a>                )),
+<a href=#362 id=362 data-nosnippet>362</a>        )
+<a href=#363 id=363 data-nosnippet>363</a>        .expect(<span class="string">"I2C0 init failed"</span>)
+<a href=#364 id=364 data-nosnippet>364</a>        .with_sda(AnyPin::from(peripherals.GPIO12))
+<a href=#365 id=365 data-nosnippet>365</a>        .with_scl(AnyPin::from(peripherals.GPIO11));
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span>tg0 = TimerGroup::new(peripherals.TIMG0);
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>tg1 = TimerGroup::new(peripherals.TIMG1);
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span>system = SystemResources {
+<a href=#370 id=370 data-nosnippet>370</a>            sw_int: SoftwareInterruptControl::new(peripherals.SW_INTERRUPT),
+<a href=#371 id=371 data-nosnippet>371</a>            timer0_0: AnyTimer::from(tg0.timer0),
+<a href=#372 id=372 data-nosnippet>372</a>            timer0_1: AnyTimer::from(tg0.timer1),
+<a href=#373 id=373 data-nosnippet>373</a>            timer1_0: AnyTimer::from(tg1.timer0),
+<a href=#374 id=374 data-nosnippet>374</a>            timer1_1: AnyTimer::from(tg1.timer1),
+<a href=#375 id=375 data-nosnippet>375</a>            cpu_ctrl: peripherals.CPU_CTRL,
+<a href=#376 id=376 data-nosnippet>376</a>            lpwr: peripherals.LPWR,
+<a href=#377 id=377 data-nosnippet>377</a>        };
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a>        Board {
+<a href=#380 id=380 data-nosnippet>380</a>            spi2,
+<a href=#381 id=381 data-nosnippet>381</a>            i2c0,
+<a href=#382 id=382 data-nosnippet>382</a>            bt: peripherals.BT,
+<a href=#383 id=383 data-nosnippet>383</a>            wifi: peripherals.WIFI,
+<a href=#384 id=384 data-nosnippet>384</a>            usb_device: peripherals.USB_DEVICE,
+<a href=#385 id=385 data-nosnippet>385</a>            rmt: peripherals.RMT,
+<a href=#386 id=386 data-nosnippet>386</a>            pcnt: peripherals.PCNT,
+<a href=#387 id=387 data-nosnippet>387</a>            spi3: AnySpi::from(peripherals.SPI3),
+<a href=#388 id=388 data-nosnippet>388</a>            spi3_dma: peripherals.DMA_CH1.degrade(),
+<a href=#389 id=389 data-nosnippet>389</a>            sk6812: AnyPin::from(peripherals.GPIO13),
+<a href=#390 id=390 data-nosnippet>390</a>            psram: peripherals.PSRAM,
+<a href=#391 id=391 data-nosnippet>391</a>            m5bus: M5Bus {
+<a href=#392 id=392 data-nosnippet>392</a>                gpio1: AnyPin::from(peripherals.GPIO1),
+<a href=#393 id=393 data-nosnippet>393</a>                gpio9: AnyPin::from(peripherals.GPIO9),
+<a href=#394 id=394 data-nosnippet>394</a>                gpio10: AnyPin::from(peripherals.GPIO10),
+<a href=#395 id=395 data-nosnippet>395</a>                gpio5: AnyPin::from(peripherals.GPIO5),
+<a href=#396 id=396 data-nosnippet>396</a>                gpio6: AnyPin::from(peripherals.GPIO6),
+<a href=#397 id=397 data-nosnippet>397</a>                gpio7: AnyPin::from(peripherals.GPIO7),
+<a href=#398 id=398 data-nosnippet>398</a>                gpio44: AnyPin::from(peripherals.GPIO44),
+<a href=#399 id=399 data-nosnippet>399</a>                gpio43: AnyPin::from(peripherals.GPIO43),
+<a href=#400 id=400 data-nosnippet>400</a>            },
+<a href=#401 id=401 data-nosnippet>401</a>            system,
+<a href=#402 id=402 data-nosnippet>402</a>        }
+<a href=#403 id=403 data-nosnippet>403</a>    }
+<a href=#404 id=404 data-nosnippet>404</a>}
+</code></pre></div></section></main></body></html>

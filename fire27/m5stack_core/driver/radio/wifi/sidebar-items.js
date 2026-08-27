@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthenticationMethod","IpSetup","WifiError"],"fn":["wifi_task"],"struct":["AccessPointInfo","StaCredentials","Wifi","WifiControl","WifiRunner"],"type":["ScanList"]};

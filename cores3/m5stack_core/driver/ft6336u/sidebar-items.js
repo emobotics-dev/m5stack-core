@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADDR"],"fn":["read_touch"]};

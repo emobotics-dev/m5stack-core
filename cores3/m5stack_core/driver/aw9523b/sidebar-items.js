@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADDR","P0_AW_RST","P0_BUS_OUT_EN","P0_TOUCH_RST","P1_AW_INT","P1_BOOST_EN","P1_CAM_RST","P1_LCD_RST","P1_TOUCH_INT"],"enum":["Aw9523bError"],"struct":["Aw9523bDriver","Aw9523bResources"]};

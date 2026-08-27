@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["app_desc","app_elf_sha256"],"macro":[["app_desc",1],["init_heap_sized",1],["must_spawn",1]],"mod":["board","driver","io","mem"]};

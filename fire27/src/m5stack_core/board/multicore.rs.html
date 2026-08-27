@@ -1,0 +1,67 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/board/multicore.rs`."><title>multicore.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="m5stack_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)" data-channel="nightly" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">m5stack_core/board/</div>multicore.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: MIT OR Apache-2.0
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Second-core (APP CPU) bring-up harness (#35 C4).
+<a href=#3 id=3 data-nosnippet>3</a>//!
+<a href=#4 id=4 data-nosnippet>4</a>//! Every binary hand-rolls the same dance to put work on the APP core: build a
+<a href=#5 id=5 data-nosnippet>5</a>//! [`CpuControl`], defensively park the APP core (a JTAG-reset workaround),
+<a href=#6 id=6 data-nosnippet>6</a>//! create an esp-rtos [`InterruptExecutor`], start the core on a `waiti` idle
+<a href=#7 id=7 data-nosnippet>7</a>//! loop, and start the executor at a priority. [`run_app_core`] encapsulates all
+<a href=#8 id=8 data-nosnippet>8</a>//! of it; the binary supplies only the stack, the priority, and a closure that
+<a href=#9 id=9 data-nosnippet>9</a>//! spawns its APP-core tasks from the [`SendSpawner`].
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">extern crate </span>alloc;
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>embassy_executor::SendSpawner;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>esp_hal::interrupt::Priority;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>esp_hal::interrupt::software::SoftwareInterrupt;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>esp_hal::peripherals::CPU_CTRL;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>esp_hal::system::{AppCoreGuard, Cpu, CpuControl, Stack};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>esp_rtos::embassy::InterruptExecutor;
+<a href=#19 id=19 data-nosnippet>19</a>
+<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// Park + start the APP core running an [`InterruptExecutor`] at `prio`; `init`
+<a href=#21 id=21 data-nosnippet>21</a>/// runs on the APP core with the executor's [`SendSpawner`] to spawn its tasks.
+<a href=#22 id=22 data-nosnippet>22</a>///
+<a href=#23 id=23 data-nosnippet>23</a>/// Encapsulates the defensive `park_core(AppCpu)` reset — probe-rs's JTAG reset
+<a href=#24 id=24 data-nosnippet>24</a>/// doesn't always return the APP-core control registers to power-on state, so a
+<a href=#25 id=25 data-nosnippet>25</a>/// JTAG-flashed boot can find the core reported "running" and `start_app_core`
+<a href=#26 id=26 data-nosnippet>26</a>/// panics with `CoreAlreadyRunning`; parking clears that, and `start_app_core`
+<a href=#27 id=27 data-nosnippet>27</a>/// unparks before the core runs. (Documented perf tradeoff on CoreS3: the
+<a href=#28 id=28 data-nosnippet>28</a>/// disturbance measurably slows LCD render — accepted for boot reliability.)
+<a href=#29 id=29 data-nosnippet>29</a>///
+<a href=#30 id=30 data-nosnippet>30</a>/// Call from the PRO core (main). The returned [`AppCoreGuard`] must be kept
+<a href=#31 id=31 data-nosnippet>31</a>/// alive for the program's lifetime — dropping it stops the APP core.
+<a href=#32 id=32 data-nosnippet>32</a>///
+<a href=#33 id=33 data-nosnippet>33</a>/// `sw_int` is one of `SystemResources::sw_int.software_interruptN`; `stack` is
+<a href=#34 id=34 data-nosnippet>34</a>/// a `&amp;'static mut Stack&lt;N&gt;` the caller allocates (e.g. `mk_static!`/`StaticCell`).
+<a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub fn </span>run_app_core&lt;<span class="kw">const </span>N: usize, <span class="kw">const </span>SWI: u8, F&gt;(
+<a href=#36 id=36 data-nosnippet>36</a>    cpu_ctrl: CPU_CTRL&lt;<span class="lifetime">'static</span>&gt;,
+<a href=#37 id=37 data-nosnippet>37</a>    sw_int: SoftwareInterrupt&lt;<span class="lifetime">'static</span>, SWI&gt;,
+<a href=#38 id=38 data-nosnippet>38</a>    stack: <span class="kw-2">&amp;</span><span class="lifetime">'static </span><span class="kw-2">mut </span>Stack&lt;N&gt;,
+<a href=#39 id=39 data-nosnippet>39</a>    prio: Priority,
+<a href=#40 id=40 data-nosnippet>40</a>    init: F,
+<a href=#41 id=41 data-nosnippet>41</a>) -&gt; AppCoreGuard&lt;<span class="lifetime">'static</span>&gt;
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">where
+<a href=#43 id=43 data-nosnippet>43</a>    </span>F: FnOnce(SendSpawner) + Send + <span class="lifetime">'static</span>,
+<a href=#44 id=44 data-nosnippet>44</a>{
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">let </span><span class="kw-2">mut </span>cpu = CpuControl::new(cpu_ctrl);
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="comment">// SAFETY: we run on the PRO core here, never the APP core being parked.
+<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">unsafe </span>{ cpu.park_core(Cpu::AppCpu) };
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="comment">// The executor must be `'static` (its `SendSpawner` borrows it forever).
+<a href=#50 id=50 data-nosnippet>50</a>    // `InterruptExecutor&lt;SWI&gt;` is generic over the interrupt number, so a
+<a href=#51 id=51 data-nosnippet>51</a>    // `static`/`make_static!` (whose type can't depend on a fn generic) won't do
+<a href=#52 id=52 data-nosnippet>52</a>    // — leak a single heap allocation instead (one-time, lives for the program).
+<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">let </span>exec: <span class="kw-2">&amp;</span><span class="lifetime">'static </span><span class="kw-2">mut </span>InterruptExecutor&lt;SWI&gt; =
+<a href=#54 id=54 data-nosnippet>54</a>        alloc::boxed::Box::leak(alloc::boxed::Box::new(InterruptExecutor::new(sw_int)));
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a>    cpu.start_app_core(stack, <span class="kw">move </span>|| {
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>spawner = exec.start(prio);
+<a href=#58 id=58 data-nosnippet>58</a>        init(spawner);
+<a href=#59 id=59 data-nosnippet>59</a>        <span class="comment">// The closure must never return — the executor lives on this frame.
+<a href=#60 id=60 data-nosnippet>60</a>        </span><span class="kw">loop </span>{
+<a href=#61 id=61 data-nosnippet>61</a>            <span class="comment">// Xtensa wait-for-interrupt; the InterruptExecutor wakes on its IRQ.
+<a href=#62 id=62 data-nosnippet>62</a>            </span><span class="kw">unsafe </span>{ <span class="macro">core::arch::asm!</span>(<span class="string">"waiti 0"</span>) };
+<a href=#63 id=63 data-nosnippet>63</a>        }
+<a href=#64 id=64 data-nosnippet>64</a>    })
+<a href=#65 id=65 data-nosnippet>65</a>    .expect(<span class="string">"start_app_core"</span>)
+<a href=#66 id=66 data-nosnippet>66</a>}
+</code></pre></div></section></main></body></html>

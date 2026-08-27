@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/driver/radio/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="m5stack_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)" data-channel="nightly" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">m5stack_core/driver/radio/</div>mod.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: MIT OR Apache-2.0
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Radio bring-up for the ESP32/ESP32-S3 coprocessor.
+<a href=#3 id=3 data-nosnippet>3</a>//!
+<a href=#4 id=4 data-nosnippet>4</a>//! The on-package radio is shared between **BLE** and **WiFi** — both are
+<a href=#5 id=5 data-nosnippet>5</a>//! sub-functions of the same hardware. Each lives in its own submodule and is
+<a href=#6 id=6 data-nosnippet>6</a>//! gated by a cargo feature, so a binary only compiles in (and pays the RAM cost
+<a href=#7 id=7 data-nosnippet>7</a>//! of) the radios it actually uses:
+<a href=#8 id=8 data-nosnippet>8</a>//!
+<a href=#9 id=9 data-nosnippet>9</a>//! | Feature    | Module    | Provides                                  |
+<a href=#10 id=10 data-nosnippet>10</a>//! |------------|-----------|-------------------------------------------|
+<a href=#11 id=11 data-nosnippet>11</a>//! | `ble`      | [`ble`]   | `BleConnector` for the `trouble-host` stack |
+<a href=#12 id=12 data-nosnippet>12</a>//! | `wifi`     | [`wifi`]  | WiFi controller + scanning                |
+<a href=#13 id=13 data-nosnippet>13</a>//! | `wifi-sta` | [`wifi`]  | STA + DHCP `embassy_net::Stack` (adds `embassy-net`) |
+<a href=#14 id=14 data-nosnippet>14</a>//! | `coex`     | —         | software WiFi/BLE coexistence             |
+<a href=#15 id=15 data-nosnippet>15</a>//!
+<a href=#16 id=16 data-nosnippet>16</a>//! Coexistence (`coex`) lets BLE and WiFi run at the same time at the cost of
+<a href=#17 id=17 data-nosnippet>17</a>//! extra RAM (~96 KB reclaimed on ESP32, less on ESP32-S3). It is only compiled
+<a href=#18 id=18 data-nosnippet>18</a>//! in when an application enables the `coex` feature.
+<a href=#19 id=19 data-nosnippet>19</a>//!
+<a href=#20 id=20 data-nosnippet>20</a>//! In all cases `esp_rtos::start(..)` must run before any radio is created — the
+<a href=#21 id=21 data-nosnippet>21</a>//! radio drivers schedule their work on the esp-rtos executor.
+<a href=#22 id=22 data-nosnippet>22</a>
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="attr">#[cfg(feature = <span class="string">"ble"</span>)]
+<a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">pub mod </span>ble;
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="attr">#[cfg(feature = <span class="string">"wifi"</span>)]
+<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub mod </span>wifi;
+</code></pre></div></section></main></body></html>

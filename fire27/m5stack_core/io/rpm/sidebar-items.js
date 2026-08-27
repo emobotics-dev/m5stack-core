@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["pulse_loop","read_pulse_hz"],"struct":["RpmConfig","RpmResources"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["drain_task","enable_async","init","install","on_panic","send_line","setup","take_panic_breadcrumb"],"mod":["markers"],"struct":["Config","Console","PanicCrumb","SerialResources"],"type":["ConsoleRx","ConsoleTx","ConsoleTxAsync"]};

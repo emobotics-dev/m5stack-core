@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["apply_pending_dc","gpio35_disable_output","power_display_reset"],"struct":["Board","Gpio35Dc","M5Bus"]};

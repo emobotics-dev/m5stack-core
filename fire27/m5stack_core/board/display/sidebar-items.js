@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["init_ili9342c","init_ili9342c_with_reset"],"struct":["M5Ili9342cRgb565"],"type":["Ili9342c"]};

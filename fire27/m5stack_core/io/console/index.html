@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Async buffered serial console for both targets — byte-level ring buffer with overwrite-on-full semantics. The producer (`log!()` / `send_line`) is O(1) and NEVER blocks the caller: never spins, never awaits, never creates back-pressure. On full, the oldest bytes are overwritten so the lines fired just before a failure survive (those are the informative ones)."><title>m5stack_core::io::console - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="m5stack_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)" data-channel="nightly" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module console</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../m5stack_core/index.html">m5stack_<wbr>core</a><span class="version">0.6.1</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module console</a></h2><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In m5stack_<wbr>core::<wbr>io</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">m5stack_core</a>::<wbr><a href="../index.html">io</a></div><h1>Module <span>console</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/m5stack_core/io/console.rs.html#2-815">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Async buffered serial console for both targets — byte-level ring buffer
+with <strong>overwrite-on-full</strong> semantics. The producer (<code>log!()</code> / <a href="fn.send_line.html" title="fn m5stack_core::io::console::send_line"><code>send_line</code></a>)
+is O(1) and NEVER blocks the caller: never spins, never awaits, never
+creates back-pressure. On full, the <strong>oldest</strong> bytes are overwritten so the
+lines fired <em>just before</em> a failure survive (those are the informative ones).</p>
+<p>A single <a href="fn.drain_task.html" title="fn m5stack_core::io::console::drain_task"><code>drain_task</code></a> pulls contiguous slices from the ring and writes
+them via the target’s async TX sink (<code>write_all().await</code> parks on the
+TX-done IRQ when the FIFO is full — no busy-spin). Producers signal the
+drain after every write; the drain awaits the signal when the ring is empty.</p>
+<p>Per-target seam (hardware): the sink types + <a href="fn.setup.html" title="fn m5stack_core::io::console::setup"><code>setup</code></a> (build + split the
+peripheral) + [<code>imp::boot_panic_write</code>]. fire27 = UART0 @ 1 Mbaud; cores3 =
+USB-Serial-JTAG CDC. <code>setup</code> does NOT make the fire27 TX async — <code>into_async()</code>
+binds the IRQ to the <em>calling</em> core, so the binary does it from <code>main</code> (PRO).</p>
+<p>The firmware’s <code>alternator_regulator::logger::cat_line</code> calls <a href="fn.send_line.html" title="fn m5stack_core::io::console::send_line"><code>send_line</code></a>
+for the <code>:cat</code> dump. Unlike <code>log!()</code>, <a href="fn.send_line.html" title="fn m5stack_core::io::console::send_line"><code>send_line</code></a> is <strong>back-pressuring</strong>:
+it awaits ring space before writing, so a fast read-back self-paces to the TX
+drain rate and is lossless (a plain overwrite-on-full write dropped lines and
+made <code>log_interval</code>’s read-back show false gaps). alternator-regulator depends
+on this crate ONLY for that — optional + esp-hal-gated, so host builds never
+pull it.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="markers/index.html" title="mod m5stack_core::io::console::markers">markers</a></dt><dd>Stable, greppable log markers that the HIL <code>detect_crash</code> contract keys on.
+Treat these as part of the public contract — do not reword without updating
+the test harness.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Config.html" title="struct m5stack_core::io::console::Config">Config</a></dt><dd>Console install configuration. <code>serial: None</code> is the production backstop —
+the log backend is registered (so <code>log!</code> is a cheap no-op into the ring) but
+no transport is brought up and no drain task runs, leaving zero serial
+surface. <code>Some(_)</code> brings up the chip’s native transport (UART0 on Fire27,
+USB-Serial-JTAG CDC on CoreS3) and spawns the drain.</dd><dt><a class="struct" href="struct.Console.html" title="struct m5stack_core::io::console::Console">Console</a></dt><dd>What <a href="fn.install.html" title="fn m5stack_core::io::console::install"><code>install</code></a> hands back: the console RX half, when a transport was
+brought up, to be handed to <code>serial_cmd</code> (bidirectional on one port, R7).
+In a serial-free build (<code>console-serial</code> off, R9) it carries no transport.</dd><dt><a class="struct" href="struct.PanicCrumb.html" title="struct m5stack_core::io::console::PanicCrumb">Panic<wbr>Crumb</a></dt><dd>A panic breadcrumb recovered from the previous run: <code>location</code> is the panic
+file, <code>reason</code> a 32-bit digest of the panic message.</dd><dt><a class="struct" href="struct.SerialResources.html" title="struct m5stack_core::io::console::SerialResources">Serial<wbr>Resources</a></dt><dd>The peripheral bundle <a href="fn.install.html" title="fn m5stack_core::io::console::install"><code>super::install</code></a> needs to bring the console up:
+UART0 + its TX/RX pins (Fire27 console is UART0 @ 1 Mbaud).</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.drain_task.html" title="fn m5stack_core::io::console::drain_task">drain_<wbr>task</a></dt><dd>The single console writer: pulls contiguous slices from the ring and
+writes them via the target’s async TX sink. <code>write_all().await</code> parks on
+the TX-done IRQ when the FIFO is full — no spin, no interrupts-off, no
+cross-core contention. When the ring is empty, awaits [<code>DRAIN_SIGNAL</code>]
+(woken by every producer write). Spawn once from the binary’s main
+(fire27: pass <code>tx.into_async()</code>; cores3: the split TX is already async).</dd><dt><a class="fn" href="fn.enable_async.html" title="fn m5stack_core::io::console::enable_async">enable_<wbr>async</a></dt><dd>Compatibility no-op. The prior design switched producers from a blocking
+writer to an async queue here; with the ring buffer the producer path is
+the same in every phase (boot and steady-state both write to the ring),
+so there’s nothing to switch. Kept so binaries don’t have to change in
+this commit — can be removed once both binaries stop calling it.</dd><dt><a class="fn" href="fn.init.html" title="fn m5stack_core::io::console::init">init</a></dt><dd>Register the console as the global <code>log</code> backend. Call once, early. The
+ring is statically initialised, so producers can write immediately —
+pre-<a href="fn.drain_task.html" title="fn m5stack_core::io::console::drain_task"><code>drain_task</code></a> writes simply accumulate in the ring and are flushed
+once the drain runs.
+<code>spec</code> is an <code>env_logger</code>-style filter (<code>info,sdspi=debug</code>), typically the
+app’s <code>ESP_LOG</code> read at the APP’s compile time — the console previously
+hardcoded Info here, which silently discarded every <code>module=debug</code>
+directive from the day esp-println (whose logger parsed <code>ESP_LOG</code>) was
+dropped.</dd><dt><a class="fn" href="fn.install.html" title="fn m5stack_core::io::console::install">install</a></dt><dd>One-call console bring-up: register the <code>log</code> backend with <code>cfg.filter</code> and,
+when <code>cfg.serial</code> is <code>Some</code>, build the chip’s transport + spawn the single
+<a href="fn.drain_task.html" title="fn m5stack_core::io::console::drain_task"><code>drain_task</code></a>. Replaces the hand-wired <code>init()</code> + <code>setup()</code> + drain-spawn
+sequence in every binary. Call once from main (the core that owns the drain;
+Fire27’s TX <code>into_async()</code> binds the IRQ to the calling core).</dd><dt><a class="fn" href="fn.on_panic.html" title="fn m5stack_core::io::console::on_panic">on_<wbr>panic</a></dt><dd>Shared message-only panic handler for both targets. Pushes the panic info
+into the ring (alongside the pre-panic context that’s already there), then
+<strong>synchronously drains the ring</strong> via the raw FIFO poker — the async drain
+task is gone (or never started) so it can’t service the ring for us. After
+the drain, halts so the fault stays visible. No stack walk: message-only
+on both targets (deliberate, symmetric), which is why neither <code>esp-backtrace</code>
+nor <code>esp-println</code> is pulled in. The binary’s <code>#[panic_handler]</code> is a
+one-line wrapper around this.</dd><dt><a class="fn" href="fn.send_line.html" title="fn m5stack_core::io::console::send_line">send_<wbr>line</a></dt><dd>Back-pressuring line sink — the <strong>R10 injection point</strong>. A control crate must
+not depend on this BSP directly; instead it defines its own <code>LineSink</code>-style
+trait and the <em>binary</em> injects a ~5-line newtype whose <code>send_line</code> forwards
+here (the trait stays consumer-side, so neither BSP nor control crate depends
+on the other). This is also the bulk-dump path for the HIL <code>:cat</code> CSV.</dd><dt><a class="fn" href="fn.setup.html" title="fn m5stack_core::io::console::setup">setup</a></dt><dd>Build UART0 @ 1 Mbaud and split. Run early (before radio bring-up); HIL-
+confirmed safe with the async console (see memory fire27-uart-async-corrected).</dd><dt><a class="fn" href="fn.take_panic_breadcrumb.html" title="fn m5stack_core::io::console::take_panic_breadcrumb">take_<wbr>panic_<wbr>breadcrumb</a></dt><dd>Read and clear the previous run’s panic breadcrumb, if any. Call <strong>once</strong> at
+boot, before <a href="fn.install.html" title="fn m5stack_core::io::console::install"><code>install</code></a>, and log the result (the <a href="markers/constant.PREV_PANIC.html" title="constant m5stack_core::io::console::markers::PREV_PANIC"><code>markers::PREV_PANIC</code></a>
+line) — that read-back is the cross-transport fault contract (R8), identical
+on both targets. Returns <code>None</code> on a clean boot or once the crumb is taken.</dd></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.ConsoleRx.html" title="type m5stack_core::io::console::ConsoleRx">Console<wbr>Rx</a></dt><dd>RX half → <code>serial_cmd</code>; TX (blocking) → made async by the binary at
+drain-spawn (<code>into_async</code> binds the IRQ to the calling = PRO core).</dd><dt><a class="type" href="type.ConsoleTx.html" title="type m5stack_core::io::console::ConsoleTx">Console<wbr>Tx</a></dt><dt><a class="type" href="type.ConsoleTxAsync.html" title="type m5stack_core::io::console::ConsoleTxAsync">Console<wbr>TxAsync</a></dt><dd>The drain task’s sink — the TX after the binary’s <code>into_async()</code>.</dd></dl></section></div></main></body></html>

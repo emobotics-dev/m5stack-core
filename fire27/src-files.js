@@ -1,0 +1,2 @@
+createSrcSidebar('[["m5stack_core",["",[["board",[],["display.rs","fire27.rs","mod.rs","multicore.rs","spi2.rs"]],["driver",[["radio",[],["ble.rs","mod.rs","wifi.rs"]]],["aw9523b.rs","axp2101.rs","ds18b20.rs","ft6336u.rs","ip5306.rs","mod.rs","onewire.rs","pcnt.rs","pps.rs","sk6812.rs"]],["io",[],["buttons.rs","console.rs","mod.rs","ow_temp.rs","pps.rs","rpm.rs","serial_cmd.rs","shared_i2c.rs","touch_buttons.rs","watchdog.rs"]]],["fmt.rs","lib.rs","mem.rs"]]]]');
+//{"start":19,"fragment_lengths":[444]}
